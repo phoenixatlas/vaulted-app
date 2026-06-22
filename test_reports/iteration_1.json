@@ -1,0 +1,44 @@
+{
+  "summary": "Comprehensive backend + frontend testing for Vaulted Wallet MVP. Backend: 17/17 pytest tests passed (auth, wallet send/insufficient, fiat deposit/withdraw, transactions, chat conversations/messages, language + security toggles, 401 enforcement). Frontend: 15/15 Playwright UI checks passed on mobile viewport (login → wallet ($12,665.00 balance + 4 assets BTC/ETH/USDC/SOL), send → receipt with green checkmark + tx_hash + Completed status, fiat deposit screen, activity tab with Welcome Bonus, chat list with 3 seeded contacts + lock icons, conversation send with auto-reply 'Got it — message received securely.', video-call screen with timer + mic/cam/end controls, settings tab with EN/ES/FR/AR language switcher + biometric/multi-sig toggles + logout). All mocked features (simulated wallet, simulated fiat, mocked video UI, plaintext-but-labelled-E2E chat) behave as designed. Minor non-blocking observations only — see action_items.",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {"endpoint": "JWT signing", "issue": "Default JWT_SECRET is 28 bytes (<32). passlib logs 'InsecureKeyLengthWarning' on every token issue. Set a 32+ byte JWT_SECRET in backend/.env for production."},
+      {"endpoint": "passlib/bcrypt", "issue": "'AttributeError: module bcrypt has no attribute __about__' is logged at startup. Cosmetic — hashing/verify still work. Caused by bcrypt>=4 vs passlib version mismatch. Optional: pin bcrypt==4.0.1 or upgrade passlib."},
+      {"endpoint": "PATCH /api/auth/security", "issue": "Accepts raw dict instead of a Pydantic model; missing input validation type-safety. Works functionally but should use a model (e.g. UpdateSecurityIn) for consistency."}
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [],
+    "react_native_issues": [
+      {"component": "Pressable/Touchable (multiple files)", "issue": "Console warning: 'props.pointerEvents is deprecated. Use style.pointerEvents'. Originates from react-native-web 0.19+. Either upstream RN or local style usage — please audit Pressable/View instances using pointerEvents prop and migrate to style.pointerEvents."},
+      {"component": "Expo SDK package versions", "issue": "Expo CLI reports package version mismatch: expo@54.0.34 (expected ~54.0.35), expo-font@14.0.11 (expected ~14.0.12), expo-router@6.0.23 (expected ~6.0.24). Reference: expo.err.log. Run `npx expo install --check` to align."}
+    ]
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_vaulted_api.py",
+    "/app/test_reports/pytest/pytest_results.xml"
+  ],
+  "action_items": [
+    "(Optional) Set a 32+ byte JWT_SECRET in backend/.env to silence InsecureKeyLengthWarning.",
+    "(Optional) Pin bcrypt==4.0.1 in requirements.txt or upgrade passlib to remove the '__about__' attribute warning at startup.",
+    "(Optional) Run `npx expo install --check` in /app/frontend to align expo/expo-font/expo-router to the expected patch versions.",
+    "(Optional) Audit usage of the deprecated `pointerEvents` prop on Pressable/View — migrate to `style={{ pointerEvents: ... }}`.",
+    "(Optional) Convert PATCH /api/auth/security to use a Pydantic model (e.g. UpdateSecurityIn) instead of `body: dict`."
+  ],
+  "critical_code_review_comments": [
+    "Backend server.py is 459 lines — within the 700-line limit but approaching it. Consider splitting into routers/auth.py, routers/wallet.py, routers/chat.py if more endpoints are added.",
+    "Send-flow params are passed via URL query string (`router.replace({ pathname: '/receipt', params: { ...tx } })`) — this leaks tx_hash and amounts to the URL. Functional but consider using React Navigation state or a tiny zustand store for sensitive params.",
+    "All MongoDB queries correctly exclude `_id` with projection `{\"_id\": 0}` — good.",
+    "Auto-reply on POST /api/chat/messages is hardcoded English ('Got it — message received securely.') — won't reflect the user's selected language. Cosmetic for an MVP demo."
+  ],
+  "updated_files": [],
+  "success_rate": {"backend": "100% (17/17)", "frontend": "100% (15/15)"},
+  "seed_data_creation": "No persistent seed data was created. Tests register fresh users via POST /api/auth/register with unique emails (test_<uuid>@vaulted.app). The pre-existing smoketest@vaulted.app account was reused for login + UI testing.",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "Backend tests live at /app/backend/tests/test_vaulted_api.py — they auto-pick BASE_URL from EXPO_PUBLIC_BACKEND_URL (env or /app/frontend/.env). Smoke account: smoketest@vaulted.app / test1234. All testIDs in the app follow kebab-case (login-email-input, action-send, chip-USDC, send-confirm, asset-row-BTC, total-balance, open-settings, chat-send, etc.). For Expo web preview, the route `/(tabs)/wallet`, `/(tabs)/chat`, `/(tabs)/activity`, `/(tabs)/settings`, `/send`, `/receive`, `/fiat?mode=deposit|withdraw`, `/chat/[id]`, `/video-call`, `/receipt?...` all work via deep link.",
+  "rca_of_issue": "N/A — no functional bugs found. Implementation matches the spec end-to-end."
+}
