@@ -1,0 +1,170 @@
+{
+  "app_name": "Vaulted",
+  "personality": "1 iOS-Native Clean",
+  "personality_one_liner": "A secure, premium, and trustworthy interface where content is the hero, grounded in calm stability.",
+  "color": {
+    "surface": "#FCFCFC",
+    "onSurface": "#1A1D1A",
+    "surfaceSecondary": "#F3F4F3",
+    "onSurfaceSecondary": "#4A524D",
+    "surfaceTertiary": "#EAECEA",
+    "onSurfaceTertiary": "#6D7A73",
+    "surfaceInverse": "#111412",
+    "onSurfaceInverse": "#FFFFFF",
+    "brand": "#3F6156",
+    "brandPrimary": "#3F6156",
+    "onBrandPrimary": "#FFFFFF",
+    "brandSecondary": "#E0E8E5",
+    "onBrandSecondary": "#2A423B",
+    "brandTertiary": "#F2F6F4",
+    "onBrandTertiary": "#3F6156",
+    "success": "#2D6B42",
+    "onSuccess": "#FFFFFF",
+    "warning": "#B88E14",
+    "onWarning": "#FFFFFF",
+    "error": "#B83A3A",
+    "onError": "#FFFFFF",
+    "border": "#E2E5E3",
+    "borderStrong": "#C6CCC8",
+    "divider": "#EDEFEE"
+  },
+  "typography": {
+    "displayFontFamily": "Geist",
+    "textFontFamily": "Geist",
+    "scale": {
+      "sm": 12,
+      "base": 14,
+      "lg": 16,
+      "xl": 20,
+      "2xl": 24
+    }
+  },
+  "spacing": {
+    "rule": "Generous vertical breathing room. Use 'md' and 'lg' for layout spacing. No cramped components.",
+    "xs": 4,
+    "sm": 8,
+    "md": 12,
+    "lg": 16,
+    "xl": 24,
+    "2xl": 32,
+    "3xl": 48
+  },
+  "radius_tokens": {
+    "sm": 6,
+    "md": 12,
+    "lg": 20,
+    "pill": 999
+  },
+  "shadow_tier": 1,
+  "navigation": "bottom_tabs",
+  "icon_set": "Phosphor",
+  "glassmorphism": {
+    "enabled": true,
+    "do's": [
+      "Bottom tab bar background",
+      "Sticky headers when content scrolls behind",
+      "Video call floating controls overlay",
+      "Modals/bottom sheet headers"
+    ],
+    "dont's": [
+      "Cards in dense lists",
+      "Form inputs",
+      "Primary CTA buttons"
+    ]
+  },
+  "platform_libraries": {
+    "glass": {
+      "ios": "expo-glass-effect",
+      "android": "expo-blur",
+      "low_end_android_fallback": "solid surfaceSecondary"
+    },
+    "image": "expo-image",
+    "blur": "expo-blur",
+    "bottom_sheet": "@gorhom/bottom-sheet",
+    "animation": "react-native-reanimated",
+    "gesture": "react-native-gesture-handler"
+  },
+  "haptics": {
+    "events": {
+      "tab_press": "light",
+      "button_press": "light",
+      "payment_success": "success",
+      "error": "error",
+      "message_sent": "medium"
+    }
+  },
+  "screens": [
+    {
+      "name": "Wallet Dashboard",
+      "purpose": "A secure home screen displaying total balance, core actions, and asset list.",
+      "states": {
+        "loading": "Centered spinner over subtle background.",
+        "empty": "Illustration of a vault/wallet with 'No assets yet' and 'Deposit Crypto' CTA.",
+        "error": "Readable error message with a Retry button."
+      },
+      "layout": "Header with user avatar and settings gear. Large balance text (Geist) centered or left-aligned at top. A row of 4 circular action buttons (Send, Receive, Deposit, Fiat) using brandTertiary containers. Below, an 'Assets' section with a list of tokens. Each token row has a real icon, token name, balance, and fiat equivalent. Safe area padding strictly observed."
+    },
+    {
+      "name": "Fiat Deposit & Receipt",
+      "purpose": "Input amount for fiat top-up and show the receipt of the transaction.",
+      "states": {
+        "loading": "Spinner during transaction processing.",
+        "empty": "N/A",
+        "error": "Error modal or inline error message below input."
+      },
+      "layout": "Form layout with large numeric input at top. Keypad below. Sticky 'Continue' CTA at bottom inside KeyboardAvoidingView. On success, show Receipt layout: a centralized ticket-style card with a green success icon, amount, dotted divider, date, transaction ID, and a 'Done' button."
+    },
+    {
+      "name": "Secure Chat & Conversation",
+      "purpose": "End-to-end encrypted messaging list and thread.",
+      "states": {
+        "loading": "Skeleton list of conversations.",
+        "empty": "Illustration of chat bubbles with 'No secure chats yet'.",
+        "error": "Failed to load chats message."
+      },
+      "layout": "Inbox screen: list of conversations, avatars, contact names, last message preview, unread badges, and a subtle lock icon for secure indicator. Chat screen: Full-screen thread with glass header, left/right bubbles (surfaceSecondary for received, brandPrimary for sent). Composer at bottom with attachment and camera actions."
+    },
+    {
+      "name": "Video Call",
+      "purpose": "Active live video interaction.",
+      "states": {
+        "loading": "Connecting screen with blurred background.",
+        "empty": "N/A",
+        "error": "Call failed layout with red disconnect icon."
+      },
+      "layout": "Full-bleed caller video. Self-view in a floating PIP (Picture in Picture) card top right. Bottom controls (mic, camera, end call) in a floating glassmorphic pill."
+    }
+  ],
+  "images": {
+    "hero_card_texture": {
+      "url": "https://images.unsplash.com/photo-1636837955417-2d8a4e49368f?crop=entropy&cs=srgb&fm=jpg&ixid=M3w4NTYxODh8MHwxfHNlYXJjaHwzfHxtb2Rlcm4lMjBtaW5pbWFsaXN0JTIwYWJzdHJhY3QlMjBzb2Z0JTIwdGV4dHVyZSUyMGNsZWFufGVufDB8fHx8MTc4MjEzNTE0N3ww&ixlib=rb-4.1.0&q=85",
+      "alt": "Soft modern clean white textile abstract"
+    },
+    "empty_state_assets": {
+      "url": "https://images.unsplash.com/photo-1624359136353-f60129a367b9?crop=entropy&cs=srgb&fm=jpg&ixid=M3w4NTYxODh8MHwxfHNlYXJjaHw0fHxtb2Rlcm4lMjBtaW5pbWFsaXN0JTIwYWJzdHJhY3QlMjBzb2Z0JTIwdGV4dHVyZSUyMGNsZWFufGVufDB8fHx8MTc4MjEzNTE0N3ww&ixlib=rb-4.1.0&q=85",
+      "alt": "Abstract soft clean background"
+    },
+    "avatar_caller": {
+      "url": "https://images.unsplash.com/photo-1534528741775-53994a69daeb?crop=entropy&cs=srgb&fm=jpg&ixid=M3w3NTY2NjZ8MHwxfHNlYXJjaHwxfHxwZXJzb24lMjBwb3J0cmFpdCUyMGxvb2tpbmclMjBhdCUyMGNhbWVyYSUyMG5ldXRyYWwlMjBsaWdodGluZ3xlbnwwfHx8fDE3ODIxMzUxNDd8MA&ixlib=rb-4.1.0&q=85",
+      "alt": "Portrait of caller looking at camera"
+    },
+    "avatar_contact_1": {
+      "url": "https://images.pexels.com/photos/8384889/pexels-photo-8384889.jpeg?auto=compress&cs=tinysrgb&dpr=2&h=650&w=940",
+      "alt": "Portrait of young woman"
+    },
+    "avatar_contact_2": {
+      "url": "https://images.pexels.com/photos/35334114/pexels-photo-35334114.jpeg?auto=compress&cs=tinysrgb&dpr=2&h=650&w=940",
+      "alt": "Thoughtful young man portrait"
+    }
+  },
+  "instructions_to_main_agent": [
+    "Design specifically for iOS-Native Clean style: use generous padding, clean borders (max 1pt), and minimal shadow.",
+    "Do NOT use any blues, indigos, or purples anywhere in the app. Use the defined moss/sage green brand palette for trust.",
+    "Implement the 'hero' wallet card or balance section with high-contrast text and consider using the subtle abstract texture image inside it to elevate the 'premium' feel without overpowering the balance.",
+    "For the secure chat list, add a small lock or shield icon to each contact indicating end-to-end encryption. Let the message bubbles use surfaceSecondary for received and brandPrimary for sent.",
+    "For fiat receipts, create a 'ticket' style layout using dotted border dividing the receipt content, giving a tactile real-world financial feel.",
+    "Ensure glassmorphism is used on the bottom tab bar and video call overlays, ensuring text readability over video streams.",
+    "Any branded crypto icons (BTC, ETH) should ideally use real PNG logos; if a placeholder is necessary, use a circular brandTertiary container with text.",
+    "Use Haptics as defined across the application, especially for transaction receipts and sending messages."
+  ]
+}
