@@ -142,7 +142,7 @@ export default function VaultPro() {
             )}
           </Pressable>
         )}
-        <Text style={s.tinyNote}>Test mode • Stripe sk_test_emergent</Text>
+        <Text style={s.tinyNote}>Securely billed by Stripe</Text>
       </ScrollView>
     </SafeAreaView>
   );
