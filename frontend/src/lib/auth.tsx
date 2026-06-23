@@ -9,6 +9,9 @@ type User = {
   wallet_address: string;
   biometric_enabled: boolean;
   multisig_enabled: boolean;
+  public_key?: string | null;
+  is_pro?: boolean;
+  subscription?: { tier: string; status: string; current_period_end?: number | null };
 };
 
 type AuthCtx = {

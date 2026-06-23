@@ -1,4 +1,4 @@
-from fastapi import FastAPI, APIRouter, Depends, HTTPException, status
+from fastapi import FastAPI, APIRouter, Depends, HTTPException, status, Request, Header
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from dotenv import load_dotenv
 from starlette.middleware.cors import CORSMiddleware
@@ -7,6 +7,9 @@ import os
 import logging
 import uuid
 import secrets
+import json
+import httpx
+import stripe
 from pathlib import Path
 from datetime import datetime, timedelta, timezone
 from typing import List, Optional, Literal
@@ -26,6 +29,19 @@ db = client[os.environ["DB_NAME"]]
 JWT_SECRET = os.environ.get("JWT_SECRET", "vaulted-dev-secret-change-me")
 JWT_ALG = "HS256"
 JWT_EXPIRE_HOURS = 24 * 7
+
+STRIPE_API_KEY = os.environ.get("STRIPE_API_KEY", "")
+# Treat the well-known placeholder as "unconfigured" so endpoints degrade gracefully.
+if STRIPE_API_KEY in ("sk_test_emergent", "sk_test_placeholder", "your_stripe_key_here"):
+    STRIPE_API_KEY = ""
+STRIPE_WEBHOOK_SECRET = os.environ.get("STRIPE_WEBHOOK_SECRET", "")
+DAILY_API_KEY = os.environ.get("DAILY_API_KEY", "")
+DAILY_DOMAIN = os.environ.get("DAILY_DOMAIN", "")
+VAULT_PRO_PRICE_USD = float(os.environ.get("VAULT_PRO_PRICE_USD", "9.99"))
+APP_PUBLIC_URL = os.environ.get("APP_PUBLIC_URL", "")
+
+if STRIPE_API_KEY:
+    stripe.api_key = STRIPE_API_KEY
 
 pwd_ctx = CryptContext(schemes=["bcrypt"], deprecated="auto")
 bearer = HTTPBearer(auto_error=False)
@@ -70,7 +86,9 @@ class FiatTxIn(BaseModel):
 
 class SendMessageIn(BaseModel):
     conversation_id: str
-    text: str = Field(min_length=1, max_length=4000)
+    text: str = Field(min_length=1, max_length=8000)
+    nonce: Optional[str] = None  # base64 NaCl secretbox nonce when encrypted
+    encrypted: bool = False
 
 
 class StartConversationIn(BaseModel):
@@ -79,6 +97,22 @@ class StartConversationIn(BaseModel):
 
 class UpdateLanguageIn(BaseModel):
     language: str
+
+
+class RegisterKeyIn(BaseModel):
+    public_key: str  # base64 NaCl box public key
+
+
+class StripeDepositIn(BaseModel):
+    amount_usd: float = Field(gt=0, le=10000)
+
+
+class StripeSyncIn(BaseModel):
+    session_id: str
+
+
+class CallRoomIn(BaseModel):
+    conversation_id: Optional[str] = None
 
 
 # ----------------------------- Helpers -----------------------------
@@ -100,6 +134,7 @@ def make_token(user_id: str) -> str:
 
 
 def public_user(u: dict) -> dict:
+    sub = u.get("subscription") or {}
     return {
         "id": u["id"],
         "email": u["email"],
@@ -109,6 +144,13 @@ def public_user(u: dict) -> dict:
         "wallet_address": u.get("wallet_address"),
         "biometric_enabled": u.get("biometric_enabled", False),
         "multisig_enabled": u.get("multisig_enabled", False),
+        "public_key": u.get("public_key"),
+        "subscription": {
+            "tier": sub.get("tier", "free"),
+            "status": sub.get("status", "inactive"),
+            "current_period_end": sub.get("current_period_end"),
+        },
+        "is_pro": (sub.get("status") in ("active", "trialing")),
     }
 
 
@@ -417,20 +459,25 @@ async def send_message(body: SendMessageIn, user=Depends(get_current_user)):
         "user_id": user["id"],
         "sender": "me",
         "text": body.text,
+        "nonce": body.nonce,
+        "encrypted": bool(body.encrypted),
         "created_at": iso(now_utc()),
     }
     await db.messages.insert_one(msg)
+    preview = "🔒 Encrypted message" if body.encrypted else body.text
     await db.conversations.update_one(
         {"id": body.conversation_id},
-        {"$set": {"last_message": body.text, "last_message_at": msg["created_at"], "unread": 0}},
+        {"$set": {"last_message": preview, "last_message_at": msg["created_at"], "unread": 0}},
     )
-    # Auto echo response from contact for the demo (only for first reply)
+    # Auto echo response from contact (server-generated, always plaintext system message)
     auto = {
         "id": str(uuid.uuid4()),
         "conversation_id": body.conversation_id,
         "user_id": user["id"],
         "sender": "contact",
-        "text": "Got it — message received securely.",
+        "text": "Got it — secure message received.",
+        "nonce": None,
+        "encrypted": False,
         "created_at": iso(now_utc()),
     }
     await db.messages.insert_one(auto)
@@ -440,6 +487,286 @@ async def send_message(body: SendMessageIn, user=Depends(get_current_user)):
     )
     msg.pop("_id", None)
     return msg
+
+
+# --------------------------- E2E Crypto Keys ---------------------------
+@api.post("/keys/register")
+async def register_public_key(body: RegisterKeyIn, user=Depends(get_current_user)):
+    if len(body.public_key) > 512:
+        raise HTTPException(status_code=400, detail="Public key too long")
+    await db.users.update_one({"id": user["id"]}, {"$set": {"public_key": body.public_key}})
+    return {"public_key": body.public_key}
+
+
+@api.get("/keys/{user_id}")
+async def get_public_key(user_id: str, _=Depends(get_current_user)):
+    u = await db.users.find_one({"id": user_id}, {"_id": 0, "public_key": 1, "id": 1, "name": 1})
+    if not u:
+        raise HTTPException(status_code=404, detail="User not found")
+    return {"id": u["id"], "public_key": u.get("public_key")}
+
+
+# --------------------------- Stripe payments ---------------------------
+async def _get_or_create_vault_pro_price() -> str:
+    """Lazy-create a recurring Stripe Price for Vault Pro, cache id in DB."""
+    if not STRIPE_API_KEY:
+        raise HTTPException(status_code=503, detail="Stripe not configured")
+    cfg = await db.config.find_one({"_id": "stripe"})
+    if cfg and cfg.get("vault_pro_price_id"):
+        return cfg["vault_pro_price_id"]
+    try:
+        product = stripe.Product.create(name="Vault Pro", description="Premium tier: multi-sig, lower fees, priority support")
+        price = stripe.Price.create(
+            unit_amount=int(VAULT_PRO_PRICE_USD * 100),
+            currency="usd",
+            recurring={"interval": "month"},
+            product=product.id,
+        )
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"Stripe error: {e}")
+    await db.config.update_one(
+        {"_id": "stripe"},
+        {"$set": {"vault_pro_product_id": product.id, "vault_pro_price_id": price.id}},
+        upsert=True,
+    )
+    return price.id
+
+
+def _success_cancel_urls(flow: str) -> tuple[str, str]:
+    base = APP_PUBLIC_URL.rstrip("/") if APP_PUBLIC_URL else "https://example.com"
+    success = f"{base}/stripe-return?flow={flow}&status=success&session_id={{CHECKOUT_SESSION_ID}}"
+    cancel = f"{base}/stripe-return?flow={flow}&status=cancel"
+    return success, cancel
+
+
+@api.post("/stripe/checkout/deposit")
+async def stripe_checkout_deposit(body: StripeDepositIn, user=Depends(get_current_user)):
+    if not STRIPE_API_KEY:
+        raise HTTPException(status_code=503, detail="Stripe not configured")
+    amount_cents = int(round(body.amount_usd * 100))
+    success, cancel = _success_cancel_urls("deposit")
+    try:
+        session = stripe.checkout.Session.create(
+            mode="payment",
+            payment_method_types=["card"],
+            line_items=[{
+                "price_data": {
+                    "currency": "usd",
+                    "product_data": {"name": "USDC Wallet Top-up", "description": "Vaulted fiat deposit"},
+                    "unit_amount": amount_cents,
+                },
+                "quantity": 1,
+            }],
+            success_url=success,
+            cancel_url=cancel,
+            metadata={"user_id": user["id"], "flow": "deposit", "amount_usd": str(body.amount_usd)},
+        )
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"Stripe error: {e}")
+    return {"checkout_url": session.url, "session_id": session.id}
+
+
+@api.post("/stripe/checkout/subscription")
+async def stripe_checkout_subscription(user=Depends(get_current_user)):
+    if not STRIPE_API_KEY:
+        raise HTTPException(status_code=503, detail="Stripe not configured")
+    price_id = await _get_or_create_vault_pro_price()
+    success, cancel = _success_cancel_urls("subscription")
+
+    customer_id = (user.get("stripe") or {}).get("customer_id")
+    if not customer_id:
+        try:
+            cust = stripe.Customer.create(email=user["email"], metadata={"user_id": user["id"]})
+            customer_id = cust.id
+            await db.users.update_one(
+                {"id": user["id"]},
+                {"$set": {"stripe.customer_id": customer_id}},
+            )
+        except Exception as e:
+            raise HTTPException(status_code=502, detail=f"Stripe error: {e}")
+    try:
+        session = stripe.checkout.Session.create(
+            mode="subscription",
+            customer=customer_id,
+            line_items=[{"price": price_id, "quantity": 1}],
+            success_url=success,
+            cancel_url=cancel,
+            metadata={"user_id": user["id"], "flow": "subscription", "tier": "vault_pro"},
+        )
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"Stripe error: {e}")
+    return {"checkout_url": session.url, "session_id": session.id, "price_id": price_id}
+
+
+async def _apply_checkout_session(session_obj: dict) -> dict:
+    """Idempotently apply a completed Stripe session to user state. Returns summary."""
+    mode = session_obj.get("mode")
+    metadata = session_obj.get("metadata") or {}
+    user_id = metadata.get("user_id")
+    if not user_id:
+        return {"applied": False, "reason": "no user_id"}
+    user = await db.users.find_one({"id": user_id}, {"_id": 0})
+    if not user:
+        return {"applied": False, "reason": "user not found"}
+
+    # Idempotency: check if already processed
+    existing = await db.stripe_events.find_one({"session_id": session_obj.get("id")})
+    if existing:
+        return {"applied": False, "already": True}
+
+    if mode == "payment" and metadata.get("flow") == "deposit":
+        if session_obj.get("payment_status") != "paid":
+            return {"applied": False, "reason": "not paid"}
+        amount_usd = (session_obj.get("amount_total") or 0) / 100.0
+        await db.balances.update_one(
+            {"user_id": user_id, "symbol": "USDC"},
+            {"$inc": {"amount": amount_usd}, "$set": {"updated_at": iso(now_utc())}},
+        )
+        tx = {
+            "id": str(uuid.uuid4()),
+            "user_id": user_id,
+            "type": "deposit",
+            "category": "fiat",
+            "asset": (session_obj.get("currency") or "usd").upper(),
+            "amount": amount_usd,
+            "fiat_value": amount_usd,
+            "counterparty": "Stripe Card Top-up",
+            "method": "card",
+            "status": "completed",
+            "receipt_id": "VLT-" + (session_obj.get("id") or "")[-8:].upper(),
+            "stripe_session_id": session_obj.get("id"),
+            "created_at": iso(now_utc()),
+        }
+        await db.transactions.insert_one(tx)
+        await db.stripe_events.insert_one({"session_id": session_obj.get("id"), "kind": "deposit", "at": iso(now_utc())})
+        return {"applied": True, "kind": "deposit", "amount_usd": amount_usd}
+
+    if mode == "subscription":
+        sub_id = session_obj.get("subscription")
+        cust_id = session_obj.get("customer")
+        # Fetch subscription for accurate status
+        status_val = "active"
+        period_end = None
+        if sub_id and STRIPE_API_KEY:
+            try:
+                sub = stripe.Subscription.retrieve(sub_id)
+                status_val = sub.get("status", "active")
+                period_end = sub.get("current_period_end")
+            except Exception:
+                pass
+        await db.users.update_one(
+            {"id": user_id},
+            {"$set": {
+                "stripe.customer_id": cust_id,
+                "subscription": {
+                    "tier": "vault_pro",
+                    "stripe_subscription_id": sub_id,
+                    "status": status_val,
+                    "current_period_end": period_end,
+                },
+            }},
+        )
+        await db.stripe_events.insert_one({"session_id": session_obj.get("id"), "kind": "subscription", "at": iso(now_utc())})
+        return {"applied": True, "kind": "subscription", "status": status_val}
+
+    return {"applied": False, "reason": "unhandled mode"}
+
+
+@api.post("/stripe/sync")
+async def stripe_sync(body: StripeSyncIn, user=Depends(get_current_user)):
+    """Client polls this after returning from Stripe Checkout to settle state."""
+    if not STRIPE_API_KEY:
+        raise HTTPException(status_code=503, detail="Stripe not configured")
+    try:
+        session = stripe.checkout.Session.retrieve(body.session_id)
+    except Exception as e:
+        raise HTTPException(status_code=404, detail=f"Session not found: {e}")
+    if (session.get("metadata") or {}).get("user_id") != user["id"]:
+        raise HTTPException(status_code=403, detail="Session not for this user")
+    result = await _apply_checkout_session(dict(session))
+    u = await db.users.find_one({"id": user["id"]}, {"_id": 0})
+    return {"session_status": session.get("status"), "payment_status": session.get("payment_status"), "applied": result, "user": public_user(u)}
+
+
+@api.post("/stripe/webhook")
+async def stripe_webhook(request: Request, stripe_signature: Optional[str] = Header(None, alias="Stripe-Signature")):
+    payload = await request.body()
+    if STRIPE_WEBHOOK_SECRET and stripe_signature:
+        try:
+            event = stripe.Webhook.construct_event(payload, stripe_signature, STRIPE_WEBHOOK_SECRET)
+        except Exception as e:
+            raise HTTPException(status_code=400, detail=f"Invalid webhook: {e}")
+    else:
+        try:
+            event = json.loads(payload.decode())
+        except Exception:
+            raise HTTPException(status_code=400, detail="Invalid payload")
+    if event["type"] == "checkout.session.completed":
+        await _apply_checkout_session(event["data"]["object"])
+    elif event["type"] in ("customer.subscription.updated", "customer.subscription.deleted"):
+        sub = event["data"]["object"]
+        await db.users.update_one(
+            {"subscription.stripe_subscription_id": sub.get("id")},
+            {"$set": {"subscription.status": sub.get("status"), "subscription.current_period_end": sub.get("current_period_end")}},
+        )
+    return {"status": "ok"}
+
+
+@api.post("/stripe/cancel")
+async def stripe_cancel_subscription(user=Depends(get_current_user)):
+    if not STRIPE_API_KEY:
+        raise HTTPException(status_code=503, detail="Stripe not configured")
+    sub_id = (user.get("subscription") or {}).get("stripe_subscription_id")
+    if not sub_id:
+        raise HTTPException(status_code=400, detail="No active subscription")
+    try:
+        stripe.Subscription.modify(sub_id, cancel_at_period_end=True)
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"Stripe error: {e}")
+    await db.users.update_one({"id": user["id"]}, {"$set": {"subscription.status": "canceled"}})
+    return {"status": "canceled"}
+
+
+# --------------------------- Daily.co video calls ---------------------------
+@api.post("/calls/room")
+async def create_call_room(body: CallRoomIn, user=Depends(get_current_user)):
+    """Returns a Daily.co room URL + meeting token. If DAILY_API_KEY is unset,
+    returns a clear stub so the UI can show a 'configure key' state."""
+    if not DAILY_API_KEY:
+        return {
+            "configured": False,
+            "room_url": None,
+            "token": None,
+            "message": "DAILY_API_KEY is not set on the server. Add it to /app/backend/.env to enable real video calls.",
+        }
+    room_name = f"vlt-{secrets.token_hex(6)}"
+    exp = int((now_utc() + timedelta(hours=1)).timestamp())
+    headers = {"Authorization": f"Bearer {DAILY_API_KEY}", "Content-Type": "application/json"}
+    try:
+        async with httpx.AsyncClient(timeout=15) as cx:
+            r1 = await cx.post(
+                "https://api.daily.co/v1/rooms",
+                headers=headers,
+                json={
+                    "name": room_name,
+                    "privacy": "private",
+                    "properties": {"exp": exp, "enable_chat": False, "enable_screenshare": True, "start_video_off": False},
+                },
+            )
+            if r1.status_code >= 400:
+                raise HTTPException(status_code=502, detail=f"Daily create-room failed: {r1.text}")
+            room = r1.json()
+            r2 = await cx.post(
+                "https://api.daily.co/v1/meeting-tokens",
+                headers=headers,
+                json={"properties": {"room_name": room_name, "user_name": user["name"], "exp": exp}},
+            )
+            token = r2.json().get("token") if r2.status_code < 400 else None
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"Daily.co error: {e}")
+    return {"configured": True, "room_url": room["url"], "token": token, "name": room_name}
 
 
 app.include_router(api)

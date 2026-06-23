@@ -39,6 +39,29 @@ export default function Settings() {
           <Text style={s.email}>{user?.email}</Text>
         </View>
 
+        <Text style={s.section}>Subscription</Text>
+        <View style={s.card}>
+          <Pressable
+            testID="open-vaultpro"
+            onPress={() => router.push("/vault-pro")}
+            style={({ pressed }) => [s.row, pressed && { backgroundColor: colors.surfaceSecondary }]}
+          >
+            <View style={[s.rowIcon, { backgroundColor: user?.is_pro ? colors.brand : colors.brandTertiary }]}>
+              <Ionicons name="star" size={18} color={user?.is_pro ? "#fff" : colors.brand} />
+            </View>
+            <View style={{ flex: 1 }}>
+              <Text style={s.rowLabel}>Vault Pro</Text>
+              <Text style={[s.rowLabel, { fontSize: 11, color: colors.onSurfaceTertiary, marginTop: 2 }]}>
+                {user?.is_pro ? `Active · ${user?.subscription?.status}` : "Unlock multi-sig, lower fees & priority"}
+              </Text>
+            </View>
+            {user?.is_pro && (
+              <View style={s.proBadge}><Text style={s.proBadgeText}>PRO</Text></View>
+            )}
+            <Ionicons name="chevron-forward" size={18} color={colors.onSurfaceTertiary} />
+          </Pressable>
+        </View>
+
         <Text style={s.section}>{t("language")}</Text>
         <View style={s.card}>
           {LANGUAGES.map((l, idx) => (
@@ -80,7 +103,13 @@ export default function Settings() {
               <Switch
                 testID="multisig-switch"
                 value={!!user?.multisig_enabled}
-                onValueChange={(v) => toggleSecurity("multisig_enabled", v)}
+                onValueChange={(v) => {
+                  if (!user?.is_pro && v) {
+                    router.push("/vault-pro");
+                    return;
+                  }
+                  toggleSecurity("multisig_enabled", v);
+                }}
                 trackColor={{ true: colors.brand, false: colors.borderStrong }}
               />
             }
@@ -111,4 +140,6 @@ const s = StyleSheet.create({
   sep: { height: 1, backgroundColor: colors.divider, marginLeft: spacing.lg + 32 + spacing.md },
   logout: { flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 8, marginTop: spacing.xl, marginHorizontal: spacing.xl, paddingVertical: spacing.lg, borderRadius: radius.md, borderWidth: 1, borderColor: colors.border },
   logoutText: { color: colors.error, fontWeight: "600", fontSize: 15 },
+  proBadge: { backgroundColor: colors.brand, paddingHorizontal: 8, paddingVertical: 3, borderRadius: radius.pill, marginRight: 8 },
+  proBadgeText: { color: "#fff", fontSize: 10, fontWeight: "800", letterSpacing: 0.5 },
 });

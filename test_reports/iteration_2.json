@@ -1,0 +1,50 @@
+{
+  "summary": "Iteration 2 (Stripe + Daily.co + E2E chat + Vault Pro) thoroughly tested. Backend: 33/33 pytest tests pass — covering new endpoints (GET /auth/me with is_pro/subscription/public_key, POST /keys/register + GET /keys/{user_id}, POST /chat/messages with nonce+encrypted, all Stripe checkout/sync/cancel returning 503 when STRIPE_API_KEY is the 'sk_test_emergent' placeholder, POST /stripe/webhook crediting USDC via fake checkout.session.completed payload WITH idempotency on duplicate events, POST /calls/room returning {configured:false} when DAILY_API_KEY empty, 401 auth enforcement on every new endpoint) plus full regression on iteration-1 endpoints (auth, wallet, fiat, transactions, chat, settings). Frontend (Expo web, mobile viewport 390x844): 8/8 UI checks pass — Settings now exposes 'Vault Pro' card (testID open-vaultpro), Vault Pro screen renders $9.99/month + 4 perks + Subscribe button, tapping Subscribe shows graceful 'Stripe not configured' message (no crash), multisig-switch for non-Pro users correctly redirects to /vault-pro instead of toggling, chat header shows 'encrypted · key XXXX' fingerprint, sending a message encrypts client-side via TweetNaCl secretbox & shows plaintext locally after decrypt round-trip with an 'encrypted' tag under the bubble, video-call screen shows the DAILY_API_KEY-not-set notice and falls back to mock UI, and Fiat deposit shows all 4 payment chips (Card via Stripe LIVE, Card demo, Bank, Apple Pay) with 'Stripe not configured' error rendered gracefully when Stripe path is selected. All mocked/unconfigured-by-design paths degrade exactly as specified — no functional bugs found.",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {"endpoint": "JWT signing", "issue": "InsecureKeyLengthWarning persists (28-byte JWT_SECRET). Carried from iteration 1 — set a 32+ byte JWT_SECRET to silence."},
+      {"endpoint": "passlib/bcrypt", "issue": "Startup log: 'module bcrypt has no attribute __about__'. Cosmetic — bcrypt verify still works. Pin bcrypt==4.0.1 or upgrade passlib."},
+      {"endpoint": "POST /api/chat/messages", "issue": "Server-generated auto-reply ('Got it — secure message received.') overwrites conversation.last_message after an encrypted send, so the conversation preview is plaintext, not the lock icon. Likely intentional for an MVP demo but be aware the 'last_message' field briefly shows the lock then is replaced by the auto-reply text."}
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [
+      {"screen": "vault-pro.tsx", "issues": ["Footer note 'Test mode • Stripe sk_test_emergent' exposes the placeholder key string in the UI. Cosmetic — consider hiding behind a __DEV__ guard or removing for production."]}
+    ],
+    "react_native_issues": [
+      {"component": "Image (multiple)", "issue": "Console warning 'Image: style.resizeMode is deprecated. Please use props.resizeMode'. Migrate Image style.resizeMode → resizeMode prop."},
+      {"component": "Pressable/View (multiple)", "issue": "Carried from iter 1: 'props.pointerEvents is deprecated. Use style.pointerEvents'."},
+      {"component": "Expo SDK package versions", "issue": "Carried from iter 1: expo@54.0.34 (expected ~54.0.35), expo-font@14.0.11 (~14.0.12), expo-router@6.0.23 (~6.0.24). Run `npx expo install --check`."}
+    ]
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_iteration2.py",
+    "/app/backend/tests/test_vaulted_api.py",
+    "/app/test_reports/pytest/pytest_results.xml"
+  ],
+  "action_items": [
+    "(Optional) Migrate Image style.resizeMode → resizeMode prop to clear the deprecation warning seen on iter-2 chat / video screens.",
+    "(Optional) Hide the 'Test mode • Stripe sk_test_emergent' debug footer on vault-pro.tsx behind __DEV__.",
+    "(Optional) The encrypted-send auto-reply overwrites the encrypted lock preview on conversation.last_message — if desired, suppress the auto-reply preview update OR re-set the preview to '🔒 Encrypted message' after the auto-reply for consistency.",
+    "(Carry-over) Set 32+ byte JWT_SECRET, pin bcrypt==4.0.1, run `npx expo install --check`, migrate deprecated pointerEvents prop."
+  ],
+  "critical_code_review_comments": [
+    "backend/server.py is now 786 lines — exceeds the 700-line guideline. Recommend splitting into routers/auth.py, routers/wallet.py, routers/chat.py, routers/stripe.py, routers/calls.py before iteration 3.",
+    "STRIPE_API_KEY placeholder sentinel ('sk_test_emergent') is correctly normalized to empty string in server.py:35 so endpoints uniformly raise 503 — clean graceful-degrade pattern.",
+    "Stripe webhook handler (_apply_checkout_session) is idempotent via stripe_events collection — verified by test (second identical webhook does NOT double-credit).",
+    "/api/keys/register caps public_key at 512 chars — good DoS guard.",
+    "Multi-sig switch in settings.tsx correctly gates by user.is_pro and redirects to /vault-pro instead of silently toggling — good UX."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_iteration2.py (new — 16 tests covering all iteration-2 endpoints incl. webhook idempotency)"
+  ],
+  "success_rate": {"backend": "100% (33/33)", "frontend": "100% (8/8 critical iter-2 UI checks)"},
+  "seed_data_creation": "Tests register fresh users (it2_<uuid>@vaulted.app) via POST /api/auth/register for each module-scoped fixture. Smoke account smoketest@vaulted.app reused for regression login. No persistent prod-data mutation.",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "Backend tests: /app/backend/tests/test_iteration2.py (iter-2 features) + /app/backend/tests/test_vaulted_api.py (iter-1 regression). Both pull BASE_URL from EXPO_PUBLIC_BACKEND_URL. New testIDs introduced in iter-2: open-vaultpro (settings card), vaultpro-back/-price/-subscribe/-cancel/-msg (Vault Pro screen), chip-stripe / chip-card-stripe (fiat deposit Stripe chip — heuristic — actual testID not standardized; text 'Card via Stripe' selector works). Stripe webhook is publicly reachable at POST /api/stripe/webhook (no auth, no signature required when STRIPE_WEBHOOK_SECRET is empty) — events with matching metadata.user_id WILL credit USDC. Daily.co endpoint /api/calls/room returns 200 with configured:false when DAILY_API_KEY is empty (not 503). All graceful-degradation paths are correct as documented in the iteration-2 review request.",
+  "rca_of_issue": "N/A — no functional bugs. All Stripe 503 / Daily configured:false responses are EXPECTED placeholder-degradation behavior per agent_to_agent_context_note."
+}
