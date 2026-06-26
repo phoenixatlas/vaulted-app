@@ -44,6 +44,8 @@ SEPOLIA_RPC_URL = os.environ.get("SEPOLIA_RPC_URL", "https://ethereum-sepolia-rp
 SEPOLIA_CHAIN_ID = 11155111
 
 RESEND_API_KEY = os.environ.get("RESEND_API_KEY", "")
+# Sender address — defaults to Resend's shared sandbox until a custom domain is verified.
+RESEND_FROM = os.environ.get("RESEND_FROM", "Vaulted <onboarding@resend.dev>")
 MULTISIG_THRESHOLD_ETH = float(os.environ.get("MULTISIG_THRESHOLD_ETH", "0.01"))
 APPROVAL_TTL_HOURS = 24
 
@@ -581,7 +583,7 @@ async def _send_approval_email(pending: dict) -> None:
                 "https://api.resend.com/emails",
                 headers={"Authorization": f"Bearer {RESEND_API_KEY}", "Content-Type": "application/json"},
                 json={
-                    "from": "Vaulted <onboarding@resend.dev>",
+                    "from": RESEND_FROM,
                     "to": [pending["cosigner_email"]],
                     "subject": f"Approve {pending['amount_eth']} ETH from Vaulted?",
                     "html": html,
@@ -623,7 +625,7 @@ async def add_cosigner(body: CosignerInviteIn, user=Depends(get_current_user)):
                     "https://api.resend.com/emails",
                     headers={"Authorization": f"Bearer {RESEND_API_KEY}", "Content-Type": "application/json"},
                     json={
-                        "from": "Vaulted <onboarding@resend.dev>",
+                        "from": RESEND_FROM,
                         "to": [body.email],
                         "subject": f"You're now a Vaulted co-signer for {user.get('name')}",
                         "html": f"<p>{user.get('name')} ({user.get('email')}) added you as a co-signer on their Vaulted wallet. You'll receive an email any time they try to send ≥ {MULTISIG_THRESHOLD_ETH} ETH; tap Approve or Reject in those emails.</p>",

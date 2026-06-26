@@ -8,6 +8,7 @@ import { GestureHandlerRootView } from "react-native-gesture-handler";
 import { useIconFonts } from "@/src/hooks/use-icon-fonts";
 import { AuthProvider } from "@/src/lib/auth";
 import { I18nProvider } from "@/src/lib/i18n";
+import { BiometricGate } from "@/src/components/BiometricGate";
 
 LogBox.ignoreAllLogs(true);
 SplashScreen.preventAutoHideAsync();
@@ -28,7 +29,9 @@ export default function RootLayout() {
       <SafeAreaProvider>
         <I18nProvider>
           <AuthProvider>
-            <Stack screenOptions={{ headerShown: false, contentStyle: { backgroundColor: "#FCFCFC" } }} />
+            <BiometricGate>
+              <Stack screenOptions={{ headerShown: false, contentStyle: { backgroundColor: "#FCFCFC" } }} />
+            </BiometricGate>
           </AuthProvider>
         </I18nProvider>
       </SafeAreaProvider>

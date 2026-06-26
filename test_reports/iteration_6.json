@@ -1,0 +1,51 @@
+{
+  "summary": "Iteration 6 (Biometric authentication via expo-local-authentication) PASSED end-to-end. Backend: 11/11 pytest pass (test_iteration6.py) — PATCH /api/auth/security correctly accepts {biometric_enabled: true|false} and returns updated user with the flag reflected (verified persistence via follow-up GET /api/auth/me on every toggle); /auth/me always includes biometric_enabled (defaults to false for fresh users; bool-coerces truthy/falsy inputs); endpoint is auth-gated (401 without bearer token). Regression — /auth/login (both for smoketest@vaulted.app/test1234 and a freshly registered user), /wallet/assets, /cosigners (empty list for fresh user), /api/approvals/pending all return 200 with expected shapes. RESEND_FROM env-driven sender: promoting the test user to Pro and POSTing /api/cosigners with an arbitrary recipient returns 200 (cosigner persisted with status='active'); backend did NOT crash even though Resend returns 403 for non-verified recipient (testing-mode key) — try/except in the email path correctly swallows the failure, exactly as the task brief said to expect. Frontend (Expo web, 390x844): BiometricGate correctly NO-OPs on web — Platform.OS==='web' branch in /app/frontend/src/lib/biometric.ts:10 returns null from mod(); getCapabilities() returns available:false; <BiometricGate> in /app/frontend/app/_layout.tsx:32 wraps <Stack> but shouldGate evaluates to false so the overlay never mounts. Verified empirically: NO biometric-unlock-cta DOM node before OR after login. Login page loads → POST /api/auth/login → wallet tab renders at /wallet showing balance $4,602.55, all assets (BTC/USDC/SOL/ETH), and bottom-tab nav — zero overlay interference. Settings → Security shows the new biometric Row with label 'Biometric authentication' (correctly drops the '(Touch ID)' suffix since bioCaps.available is false on web — matches /app/frontend/app/(tabs)/settings.tsx:121); switch's inner <input> has disabled=true (Switch's disabled={!bioCaps?.hasHardware} working as designed); clicking the switch does NOT toggle state (verified: checked stays false). Co-signers and Multi-signature rows below it still render and remain interactive. Existing critical flows (login → wallet, navigation to settings, language toggles, subscription pill) all still working. Deprecated package warning detected: expo-local-authentication is the recommended package per Expo docs — not deprecated. No new react-native warnings introduced (carry-over warnings about props.pointerEvents and Image.resizeMode still present from earlier iterations).",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {"endpoint": "PATCH /api/auth/security", "issue": "Uses untyped `body: dict` parameter instead of a Pydantic model — works correctly but loses request-schema validation/swagger doc. Consider adding `class UpdateSecurityIn(BaseModel): biometric_enabled: Optional[bool]=None; multisig_enabled: Optional[bool]=None`."},
+      {"endpoint": "POST /api/cosigners (Resend)", "issue": "Carry-over from iter5: Resend API key in testing mode returns 403 for arbitrary recipients. RESEND_FROM env defaults to 'Vaulted <onboarding@resend.dev>'. Backend swallows the 403 (correct). DNS for phoenix-atlas.com pre-configured but domain verification still pending on Resend side, per main-agent note — no action needed from testing agent."},
+      {"endpoint": "server.py organisation", "issue": "Carry-over: server.py is ~1300 lines, well past 700-line guideline. Recommend splitting into routers/."},
+      {"endpoint": "JWT signing", "issue": "Carry-over: InsecureKeyLengthWarning (28-byte JWT_SECRET, below 32-byte SHA256 minimum). Set 32+ byte secret."},
+      {"endpoint": "passlib/bcrypt", "issue": "Carry-over: 'module bcrypt has no attribute __about__' warning. Pin bcrypt==4.0.1."}
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [],
+    "react_native_issues": [
+      {"component": "Expo SDK package versions", "issue": "Carry-over: expo@54.0.34 (expected ~54.0.35), expo-font@14.0.11 (~14.0.12), expo-router@6.0.23 (~6.0.24). Run `npx expo install --check`."},
+      {"component": "Pressable/View", "issue": "Carry-over warning: 'props.pointerEvents is deprecated. Use style.pointerEvents'. NOTE: BiometricGate.tsx:75 itself uses `<View pointerEvents=\"auto\" ...>` which would trigger this warning if the overlay ever mounts on native — easy fix is `style={{ pointerEvents: 'auto', ... }}`."},
+      {"component": "Image (multiple)", "issue": "Carry-over warning: 'Image: style.resizeMode is deprecated. Please use props.resizeMode'."}
+    ]
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_iteration6.py",
+    "/app/test_reports/pytest/iter6_results.xml"
+  ],
+  "action_items": [
+    "(Minor) Replace `body: dict` in /app/backend/server.py:328-340 PATCH /api/auth/security with a Pydantic model (e.g. UpdateSecurityIn) to get proper request validation and OpenAPI schema.",
+    "(Minor nit) In /app/frontend/src/components/BiometricGate.tsx:75 migrate `pointerEvents=\"auto\"` from prop to style to suppress the deprecation warning when the overlay does mount on native devices.",
+    "(Carry-over) Set 32+ byte JWT_SECRET; pin bcrypt==4.0.1; run `npx expo install --check`; migrate deprecated Image.resizeMode / props.pointerEvents site-wide.",
+    "(Carry-over) Verify a domain in Resend (DNS for phoenix-atlas.com is in place; just waiting on async verification) and switch RESEND_FROM env to the verified domain so co-signer welcome + approval emails actually deliver to arbitrary recipients.",
+    "(Carry-over) Consider splitting server.py (1300 lines) into routers/auth, routers/wallet, routers/multisig, routers/market, routers/chat, routers/stripe, routers/calls."
+  ],
+  "critical_code_review_comments": [
+    "Excellent web-safe wrapper in /app/frontend/src/lib/biometric.ts: Platform.OS === 'web' short-circuit before require('expo-local-authentication') prevents bundler / runtime crashes on web; authenticate() resolves to {success: true} on web so any flow guarded by `if (user.biometric_enabled)` doesn't dead-end. Defensive try/catch around the dynamic require is also correct.",
+    "BiometricGate.tsx correctly composes auth + biometric — shouldGate = !!user?.biometric_enabled && !!caps?.available means the overlay only mounts when BOTH the server says the user opted in AND the device has enrolled biometrics. On web caps.available is forced false, so the overlay never renders even if biometric_enabled=true on the user — perfect graceful degradation.",
+    "Settings biometric toggle logic in settings.tsx:29-55 is robust: disable-path requires a fresh scan (only if hardware available), enable-path branches on !hasHardware (alert) vs !isEnrolled (alert) vs success (authenticate then PATCH). The Switch's `disabled={!bioCaps?.hasHardware}` provides UI-level protection on web/unsupported devices.",
+    "Send flow correctly gates on user.biometric_enabled (send.tsx:51-57) and on caps.available — so a user who toggled the flag on a phone with biometrics will be re-prompted at signing time, while web preview won't dead-end (caps.available=false → no prompt). On native, authenticate() failure sets err 'Biometric authentication failed' and aborts before hitting the API.",
+    "Backend PATCH /api/auth/security uses bool(body[...]) for both flags — coerces truthy/falsy values safely; only writes keys that are present (good partial-update semantics).",
+    "RESEND_FROM defaulting to 'Vaulted <onboarding@resend.dev>' in server.py:48 is a sensible fallback for unverified domains; cosigner welcome (line 586) + approval email (line 628) both reference RESEND_FROM consistently."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_iteration6.py (new — 11 tests covering biometric_enabled toggle persistence, /auth/me field presence, regression on login/wallet/cosigners/approvals, and RESEND_FROM no-crash path)"
+  ],
+  "success_rate": {"backend": "100% (11/11)", "frontend": "100% (all 4 spec UI checks verified: no overlay on web, login reachable, wallet renders, settings biometric row with disabled switch)"},
+  "seed_data_creation": "Per-module fresh user `it6_<uuid>@vaulted.app` registered for backend tests; promoted to Pro via direct mongo update for the RESEND_FROM cosigner-add check. Frontend testing used the pre-seeded smoketest@vaulted.app / test1234 account.",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "Iter6 adds biometric authentication. Backend surface: PATCH /api/auth/security accepts {biometric_enabled?: bool, multisig_enabled?: bool} (auth required, returns updated public user); GET /api/auth/me now includes biometric_enabled (default false). Frontend: BiometricGate wraps <Stack> in _layout.tsx — on web it's a no-op (Platform.OS check in biometric.ts:10). Settings has new toggle-biometric / biometric-switch testIDs; switch is disabled={!bioCaps.hasHardware}. Send flow re-prompts biometric scan before submitting if user.biometric_enabled AND caps.available. RESEND_FROM is now env-driven (defaults onboarding@resend.dev); Resend may 403 in testing-mode but backend swallows it. To exercise the full native biometric flow you'd need a real device or Expo Dev Client build — web preview will always show caps.available=false. The 30s background-lock logic in BiometricGate.tsx:38-50 also only fires on native (AppState transitions aren't meaningful in web preview).",
+  "rca_of_issue": "No production-blocking bugs in iteration 6. The biometric-related changes are well-scoped, web-safe, and properly gated. Only carry-over items remain (Resend testing-mode 403, deprecated package warnings, server.py size, JWT secret length)."
+}

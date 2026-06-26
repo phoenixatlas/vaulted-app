@@ -10,6 +10,7 @@ import { api } from "@/src/lib/api";
 import { useAuth } from "@/src/lib/auth";
 import { useI18n } from "@/src/lib/i18n";
 import { colors, spacing, radius, ASSET_ICON_COLORS } from "@/src/lib/theme";
+import { authenticate, getCapabilities } from "@/src/lib/biometric";
 
 type Asset = {
   id: string; symbol: string; name: string; amount: number; fiat_value: number;
@@ -45,6 +46,16 @@ export default function SendCrypto() {
     const amt = parseFloat(amount);
     if (!amt || amt <= 0) { setErr("Enter a valid amount"); return; }
     if (!addr.trim()) { setErr("Enter recipient address"); return; }
+
+    // If the user has biometric lock enabled, require a scan before signing.
+    if (user?.biometric_enabled) {
+      const caps = await getCapabilities();
+      if (caps.available) {
+        const auth = await authenticate({ reason: `Confirm send of ${amt} ${sel}` });
+        if (!auth.success) { setErr("Biometric authentication failed"); return; }
+      }
+    }
+
     setSubmitting(true);
     try {
       let tx: any;

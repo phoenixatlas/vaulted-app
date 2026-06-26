@@ -1,4 +1,5 @@
-import { View, Text, StyleSheet, Pressable, ScrollView, Switch } from "react-native";
+import { View, Text, StyleSheet, Pressable, ScrollView, Switch, Alert, Platform } from "react-native";
+import { useEffect, useState } from "react";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { useRouter } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
@@ -6,17 +7,51 @@ import { useAuth } from "@/src/lib/auth";
 import { useI18n, LANGUAGES } from "@/src/lib/i18n";
 import { api } from "@/src/lib/api";
 import { colors, spacing, radius } from "@/src/lib/theme";
+import { authenticate, getCapabilities, labelFor, BiometricCapabilities } from "@/src/lib/biometric";
 
 export default function Settings() {
   const { user, setUser, logout } = useAuth();
   const { t, lang, setLang } = useI18n();
   const router = useRouter();
+  const [bioCaps, setBioCaps] = useState<BiometricCapabilities | null>(null);
+
+  useEffect(() => { getCapabilities().then(setBioCaps); }, []);
+
+  const bioLabel = bioCaps ? labelFor(bioCaps.primary, Platform) : "Biometrics";
 
   const toggleSecurity = async (key: "biometric_enabled" | "multisig_enabled", val: boolean) => {
     try {
       const updated = await api("/auth/security", { method: "PATCH", body: { [key]: val } });
       setUser(updated as any);
     } catch (e) { console.log(e); }
+  };
+
+  const onBiometricToggle = async (val: boolean) => {
+    if (!val) {
+      // Disabling: require a biometric scan to confirm (only if hardware available)
+      if (bioCaps?.available) {
+        const res = await authenticate({ reason: `Disable ${bioLabel} lock?` });
+        if (!res.success) return;
+      }
+      await toggleSecurity("biometric_enabled", false);
+      return;
+    }
+    // Enabling
+    if (!bioCaps) return;
+    if (!bioCaps.hasHardware) {
+      Alert.alert("Not supported", "This device doesn't support biometric authentication.");
+      return;
+    }
+    if (!bioCaps.isEnrolled) {
+      Alert.alert(
+        `Set up ${bioLabel}`,
+        `You haven't enrolled ${bioLabel} on this device yet. Open your device settings to add it, then try again.`,
+      );
+      return;
+    }
+    const res = await authenticate({ reason: `Enable ${bioLabel} lock` });
+    if (!res.success) return;
+    await toggleSecurity("biometric_enabled", true);
   };
 
   const Row = ({ icon, label, onPress, right, testID }: any) => (
@@ -82,14 +117,15 @@ export default function Settings() {
         <Text style={s.section}>{t("security")}</Text>
         <View style={s.card}>
           <Row
-            icon="finger-print"
-            label={t("biometric")}
+            icon={bioCaps?.primary === "face" ? "scan-outline" : "finger-print"}
+            label={bioCaps?.available ? `${t("biometric")} (${bioLabel})` : t("biometric")}
             testID="toggle-biometric"
             right={
               <Switch
                 testID="biometric-switch"
                 value={!!user?.biometric_enabled}
-                onValueChange={(v) => toggleSecurity("biometric_enabled", v)}
+                disabled={!bioCaps?.hasHardware}
+                onValueChange={onBiometricToggle}
                 trackColor={{ true: colors.brand, false: colors.borderStrong }}
               />
             }
