@@ -43,6 +43,10 @@ APP_PUBLIC_URL = os.environ.get("APP_PUBLIC_URL", "")
 SEPOLIA_RPC_URL = os.environ.get("SEPOLIA_RPC_URL", "https://ethereum-sepolia-rpc.publicnode.com")
 SEPOLIA_CHAIN_ID = 11155111
 
+RESEND_API_KEY = os.environ.get("RESEND_API_KEY", "")
+MULTISIG_THRESHOLD_ETH = float(os.environ.get("MULTISIG_THRESHOLD_ETH", "0.01"))
+APPROVAL_TTL_HOURS = 24
+
 # Enable HD wallet features
 Account.enable_unaudited_hdwallet_features()
 
@@ -119,6 +123,16 @@ class StripeSyncIn(BaseModel):
 
 class CallRoomIn(BaseModel):
     conversation_id: Optional[str] = None
+
+
+class CosignerInviteIn(BaseModel):
+    email: EmailStr
+    label: Optional[str] = None
+
+
+class ApprovalActionIn(BaseModel):
+    token: str
+    decision: Literal["approve", "reject"]
 
 
 # ----------------------------- Helpers -----------------------------
@@ -433,7 +447,53 @@ async def eth_send(body: SendEthIn, user=Depends(get_current_user)):
     if not (to.startswith("0x") and len(to) == 42):
         raise HTTPException(status_code=400, detail="Invalid recipient address")
 
-    value_wei = int(round(body.amount_eth * 1e18))
+    # ---- Multi-sig gate ----
+    multisig_on = bool(user.get("multisig_enabled"))
+    cosigner = await db.cosigners.find_one(
+        {"user_id": user["id"], "status": "active"}, {"_id": 0}
+    )
+    needs_approval = (
+        multisig_on
+        and cosigner is not None
+        and body.amount_eth >= MULTISIG_THRESHOLD_ETH
+    )
+    if needs_approval:
+        approval_id = str(uuid.uuid4())
+        token = secrets.token_urlsafe(32)
+        expires = now_utc() + timedelta(hours=APPROVAL_TTL_HOURS)
+        pending = {
+            "id": approval_id,
+            "user_id": user["id"],
+            "user_name": user.get("name"),
+            "user_email": user.get("email"),
+            "from_address": addr,
+            "to_address": to,
+            "amount_eth": body.amount_eth,
+            "cosigner_id": cosigner["id"],
+            "cosigner_email": cosigner["email"],
+            "approver_token": token,
+            "status": "pending",
+            "created_at": iso(now_utc()),
+            "expires_at": iso(expires),
+        }
+        await db.eth_approvals.insert_one(pending)
+        await _send_approval_email(pending)
+        pending.pop("_id", None)
+        return {
+            "approval_required": True,
+            "approval_id": approval_id,
+            "cosigner_email": cosigner["email"],
+            "amount_eth": body.amount_eth,
+            "to_address": to,
+            "expires_at": pending["expires_at"],
+            "message": f"Awaiting approval from {cosigner['email']}",
+        }
+
+    return await _broadcast_eth_send(user, addr, pk, to, body.amount_eth)
+
+
+async def _broadcast_eth_send(user: dict, addr: str, pk: str, to: str, amount_eth: float) -> dict:
+    value_wei = int(round(amount_eth * 1e18))
     try:
         nonce_resp = await _eth_rpc("eth_getTransactionCount", [addr, "pending"])
         nonce = int(nonce_resp["result"], 16)
@@ -463,9 +523,8 @@ async def eth_send(body: SendEthIn, user=Depends(get_current_user)):
     except Exception as e:
         raise HTTPException(status_code=502, detail=f"Sepolia send failed: {e}")
 
-    # Vault Pro fee discount: simulated 50% off the dust fee we charge
     is_pro = (user.get("subscription") or {}).get("status") in ("active", "trialing")
-    service_fee_usd = 0.10 if not is_pro else 0.05
+    service_fee_usd = 0.05 if is_pro else 0.10
 
     price = next((a["price_usd"] for a in DEFAULT_ASSETS if a["symbol"] == "ETH"), 0)
     tx_record = {
@@ -474,8 +533,8 @@ async def eth_send(body: SendEthIn, user=Depends(get_current_user)):
         "type": "send",
         "category": "crypto",
         "asset": "ETH",
-        "amount": body.amount_eth,
-        "fiat_value": round(body.amount_eth * price, 2),
+        "amount": amount_eth,
+        "fiat_value": round(amount_eth * price, 2),
         "counterparty": to,
         "tx_hash": tx_hash,
         "network": "Sepolia",
@@ -488,6 +547,162 @@ async def eth_send(body: SendEthIn, user=Depends(get_current_user)):
     await db.transactions.insert_one(tx_record)
     tx_record.pop("_id", None)
     return tx_record
+
+
+# --------------------------- Multi-sig: co-signers & approvals ---------------------------
+async def _send_approval_email(pending: dict) -> None:
+    if not RESEND_API_KEY:
+        logger.warning("RESEND_API_KEY not set; skipping approval email")
+        return
+    base = APP_PUBLIC_URL.rstrip("/")
+    approve_url = f"{base}/approve?token={pending['approver_token']}&decision=approve"
+    reject_url = f"{base}/approve?token={pending['approver_token']}&decision=reject"
+    short_to = pending["to_address"][:10] + "..." + pending["to_address"][-6:]
+    html = f"""
+    <div style="font-family:-apple-system,Helvetica,Arial,sans-serif;max-width:520px;margin:auto;padding:24px;background:#fcfcfc;color:#1a1d1a">
+      <div style="font-size:22px;font-weight:700;color:#3F6156;margin-bottom:4px">Vaulted</div>
+      <div style="font-size:13px;color:#6d7a73;margin-bottom:24px">Multi-signature approval request</div>
+      <div style="background:#f3f4f3;padding:16px;border-radius:12px">
+        <div style="font-size:13px;color:#6d7a73">{pending['user_name']} ({pending['user_email']}) wants to send</div>
+        <div style="font-size:28px;font-weight:700;margin-top:6px">{pending['amount_eth']} ETH</div>
+        <div style="font-size:12px;color:#6d7a73;margin-top:6px">to <code>{short_to}</code> on Sepolia</div>
+      </div>
+      <p style="font-size:13px;color:#4a524d;margin-top:18px">As their designated co-signer, your approval is required for sends ≥ {MULTISIG_THRESHOLD_ETH} ETH. This request expires in {APPROVAL_TTL_HOURS}h.</p>
+      <div style="margin-top:24px">
+        <a href="{approve_url}" style="display:inline-block;background:#3F6156;color:#fff;padding:12px 20px;border-radius:10px;text-decoration:none;font-weight:600;margin-right:8px">Approve</a>
+        <a href="{reject_url}" style="display:inline-block;background:#fff;color:#b83a3a;padding:12px 20px;border-radius:10px;text-decoration:none;font-weight:600;border:1px solid #b83a3a">Reject</a>
+      </div>
+      <div style="font-size:11px;color:#6d7a73;margin-top:24px">If you didn't expect this, reject and let {pending['user_email']} know — their account may be compromised.</div>
+    </div>
+    """
+    try:
+        async with httpx.AsyncClient(timeout=12) as cx:
+            r = await cx.post(
+                "https://api.resend.com/emails",
+                headers={"Authorization": f"Bearer {RESEND_API_KEY}", "Content-Type": "application/json"},
+                json={
+                    "from": "Vaulted <onboarding@resend.dev>",
+                    "to": [pending["cosigner_email"]],
+                    "subject": f"Approve {pending['amount_eth']} ETH from Vaulted?",
+                    "html": html,
+                },
+            )
+            if r.status_code >= 400:
+                logger.warning(f"resend send failed {r.status_code}: {r.text[:200]}")
+    except Exception as e:
+        logger.warning(f"resend send exception: {e}")
+
+
+@api.get("/cosigners")
+async def list_cosigners(user=Depends(get_current_user)):
+    cur = db.cosigners.find({"user_id": user["id"]}, {"_id": 0})
+    return await cur.to_list(50)
+
+
+@api.post("/cosigners")
+async def add_cosigner(body: CosignerInviteIn, user=Depends(get_current_user)):
+    if not (user.get("subscription") or {}).get("status") in ("active", "trialing"):
+        raise HTTPException(status_code=402, detail="Vault Pro required to add co-signers")
+    existing = await db.cosigners.find_one({"user_id": user["id"], "email": body.email.lower()}, {"_id": 0})
+    if existing:
+        raise HTTPException(status_code=400, detail="Co-signer already added")
+    doc = {
+        "id": str(uuid.uuid4()),
+        "user_id": user["id"],
+        "email": body.email.lower(),
+        "label": body.label or body.email.split("@")[0],
+        "status": "active",
+        "added_at": iso(now_utc()),
+    }
+    await db.cosigners.insert_one(doc)
+    # Send a welcome / "you are now a co-signer" email so the recipient knows
+    if RESEND_API_KEY:
+        try:
+            async with httpx.AsyncClient(timeout=10) as cx:
+                await cx.post(
+                    "https://api.resend.com/emails",
+                    headers={"Authorization": f"Bearer {RESEND_API_KEY}", "Content-Type": "application/json"},
+                    json={
+                        "from": "Vaulted <onboarding@resend.dev>",
+                        "to": [body.email],
+                        "subject": f"You're now a Vaulted co-signer for {user.get('name')}",
+                        "html": f"<p>{user.get('name')} ({user.get('email')}) added you as a co-signer on their Vaulted wallet. You'll receive an email any time they try to send ≥ {MULTISIG_THRESHOLD_ETH} ETH; tap Approve or Reject in those emails.</p>",
+                    },
+                )
+        except Exception as e:
+            logger.warning(f"welcome email failed: {e}")
+    doc.pop("_id", None)
+    return doc
+
+
+@api.delete("/cosigners/{cosigner_id}")
+async def remove_cosigner(cosigner_id: str, user=Depends(get_current_user)):
+    r = await db.cosigners.delete_one({"id": cosigner_id, "user_id": user["id"]})
+    if r.deleted_count == 0:
+        raise HTTPException(status_code=404, detail="Co-signer not found")
+    return {"removed": True}
+
+
+@api.get("/approvals/pending")
+async def list_pending_approvals(user=Depends(get_current_user)):
+    cur = db.eth_approvals.find(
+        {"user_id": user["id"], "status": "pending"}, {"_id": 0, "approver_token": 0}
+    ).sort("created_at", -1)
+    return await cur.to_list(50)
+
+
+@api.post("/approvals/decide")
+async def decide_approval(body: ApprovalActionIn):
+    """Public endpoint hit from email link (no auth — the token is the credential)."""
+    approval = await db.eth_approvals.find_one({"approver_token": body.token}, {"_id": 0})
+    if not approval:
+        raise HTTPException(status_code=404, detail="Approval not found or already used")
+    if approval["status"] != "pending":
+        return {"status": approval["status"], "already": True, "approval": approval}
+
+    try:
+        expires = datetime.fromisoformat(approval["expires_at"])
+        if now_utc() > expires:
+            await db.eth_approvals.update_one(
+                {"id": approval["id"]}, {"$set": {"status": "expired", "decided_at": iso(now_utc())}}
+            )
+            raise HTTPException(status_code=410, detail="Approval expired")
+    except HTTPException:
+        raise
+    except Exception:
+        pass
+
+    if body.decision == "reject":
+        await db.eth_approvals.update_one(
+            {"id": approval["id"]}, {"$set": {"status": "rejected", "decided_at": iso(now_utc())}}
+        )
+        return {"status": "rejected", "approval_id": approval["id"]}
+
+    # Approve → broadcast the tx now using the sender's key
+    user = await db.users.find_one({"id": approval["user_id"]}, {"_id": 0})
+    if not user:
+        raise HTTPException(status_code=404, detail="Original sender not found")
+    try:
+        tx_record = await _broadcast_eth_send(
+            user, user["wallet_address"], user["eth_private_key"],
+            approval["to_address"], approval["amount_eth"],
+        )
+    except HTTPException as e:
+        await db.eth_approvals.update_one(
+            {"id": approval["id"]},
+            {"$set": {"status": "failed", "decided_at": iso(now_utc()), "failure_reason": e.detail}},
+        )
+        raise
+    await db.eth_approvals.update_one(
+        {"id": approval["id"]},
+        {"$set": {
+            "status": "approved",
+            "decided_at": iso(now_utc()),
+            "tx_hash": tx_record.get("tx_hash"),
+            "explorer_url": tx_record.get("explorer_url"),
+        }},
+    )
+    return {"status": "approved", "approval_id": approval["id"], "tx_hash": tx_record.get("tx_hash"), "explorer_url": tx_record.get("explorer_url")}
 
 
 @api.get("/wallet/eth/export")

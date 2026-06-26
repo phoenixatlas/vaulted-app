@@ -59,6 +59,11 @@ export default function SendCrypto() {
           body: { asset: sel, amount: amt, to_address: addr.trim(), memo: memo.trim() || null },
         });
       }
+      // Multi-sig: backend returns approval_required:true instead of a tx
+      if (tx && tx.approval_required) {
+        router.replace({ pathname: "/approvals" });
+        return;
+      }
       router.replace({ pathname: "/receipt", params: { ...(tx as any) } });
     } catch (e: any) { setErr(e.message); } finally { setSubmitting(false); }
   };

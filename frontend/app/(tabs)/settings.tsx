@@ -116,6 +116,20 @@ export default function Settings() {
           />
           <View style={s.sep} />
           <Row
+            icon="people"
+            label="Co-signers"
+            testID="open-cosigners"
+            onPress={() => router.push("/cosigners")}
+          />
+          <View style={s.sep} />
+          <Row
+            icon="time"
+            label="Pending approvals"
+            testID="open-approvals"
+            onPress={() => router.push("/approvals")}
+          />
+          <View style={s.sep} />
+          <Row
             icon="reader"
             label="Show recovery phrase"
             testID="open-seed-phrase"
