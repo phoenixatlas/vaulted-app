@@ -13,6 +13,13 @@
   - `POST /api/wallet/eth/send` gates ≥ threshold behind `approval_required:true` and emails the co-signer one-click Approve/Reject links pointing to `<APP_URL>/approve?token=...`.
   - `POST /api/approvals/decide` is the **public** decision endpoint (no auth — the token IS the credential). Approve attempts a real Sepolia broadcast. Idempotent; expired returns 410.
   - Frontend: `/cosigners`, `/approvals`, `/approve` screens; Settings → Security routes both into Pro-gated UX.
+- **Iter 6** — **Biometric authentication (Face ID / Touch ID / Fingerprint).**
+  - `expo-local-authentication@17.x` added; `app.json` declares `NSFaceIDUsageDescription` + Android biometric perms.
+  - `/src/lib/biometric.ts` — web-safe capability check + `authenticate()` wrapper.
+  - `/src/components/BiometricGate.tsx` — full-screen lock that triggers on first mount and on app foreground after 30s in background; no-op on web/no-hardware.
+  - Settings → Security: enabling now requires a successful biometric scan; switch is disabled & label gracefully degrades when no hardware/enrollment.
+  - `/send.tsx`: when `user.biometric_enabled`, every send requires a fresh biometric scan before signing.
+  - `RESEND_FROM` env var added — once `phoenix-atlas.com` Resend verification completes, flip it (`/app/scripts/check_resend_domain.sh` automates this).
 
 ## Live integration keys (in /app/backend/.env)
 - `STRIPE_API_KEY` — real `sk_test_51Tlaat...`

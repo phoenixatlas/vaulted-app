@@ -72,7 +72,7 @@ export function BiometricGate({ children }: { children: React.ReactNode }) {
   return (
     <>
       {children}
-      <View pointerEvents="auto" style={s.overlay}>
+      <View style={[s.overlay, { pointerEvents: "auto" } as any]}>
         <View style={s.card}>
           <View style={s.iconWrap}>
             <Ionicons name={icon} size={42} color={colors.brand} />
