@@ -1609,7 +1609,7 @@ app.include_router(api)
 
 
 # Lightweight liveness probe for Railway/Render/Fly health checks.
-@app.get("/api/health")
+@app.api_route("/api/health", methods=["GET", "HEAD"])
 async def health() -> dict:
     return {"status": "ok"}
 
