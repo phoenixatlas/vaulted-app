@@ -1,6 +1,10 @@
 import { storage } from "@/src/utils/storage";
 
-const BASE = process.env.EXPO_PUBLIC_BACKEND_URL;
+// Backend URL: prefer env var (Emergent / local dev), fallback to production Render URL.
+// This makes the Vercel web build robust to env var misconfigurations.
+const BASE =
+  (process.env.EXPO_PUBLIC_BACKEND_URL && process.env.EXPO_PUBLIC_BACKEND_URL.trim()) ||
+  "https://vaulted-app.onrender.com";
 const TOKEN_KEY = "vaulted_token";
 
 export async function setToken(token: string | null) {
