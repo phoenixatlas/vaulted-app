@@ -1,36 +1,30 @@
 # Vaulted — Secure Crypto Wallet (PRD)
 
-## Vision
-A self-custody crypto wallet mobile app combining crypto storage, fiat on/off-ramps, end-to-end encrypted peer chat, and built-in video calls. iOS-Native Clean design (moss/sage palette).
-
-## Implemented Features
-
-### Iter 1 — MVP
-JWT+bcrypt auth · simulated BTC/ETH/USDC/SOL wallet · simulated fiat deposit/withdraw with VLT receipts · activity feed · polling chat w/ 3 seeded contacts · mocked video UI · EN/ES/FR/AR i18n · biometric/multi-sig settings toggles.
-
-### Iter 2 — Live integrations
-Real Stripe Checkout (deposit + Vault Pro subscription) + webhook + sync + cancel · Real Daily.co video rooms via WebView · Real E2E chat via TweetNaCl secretbox · Vault Pro $9.99/mo gating.
-
-### Iter 3 — On-chain ETH + Pro perks
-Real Ethereum keypair on Sepolia · `/wallet/eth/{info,send,export}` · `/wallet/assets` reads live chain balance · Pro 50% fee discount · Vault Support pinned + PRIORITY badge · Stripe Billing Portal · multi-sig gated behind subscription · Export private key flow.
-
-### Iter 4 — Live prices + BIP-39 onboarding
-- **CoinGecko live prices**: `/api/market/prices` with 300s server cache, falls back to stale cache then defaults; `/wallet/assets` now includes `change_24h_pct` and `sparkline_7d[]` per asset.
-- **SVG sparklines** on every wallet row via `react-native-svg`, color-coded (green/red) by 24h move.
-- **BIP-39 12-word recovery phrase** generated via `Account.create_with_mnemonic()` on registration. `/wallet/eth/mnemonic` reveals it. Address derived from mnemonic verified to match `eth_private_key`.
-- **Onboarding flow** `/onboarding/seed` (reveal-tap + 12 numbered word cells) → `/onboarding/verify` (4-question word-position quiz with distractors) → `/auth/onboarding-complete` → wallet. Settings exposes both "Show recovery phrase" and "Export private key".
+## Iterations
+- **Iter 1** — JWT auth, simulated wallet, simulated fiat, polling chat, mocked video, i18n.
+- **Iter 2** — Live Stripe + Daily.co + TweetNaCl E2E chat + Vault Pro $9.99/mo.
+- **Iter 3** — Real Sepolia ETH (key, send, export); Pro perks (50% fee, pinned support, billing portal); multi-sig gating.
+- **Iter 4** — Live CoinGecko prices + sparklines; BIP-39 12-word recovery + verify quiz.
+- **Iter 5** — **Real 2-of-2 ETH multi-sig with Resend email approvals.**
+  - `RESEND_API_KEY` configured.
+  - Threshold: `0.01 ETH` (configurable via env).
+  - Approval TTL: 24h.
+  - `POST /api/cosigners` (Pro only) → sends a welcome email + persists.
+  - `POST /api/wallet/eth/send` gates ≥ threshold behind `approval_required:true` and emails the co-signer one-click Approve/Reject links pointing to `<APP_URL>/approve?token=...`.
+  - `POST /api/approvals/decide` is the **public** decision endpoint (no auth — the token IS the credential). Approve attempts a real Sepolia broadcast. Idempotent; expired returns 410.
+  - Frontend: `/cosigners`, `/approvals`, `/approve` screens; Settings → Security routes both into Pro-gated UX.
 
 ## Live integration keys (in /app/backend/.env)
 - `STRIPE_API_KEY` — real `sk_test_51Tlaat...`
-- `DAILY_API_KEY` — real (domain `phoenixatl.daily.co`)
-- `SEPOLIA_RPC_URL` — `https://ethereum-sepolia-rpc.publicnode.com` (free public)
-- `COINGECKO_API` — free tier, no key needed
-
-## Still simulated / deferred
-- BTC, USDC, SOL balances (MongoDB only)
-- Fiat withdrawals (Stripe Connect not onboarded)
-- Multi-sig 2-of-N signing (UI toggle only)
-- Push notifications (deferred — requires native build, not Expo Go)
+- `DAILY_API_KEY` — real (`phoenixatl.daily.co`)
+- `SEPOLIA_RPC_URL` — public node
+- `RESEND_API_KEY` — real, **testing mode**: currently only delivers to `oumarsanii@yahoo.co.uk` (Resend free-tier requires verified domain to send to arbitrary recipients).
 
 ## Test status
-- Iter 1: 32/32 · Iter 2: 41/41 · Iter 3: 30/31 · **Iter 4: 35/35** (21 backend pytest + 14 frontend UI)
+- Iter 5: **19/19 backend pytest + full frontend UI verified** ✅
+- All previous iterations regression-tested green.
+
+## Open follow-ups
+1. **Resend domain verification** — verify a domain at resend.com/domains and replace `onboarding@resend.dev` in `server.py:583,626` to deliver to real cosigners outside your own email.
+2. Push notifications, real multi-sig 2-of-N beyond 2-of-2, CSV tax export — still deferred.
+3. Optional: pin bcrypt==4.0.1, lengthen JWT_SECRET to 32 bytes, split server.py routers, fix deprecated `pointerEvents`/`resizeMode` warnings.
