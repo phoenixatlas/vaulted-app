@@ -445,7 +445,7 @@ async def wallet_assets(user=Depends(get_current_user)):
     network_for = {
         "ETH": "Mainnet" if USE_MAINNET else "Sepolia",
         "USDC": "Mainnet" if USE_MAINNET else "Sepolia",
-        "BTC": "Mainnet" if not BTC_TESTNET else "Testnet",
+        "BTC": "Mainnet" if not BTC_TESTNET else "Testnet3",
         "SOL": "Mainnet" if USE_MAINNET else "Devnet",
     }
     address_for = {"ETH": addr, "USDC": addr, "BTC": btc_addr, "SOL": sol_addr}
@@ -708,13 +708,31 @@ async def btc_send_route(body: SendCoinIn, user=Depends(get_current_user)):
     if not to or len(to) < 26:
         raise HTTPException(status_code=400, detail="Invalid recipient address")
 
+    # Pre-flight balance check so we surface a clean 400 (not a 502 HTML ingress page)
+    # when the user has zero/insufficient testnet UTXOs.
+    btc_addr = user.get("btc_address")
+    if btc_addr:
+        try:
+            sats = await fetch_btc_balance_sats(btc_addr)
+        except Exception:
+            sats = None
+        if sats is not None:
+            have = sats / 1e8
+            # Reserve ~1000 sats (1e-5 BTC) buffer for the miner fee
+            if have < body.amount + 0.00001:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Insufficient BTC (need {body.amount}+fee, have {have})",
+                )
+
     try:
         result = await btc_send(mnemonic, to, body.amount)
     except Exception as e:
         msg = str(e)
         if "insufficient" in msg.lower():
             raise HTTPException(status_code=400, detail="Insufficient BTC (incl. miner fee)") from e
-        raise HTTPException(status_code=502, detail=f"BTC broadcast failed: {msg[:200]}") from e
+        # Return 400 (not 502) so the JSON body survives the ingress
+        raise HTTPException(status_code=400, detail=f"BTC broadcast failed: {msg[:200]}") from e
 
     fiat_value = await _btc_to_usd(body.amount)
     record = {
