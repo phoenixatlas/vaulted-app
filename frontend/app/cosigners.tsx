@@ -122,7 +122,7 @@ const s = StyleSheet.create({
   label: { fontSize: 13, color: colors.onSurfaceSecondary, marginBottom: spacing.xs, marginTop: spacing.md, fontWeight: "500" },
   input: { borderWidth: 1, borderColor: colors.border, borderRadius: radius.md, paddingHorizontal: spacing.lg, paddingVertical: 14, fontSize: 15, color: colors.onSurface, backgroundColor: colors.surface },
   cta: { backgroundColor: colors.brand, borderRadius: radius.md, paddingVertical: 16, alignItems: "center", marginTop: spacing.xl },
-  ctaText: { color: "#fff", fontSize: 16, fontWeight: "600" },
+  ctaText: { color: "#0F0B08", fontSize: 16, fontWeight: "600" },
   upsell: { alignItems: "center", padding: spacing.md, marginTop: 4 },
   upsellText: { color: colors.brand, fontSize: 13, fontWeight: "600" },
   error: { color: colors.error, marginTop: spacing.md, fontSize: 14 },

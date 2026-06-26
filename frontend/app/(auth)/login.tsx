@@ -1,14 +1,13 @@
 import { useState } from "react";
 import {
   View, Text, TextInput, Pressable, StyleSheet, KeyboardAvoidingView,
-  Platform, ScrollView, ActivityIndicator,
+  Platform, ScrollView, ActivityIndicator, Image,
 } from "react-native";
 import { Link, useRouter } from "expo-router";
-import { Ionicons } from "@expo/vector-icons";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { useAuth } from "@/src/lib/auth";
 import { useI18n } from "@/src/lib/i18n";
-import { colors, spacing, radius } from "@/src/lib/theme";
+import { colors, spacing, radius, BRAND_IMAGES } from "@/src/lib/theme";
 
 export default function Login() {
   const { login } = useAuth();
@@ -36,11 +35,9 @@ export default function Login() {
     <SafeAreaView style={s.root} edges={["top", "bottom"]}>
       <KeyboardAvoidingView behavior={Platform.OS === "ios" ? "padding" : "height"} style={{ flex: 1 }}>
         <ScrollView contentContainerStyle={s.scroll} keyboardShouldPersistTaps="handled">
-          <View style={s.brandRow}>
-            <View style={s.logo}>
-              <Ionicons name="shield-checkmark" size={28} color={colors.brand} />
-            </View>
-            <Text style={s.brandText}>Vaulted</Text>
+          <View style={s.brandBlock}>
+            <Image source={BRAND_IMAGES.wordmark} style={s.brandImg} resizeMode="contain" />
+            <Text style={s.brandTagline}>Self-custody · Encrypted · Sovereign</Text>
           </View>
 
           <Text style={s.title}>{t("welcome_back")}</Text>
@@ -89,27 +86,28 @@ export default function Login() {
 }
 
 const s = StyleSheet.create({
-  root: { flex: 1, backgroundColor: colors.surface },
-  scroll: { padding: spacing.xl, paddingTop: spacing.xxl, flexGrow: 1 },
-  brandRow: { flexDirection: "row", alignItems: "center", gap: spacing.sm, marginBottom: spacing.xxl },
-  logo: { width: 44, height: 44, borderRadius: radius.md, backgroundColor: colors.brandTertiary, alignItems: "center", justifyContent: "center" },
-  brandText: { fontSize: 22, fontWeight: "700", color: colors.onSurface, letterSpacing: -0.5 },
-  title: { fontSize: 30, fontWeight: "700", color: colors.onSurface, letterSpacing: -0.8 },
-  subtitle: { fontSize: 15, color: colors.onSurfaceSecondary, marginTop: spacing.sm, marginBottom: spacing.xl },
+  root: { flex: 1, backgroundColor: colors.surfaceInverse },
+  scroll: { padding: spacing.xl, paddingTop: spacing.xxl, flexGrow: 1, backgroundColor: colors.surfaceInverse },
+  brandBlock: { alignItems: "center", marginTop: spacing.lg, marginBottom: spacing.xxl, gap: spacing.sm },
+  brandImg: { width: 280, height: 64 },
+  brandTagline: { fontSize: 11, color: colors.brand, letterSpacing: 2.5, fontWeight: "600", textTransform: "uppercase" },
+  title: { fontSize: 30, fontWeight: "700", color: colors.onSurfaceInverse, letterSpacing: -0.8 },
+  subtitle: { fontSize: 15, color: "rgba(245,233,201,0.65)", marginTop: spacing.sm, marginBottom: spacing.xl },
   field: { marginBottom: spacing.lg },
-  label: { fontSize: 13, color: colors.onSurfaceSecondary, marginBottom: spacing.xs, fontWeight: "500" },
+  label: { fontSize: 13, color: "rgba(245,233,201,0.75)", marginBottom: spacing.xs, fontWeight: "500" },
   input: {
-    borderWidth: 1, borderColor: colors.border, borderRadius: radius.md,
-    paddingHorizontal: spacing.lg, paddingVertical: 14, fontSize: 16, color: colors.onSurface,
-    backgroundColor: colors.surface,
+    borderWidth: 1, borderColor: colors.borderInverse, borderRadius: radius.md,
+    paddingHorizontal: spacing.lg, paddingVertical: 14, fontSize: 16, color: colors.onSurfaceInverse,
+    backgroundColor: colors.surfaceInverseSecondary,
   },
   cta: {
     backgroundColor: colors.brand, borderRadius: radius.md, paddingVertical: 16,
     alignItems: "center", marginTop: spacing.sm,
+    shadowColor: colors.brand, shadowOpacity: 0.35, shadowRadius: 14, shadowOffset: { width: 0, height: 4 },
   },
-  ctaText: { color: "#fff", fontSize: 16, fontWeight: "600" },
+  ctaText: { color: colors.surfaceInverse, fontSize: 16, fontWeight: "700", letterSpacing: 0.3 },
   switchRow: { flexDirection: "row", justifyContent: "center", marginTop: spacing.xl },
-  muted: { color: colors.onSurfaceSecondary, fontSize: 14 },
-  linkText: { color: colors.brand, fontSize: 14, fontWeight: "600" },
-  error: { color: colors.error, marginBottom: spacing.sm, fontSize: 14 },
+  muted: { color: "rgba(245,233,201,0.6)", fontSize: 14 },
+  linkText: { color: colors.brand, fontSize: 14, fontWeight: "700" },
+  error: { color: "#E0735F", marginBottom: spacing.sm, fontSize: 14 },
 });

@@ -174,7 +174,7 @@ const s = StyleSheet.create({
   proPill: { backgroundColor: colors.brand, paddingHorizontal: 6, paddingVertical: 2, borderRadius: radius.pill },
   proPillText: { color: "#fff", fontSize: 9, fontWeight: "800", letterSpacing: 0.5 },
   cta: { backgroundColor: colors.brand, borderRadius: radius.md, paddingVertical: 16, alignItems: "center", marginTop: spacing.xl },
-  ctaText: { color: "#fff", fontSize: 16, fontWeight: "600" },
+  ctaText: { color: "#0F0B08", fontSize: 16, fontWeight: "600" },
   faucet: { flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 6, marginTop: spacing.lg, padding: spacing.sm },
   faucetText: { color: colors.brand, fontSize: 13, fontWeight: "500" },
   error: { color: colors.error, marginTop: spacing.md, fontSize: 14 },

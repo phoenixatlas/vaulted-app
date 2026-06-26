@@ -185,7 +185,7 @@ const s = StyleSheet.create({
   cta: { backgroundColor: colors.brand, borderRadius: radius.md, paddingVertical: 16, alignItems: "center", marginTop: spacing.xl },
   ctaOutline: { borderRadius: radius.md, paddingVertical: 16, alignItems: "center", marginTop: spacing.md, borderWidth: 1, borderColor: colors.error },
   ctaOutlineBrand: { borderRadius: radius.md, paddingVertical: 16, alignItems: "center", marginTop: spacing.xl, borderWidth: 1, borderColor: colors.brand },
-  ctaText: { color: "#fff", fontSize: 16, fontWeight: "600" },
+  ctaText: { color: "#0F0B08", fontSize: 16, fontWeight: "600" },
   msg: { color: colors.onSurfaceSecondary, marginTop: spacing.md, textAlign: "center" },
   tinyNote: { color: colors.onSurfaceTertiary, fontSize: 10, marginTop: spacing.lg, textAlign: "center" },
 });

@@ -119,7 +119,7 @@ const s = StyleSheet.create({
   optionChipActive: { backgroundColor: colors.brand, borderColor: colors.brand },
   optionText: { color: colors.onSurface, fontSize: 14, fontWeight: "600" },
   cta: { backgroundColor: colors.brand, borderRadius: radius.md, paddingVertical: 16, alignItems: "center", marginTop: spacing.xl },
-  ctaText: { color: "#fff", fontSize: 16, fontWeight: "600" },
+  ctaText: { color: "#0F0B08", fontSize: 16, fontWeight: "600" },
   linkBtn: { alignItems: "center", marginTop: spacing.md, padding: spacing.sm },
   linkText: { color: colors.brand, fontSize: 13, fontWeight: "500" },
   error: { color: colors.error, marginTop: spacing.md, fontSize: 14, textAlign: "center" },

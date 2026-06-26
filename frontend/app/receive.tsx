@@ -45,5 +45,5 @@ const s = StyleSheet.create({
   addrBox: { backgroundColor: colors.surfaceSecondary, paddingHorizontal: spacing.lg, paddingVertical: spacing.md, borderRadius: radius.md },
   addrText: { color: colors.onSurface, fontSize: 13, fontFamily: Platform.OS === "ios" ? "Menlo" : "monospace" },
   cta: { backgroundColor: colors.brand, borderRadius: radius.md, paddingVertical: 14, paddingHorizontal: spacing.xxl, marginTop: spacing.md },
-  ctaText: { color: "#fff", fontSize: 15, fontWeight: "600" },
+  ctaText: { color: "#0F0B08", fontSize: 15, fontWeight: "600" },
 });

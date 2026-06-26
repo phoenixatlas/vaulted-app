@@ -26,13 +26,13 @@ export default function TabsLayout() {
         tabBarInactiveTintColor: colors.onSurfaceTertiary,
         tabBarStyle: {
           backgroundColor: colors.surface,
-          borderTopColor: colors.divider,
+          borderTopColor: "rgba(201,163,91,0.18)",
           borderTopWidth: 1,
           height: Platform.OS === "ios" ? 84 : 64,
           paddingTop: 8,
           paddingBottom: Platform.OS === "ios" ? 28 : 8,
         },
-        tabBarLabelStyle: { fontSize: 11, fontWeight: "600" },
+        tabBarLabelStyle: { fontSize: 11, fontWeight: "600", letterSpacing: 0.2 },
       }}
     >
       <Tabs.Screen

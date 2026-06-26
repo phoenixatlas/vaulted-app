@@ -121,7 +121,7 @@ export default function Conversation() {
               return (
                 <View style={[s.bubbleWrap, { alignItems: item.sender === "me" ? "flex-end" : "flex-start" }]}>
                   <View style={[s.bubble, item.sender === "me" ? s.bubbleMe : s.bubbleThem]}>
-                    <Text style={[s.bubbleText, item.sender === "me" && { color: "#fff" }]}>
+                    <Text style={[s.bubbleText, item.sender === "me" && { color: "#0F0B08" }]}>
                       {item._plain ?? item.text}
                     </Text>
                   </View>
@@ -152,7 +152,7 @@ export default function Conversation() {
             disabled={sending || !text.trim()}
             style={[s.sendBtn, (!text.trim() || sending) && { opacity: 0.5 }]}
           >
-            <Ionicons name="arrow-up" size={20} color="#fff" />
+            <Ionicons name="arrow-up" size={20} color="#0F0B08" />
           </Pressable>
         </View>
       </KeyboardAvoidingView>

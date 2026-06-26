@@ -8,7 +8,7 @@ import { Ionicons } from "@expo/vector-icons";
 import { api } from "@/src/lib/api";
 import { useAuth } from "@/src/lib/auth";
 import { useI18n } from "@/src/lib/i18n";
-import { colors, spacing, radius, ASSET_ICON_COLORS } from "@/src/lib/theme";
+import { colors, spacing, radius, ASSET_ICON_COLORS, BRAND_IMAGES } from "@/src/lib/theme";
 import Sparkline from "@/src/components/Sparkline";
 
 type Asset = { id: string; symbol: string; name: string; amount: number; price_usd: number; fiat_value: number; on_chain?: boolean; network?: string | null; change_24h_pct?: number; sparkline_7d?: number[] };
@@ -60,8 +60,8 @@ export default function Wallet() {
         </View>
 
         <ImageBackground
-          source={{ uri: "https://images.unsplash.com/photo-1636837955417-2d8a4e49368f?crop=entropy&cs=srgb&fm=jpg&w=1200&q=70" }}
-          imageStyle={{ borderRadius: radius.lg, opacity: 0.12 }}
+          source={BRAND_IMAGES.mark}
+          imageStyle={{ borderRadius: radius.lg, opacity: 0.10, transform: [{ scale: 1.15 }] }}
           style={s.hero}
         >
           <Text style={s.heroLabel}>{t("total_balance")}</Text>
@@ -145,10 +145,10 @@ const s = StyleSheet.create({
   greet: { fontSize: 22, fontWeight: "700", color: colors.onSurface, letterSpacing: -0.5 },
   subgreet: { fontSize: 13, color: colors.onSurfaceSecondary, marginTop: 2 },
   avatar: { width: 40, height: 40, borderRadius: radius.pill, backgroundColor: colors.brandTertiary, alignItems: "center", justifyContent: "center" },
-  hero: { marginHorizontal: spacing.xl, borderRadius: radius.lg, backgroundColor: colors.surfaceInverse, padding: spacing.xl, overflow: "hidden" },
-  heroLabel: { color: colors.onSurfaceInverse, opacity: 0.7, fontSize: 13, fontWeight: "500" },
+  hero: { marginHorizontal: spacing.xl, borderRadius: radius.lg, backgroundColor: colors.surfaceInverse, padding: spacing.xl, overflow: "hidden", borderWidth: 1, borderColor: "rgba(201,163,91,0.30)" },
+  heroLabel: { color: colors.brand, opacity: 0.85, fontSize: 11, fontWeight: "700", letterSpacing: 2, textTransform: "uppercase" },
   heroBalance: { color: colors.onSurfaceInverse, fontSize: 40, fontWeight: "700", marginTop: spacing.xs, letterSpacing: -1.2 },
-  addrRow: { flexDirection: "row", alignItems: "center", gap: 6, marginTop: spacing.lg, backgroundColor: "rgba(255,255,255,0.08)", paddingHorizontal: 10, paddingVertical: 6, borderRadius: radius.pill, alignSelf: "flex-start", maxWidth: "100%" },
+  addrRow: { flexDirection: "row", alignItems: "center", gap: 6, marginTop: spacing.lg, backgroundColor: "rgba(201,163,91,0.12)", paddingHorizontal: 10, paddingVertical: 6, borderRadius: radius.pill, alignSelf: "flex-start", maxWidth: "100%", borderWidth: 1, borderColor: "rgba(201,163,91,0.25)" },
   addrText: { color: colors.onSurfaceInverse, fontSize: 11, opacity: 0.85, maxWidth: 220 },
   actionsRow: { flexDirection: "row", justifyContent: "space-around", paddingHorizontal: spacing.xl, marginTop: spacing.xl },
   action: { alignItems: "center", gap: 6 },

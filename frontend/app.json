@@ -17,7 +17,7 @@
     "android": {
       "adaptiveIcon": {
         "foregroundImage": "./assets/images/adaptive-icon.png",
-        "backgroundColor": "#000"
+        "backgroundColor": "#0F0B08"
       },
       "edgeToEdgeEnabled": true,
       "permissions": ["USE_BIOMETRIC", "USE_FINGERPRINT"]
@@ -33,9 +33,9 @@
         "expo-splash-screen",
         {
           "image": "./assets/images/splash-icon.png",
-          "imageWidth": 200,
+          "imageWidth": 240,
           "resizeMode": "contain",
-          "backgroundColor": "#000"
+          "backgroundColor": "#0F0B08"
         }
       ],
       [

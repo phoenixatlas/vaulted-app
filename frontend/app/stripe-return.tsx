@@ -69,5 +69,5 @@ const s = StyleSheet.create({
   subtitle: { fontSize: 15, color: colors.onSurfaceSecondary, textAlign: "center", marginHorizontal: spacing.lg },
   note: { color: colors.onSurfaceSecondary, marginTop: spacing.md },
   cta: { backgroundColor: colors.brand, borderRadius: radius.md, paddingVertical: 14, paddingHorizontal: spacing.xxl, marginTop: spacing.lg },
-  ctaText: { color: "#fff", fontSize: 15, fontWeight: "600" },
+  ctaText: { color: "#0F0B08", fontSize: 15, fontWeight: "600" },
 });

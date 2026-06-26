@@ -136,7 +136,7 @@ const s = StyleSheet.create({
     alignItems: "center",
     marginBottom: spacing.sm,
   },
-  ctaText: { color: "#fff", fontSize: 15, fontWeight: "600" },
+  ctaText: { color: "#0F0B08", fontSize: 15, fontWeight: "600" },
   altBtn: { paddingVertical: spacing.sm, paddingHorizontal: spacing.md },
   altText: { color: colors.onSurfaceTertiary, fontSize: 13, fontWeight: "500" },
 });

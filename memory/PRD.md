@@ -13,13 +13,13 @@
   - `POST /api/wallet/eth/send` gates ≥ threshold behind `approval_required:true` and emails the co-signer one-click Approve/Reject links pointing to `<APP_URL>/approve?token=...`.
   - `POST /api/approvals/decide` is the **public** decision endpoint (no auth — the token IS the credential). Approve attempts a real Sepolia broadcast. Idempotent; expired returns 410.
   - Frontend: `/cosigners`, `/approvals`, `/approve` screens; Settings → Security routes both into Pro-gated UX.
-- **Iter 6** — **Biometric authentication (Face ID / Touch ID / Fingerprint).**
-  - `expo-local-authentication@17.x` added; `app.json` declares `NSFaceIDUsageDescription` + Android biometric perms.
-  - `/src/lib/biometric.ts` — web-safe capability check + `authenticate()` wrapper.
-  - `/src/components/BiometricGate.tsx` — full-screen lock that triggers on first mount and on app foreground after 30s in background; no-op on web/no-hardware.
-  - Settings → Security: enabling now requires a successful biometric scan; switch is disabled & label gracefully degrades when no hardware/enrollment.
-  - `/send.tsx`: when `user.biometric_enabled`, every send requires a fresh biometric scan before signing.
-  - `RESEND_FROM` env var added — once `phoenix-atlas.com` Resend verification completes, flip it (`/app/scripts/check_resend_domain.sh` automates this).
+- **Iter 7** — **PhoenixAtlas brand refresh + polish sweep.**
+  - Wordmark + phoenix-mark imported from logo, processed (`brand-wordmark.png`, `brand-icon.png`, `brand-adaptive.png`) and wired into theme via `BRAND_IMAGES`.
+  - New palette in `theme.ts`: warm metallic gold `#C9A35B` brand, deep warm-black `#0F0B08` inverse, cream-tinted light surfaces. Hybrid theme — gold-on-black chrome on auth/hero/CTAs; light cream surfaces for forms & lists for readability.
+  - All 13 primary CTAs flipped from white-on-gold (poor contrast) to deep-black-on-gold (premium 7:1).
+  - Login screen full dark-luxe; wallet hero with phoenix watermark + gold border; `app.json` splash + icons set to phoenix mark on deep-warm-black.
+  - **Polish sweep**: chat "me" bubbles now use deep-black text on gold (was white); send-arrow icon in deep-black; tab-bar inactive icons keep warm tone + gold-tinted top border; video-call overlay fully rebranded — gold-tinted encrypted pill, gold-bordered timer, deep-warm-black backdrop (replaced stock unsplash photo), warm cream demo-mode notice; receipt ticket has gold-accent border, gold success-circle ring, deep-gold uppercase row labels.
+  - App name kept as "Vaulted" per user direction.
 
 ## Live integration keys (in /app/backend/.env)
 - `STRIPE_API_KEY` — real `sk_test_51Tlaat...`

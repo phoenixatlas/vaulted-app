@@ -115,7 +115,7 @@ const s = StyleSheet.create({
   checkboxOn: { backgroundColor: colors.brand, borderColor: colors.brand },
   checkText: { color: colors.onSurface, fontSize: 14, flex: 1 },
   cta: { backgroundColor: colors.brand, borderRadius: radius.md, paddingVertical: 16, alignItems: "center", marginTop: spacing.xl },
-  ctaText: { color: "#fff", fontSize: 16, fontWeight: "600" },
+  ctaText: { color: "#0F0B08", fontSize: 16, fontWeight: "600" },
   keyCard: { marginTop: spacing.lg, padding: spacing.lg, borderRadius: radius.lg, backgroundColor: colors.surfaceSecondary },
   label: { fontSize: 11, fontWeight: "600", color: colors.onSurfaceTertiary, textTransform: "uppercase", letterSpacing: 0.5 },
   subtle: { color: colors.onSurface, fontSize: 13, marginTop: 4 },

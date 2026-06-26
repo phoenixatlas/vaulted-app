@@ -100,6 +100,6 @@ const s = StyleSheet.create({
   addrLabel: { fontSize: 11, fontWeight: "600", color: colors.onSurfaceTertiary, textTransform: "uppercase", letterSpacing: 0.5, marginTop: spacing.xl },
   addrText: { color: colors.onSurface, fontSize: 12, fontFamily: "monospace", marginTop: 4 },
   cta: { backgroundColor: colors.brand, borderRadius: radius.md, paddingVertical: 16, alignItems: "center", marginTop: spacing.xl },
-  ctaText: { color: "#fff", fontSize: 16, fontWeight: "600" },
+  ctaText: { color: "#0F0B08", fontSize: 16, fontWeight: "600" },
   error: { color: colors.error, marginTop: spacing.lg },
 });

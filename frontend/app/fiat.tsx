@@ -131,6 +131,6 @@ const s = StyleSheet.create({
   liveBadge: { backgroundColor: colors.brand, paddingHorizontal: 6, paddingVertical: 2, borderRadius: radius.pill, marginLeft: 4 },
   liveText: { color: "#fff", fontSize: 9, fontWeight: "800", letterSpacing: 0.5 },
   cta: { backgroundColor: colors.brand, borderRadius: radius.md, paddingVertical: 16, alignItems: "center", marginTop: spacing.xl },
-  ctaText: { color: "#fff", fontSize: 16, fontWeight: "600" },
+  ctaText: { color: "#0F0B08", fontSize: 16, fontWeight: "600" },
   error: { color: colors.error, marginTop: spacing.md, fontSize: 14 },
 });

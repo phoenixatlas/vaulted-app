@@ -30,7 +30,7 @@ export default function RootLayout() {
         <I18nProvider>
           <AuthProvider>
             <BiometricGate>
-              <Stack screenOptions={{ headerShown: false, contentStyle: { backgroundColor: "#FCFCFC" } }} />
+              <Stack screenOptions={{ headerShown: false, contentStyle: { backgroundColor: "#FBF8F2" } }} />
             </BiometricGate>
           </AuthProvider>
         </I18nProvider>
