@@ -36,7 +36,10 @@ export default function Login() {
       <KeyboardAvoidingView behavior={Platform.OS === "ios" ? "padding" : "height"} style={{ flex: 1 }}>
         <ScrollView contentContainerStyle={s.scroll} keyboardShouldPersistTaps="handled">
           <View style={s.brandBlock}>
-            <Image source={BRAND_IMAGES.wordmark} style={s.brandImg} resizeMode="contain" />
+            <View style={s.brandRow}>
+              <Image source={BRAND_IMAGES.mark} style={s.brandMark} resizeMode="contain" />
+              <Text style={s.brandWordmark}>Vaulted</Text>
+            </View>
             <Text style={s.brandTagline}>Self-custody · Encrypted · Sovereign</Text>
           </View>
 
@@ -89,7 +92,9 @@ const s = StyleSheet.create({
   root: { flex: 1, backgroundColor: colors.surfaceInverse },
   scroll: { padding: spacing.xl, paddingTop: spacing.xxl, flexGrow: 1, backgroundColor: colors.surfaceInverse },
   brandBlock: { alignItems: "center", marginTop: spacing.lg, marginBottom: spacing.xxl, gap: spacing.sm },
-  brandImg: { width: 280, height: 64 },
+  brandRow: { flexDirection: "row", alignItems: "center", gap: spacing.md },
+  brandMark: { width: 64, height: 64 },
+  brandWordmark: { fontSize: 36, fontWeight: "700", color: colors.brand, letterSpacing: -1.2 },
   brandTagline: { fontSize: 11, color: colors.brand, letterSpacing: 2.5, fontWeight: "600", textTransform: "uppercase" },
   title: { fontSize: 30, fontWeight: "700", color: colors.onSurfaceInverse, letterSpacing: -0.8 },
   subtitle: { fontSize: 15, color: "rgba(245,233,201,0.65)", marginTop: spacing.sm, marginBottom: spacing.xl },

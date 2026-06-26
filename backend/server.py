@@ -1042,7 +1042,7 @@ async def export_transactions_csv(
 # Chat
 @api.get("/chat/contacts")
 async def contacts(user=Depends(get_current_user)):
-    cur = db.contacts.find({"user_id": user["id"]}, {"_id": 0})
+    cur = db.contacts.find({"user_id": user["id"]}, {"_id": 0}).sort("name", 1)
     return await cur.to_list(200)
 
 
