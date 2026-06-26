@@ -1,0 +1,44 @@
+{
+  "summary": "Iteration 8 (deployment-prep: /api/health + env-driven CORS + alphabetical contacts-sort regression) tested backend-only. 12/12 pytest pass (test_iteration8.py). (1) HEALTH — GET /api/health returns 200 {\"status\":\"ok\"} with no auth; works with no Authorization header from a fresh session. Note: it's GET-only (HEAD returns 405); Railway/Render default health checks use GET so this is fine. (2) CORS env-driven — with CORS_ALLOW_ORIGINS unset (current dev state) the middleware correctly falls back to allow_origins=['*'] / allow_credentials=False. Preflight OPTIONS /api/health with Origin: https://example.com returns 204 with `Access-Control-Allow-Origin: *` and NO `Access-Control-Allow-Credentials` header — exactly the wildcard contract (browsers reject *+credentials). Implementation at server.py:1620-1633 is clean: `_allow_credentials = _allow_origins != ['*']` flips credentials ON only when an explicit origin list is configured. (3) CONTACTS SORT REGRESSION — confirmed FIXED. GET /api/chat/contacts now returns ['Daniel Park','Maya Chen','Vault Support'] (alphabetical) instead of the previous insertion order. Cursor at server.py:1045 has `.sort('name', 1)` applied. (4) REGRESSION — all listed endpoints return 200 with valid bodies: /api/auth/login, /api/auth/me, /api/wallet/assets, /api/chat/conversations, /api/transactions, /api/cosigners, /api/approvals/pending. No frontend testing was requested or performed.",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {"endpoint": "GET /api/health", "issue": "HEAD /api/health returns 405 (FastAPI's @app.get only registers GET, not HEAD). Most cloud health probes use GET so this is harmless, but Railway/Render do support HEAD-style probes; adding `methods=['GET','HEAD']` or a HEAD route avoids a future surprise."},
+      {"endpoint": "CORS middleware order", "issue": "`app.include_router(api)` is on server.py:1608 — BEFORE `app.add_middleware(CORSMiddleware, ...)` on line 1627. FastAPI/Starlette does apply middleware regardless of registration order (it's stack-based at request time), but the conventional pattern is to add middleware before mounting routers. Currently observed to work correctly (preflight succeeds, wildcard origin echoed) so this is a style nit, not a bug."},
+      {"endpoint": "server.py organisation", "issue": "Carry-over: server.py is now ~1758 lines, well past the 700-line guideline. Recommend splitting into routers/ (auth, wallet, chat, stripe, push)."},
+      {"endpoint": "JWT signing / bcrypt", "issue": "Carry-over from iter6/7: 28-byte JWT_SECRET (InsecureKeyLengthWarning); bcrypt __about__ deprecation warning. Pin bcrypt==4.0.1 and set a 32+ byte JWT_SECRET."}
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [],
+    "react_native_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_iteration8.py",
+    "/app/test_reports/pytest/iter8_results.xml"
+  ],
+  "action_items": [
+    "(Optional) Add HEAD support to /api/health: `@app.api_route('/api/health', methods=['GET','HEAD'])` so probes that use HEAD don't 405.",
+    "(Optional) When deploying to Railway/Vercel, set CORS_ALLOW_ORIGINS to the exact frontend origin(s), e.g. `CORS_ALLOW_ORIGINS=https://vaulted.vercel.app,https://app.vaulted.io`. The middleware will auto-flip allow_credentials to True. Verify with a preflight from that origin returning `Access-Control-Allow-Origin: <origin>` + `Access-Control-Allow-Credentials: true`.",
+    "(Carry-over) Set 32+ byte JWT_SECRET; pin bcrypt==4.0.1; consider splitting server.py into routers/."
+  ],
+  "critical_code_review_comments": [
+    "CORS implementation at server.py:1617-1633 is correct and minimal: env-var parsed once at import, wildcard fallback when unset, credentials auto-flipped off in wildcard mode to avoid the browser-side `*+credentials` rejection. The comma-split also trims whitespace and drops empty entries (`[o.strip() for o in _origins_env.split(',') if o.strip()]`), so a stray trailing comma in the env value won't break it.",
+    "Health endpoint at server.py:1611-1614 is a pure function with zero DB calls — perfect for a liveness probe (won't false-fail if Mongo is briefly hot or the eth RPC is slow). However it's also extremely shallow — it does not verify Mongo connectivity. For Railway's deeper /readyz-style probes consider a separate `/api/readyz` that pings `db.command('ping')`.",
+    "The contacts-sort fix at server.py:1045 (`.sort('name', 1)`) is the correct Mongo-side solution — case-sensitive ASCII sort. With the current seed data (Daniel/Maya/Vault) this produces the expected order. If contacts ever contain lowercase or unicode names, consider `db.contacts.find(...).collation({'locale':'en','strength':2}).sort('name',1)` for case-insensitive sorting.",
+    "Deploy artifacts (Procfile, railway.json, nixpacks.toml, vercel.json) are deploy-only and don't affect runtime tests as the agent_to_agent_context_note flagged. Verified — backend & frontend supervisor configs are unchanged and tests pass via the public preview URL.",
+    "Resend domain auto-poller IS still firing every 5 min (backend logs show GET https://api.resend.com/domains followed by POST .../verify at 13:34:38 and 13:35:47 UTC). Per the context note this is expected, did not fail tests on DKIM-pending state.",
+    "Test infrastructure: registers a fresh `TEST_iter8_<uuid>@vaulted.app` user per module-scoped fixture so the alphabetical-sort test runs against a known-good 3-contact seed; doesn't mutate the shared smoketest@vaulted.app contacts."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_iteration8.py (new — 12 tests across TestHealth/TestCORS/TestContactsSort/TestRegression)"
+  ],
+  "success_rate": {"backend": "100% (12/12)", "frontend": "not tested (backend-only round per request)"},
+  "seed_data_creation": "Module-scoped fresh user `TEST_iter8_<uuid>@vaulted.app` (password test1234) registered via /api/auth/register — auto-seeded with the standard 4 balances + 3 contacts + 1 welcome USDC tx. Used for the contacts-sort assertion and for the authenticated regression endpoints. The pre-seeded smoketest@vaulted.app account was used only for the login regression test, not mutated.",
+  "retest_needed": false,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "Iter8 was a pure backend deployment-prep round. The previous /api/chat/contacts insertion-order bug from iter7 is now FIXED (server.py:1045 has `.sort('name', 1)`). New artifacts: GET /api/health (no auth, GET only — HEAD returns 405), env-driven CORS at server.py:1617-1633 (CORS_ALLOW_ORIGINS comma-separated list, defaults to ['*'] with credentials=False). Deploy files Procfile/railway.json/nixpacks.toml/vercel.json are deploy-only and don't affect runtime tests. Resend poller still hits api.resend.com/domains every 5 min — ignore for tests. To validate the credentialed CORS branch in a future iteration, set CORS_ALLOW_ORIGINS=https://example.com on the backend, restart, then re-run a preflight from Origin: https://example.com — Access-Control-Allow-Origin should echo `https://example.com` and Access-Control-Allow-Credentials should be `true`. From a non-listed origin, preflight headers should be absent. Test file: /app/backend/tests/test_iteration8.py uses EXPO_PUBLIC_BACKEND_URL from env (NOT EXPO_BACKEND_URL — that key doesn't exist in this project).",
+  "rca_of_issue": "No outstanding bugs. The iter7-flagged sort issue on /api/chat/contacts has been verified fixed at server.py:1045 (`.sort('name', 1)` on the Mongo cursor). Health + CORS endpoints behave per spec."
+}

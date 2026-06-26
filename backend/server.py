@@ -1607,10 +1607,27 @@ async def create_call_room(body: CallRoomIn, user=Depends(get_current_user)):
 
 app.include_router(api)
 
+
+# Lightweight liveness probe for Railway/Render/Fly health checks.
+@app.get("/api/health")
+async def health() -> dict:
+    return {"status": "ok"}
+
+
+# CORS — env-driven for prod, falls back to '*' for local dev.
+# Set CORS_ALLOW_ORIGINS in Railway/Vercel as a comma-separated list, e.g.:
+#   CORS_ALLOW_ORIGINS=https://vaulted.vercel.app,https://app.vaulted.io
+_origins_env = os.environ.get("CORS_ALLOW_ORIGINS", "").strip()
+_allow_origins = (
+    [o.strip() for o in _origins_env.split(",") if o.strip()] if _origins_env else ["*"]
+)
+# Browsers reject `allow_credentials=True` with `allow_origins=*`, so flip credentials
+# off when we're in the wildcard fallback.
+_allow_credentials = _allow_origins != ["*"]
 app.add_middleware(
     CORSMiddleware,
-    allow_credentials=True,
-    allow_origins=["*"],
+    allow_credentials=_allow_credentials,
+    allow_origins=_allow_origins,
     allow_methods=["*"],
     allow_headers=["*"],
 )
