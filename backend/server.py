@@ -334,6 +334,7 @@ async def register(body: RegisterIn):
         "wallet_address": acct.address,
         "eth_private_key": "0x" + acct.key.hex(),
         "eth_mnemonic": mnemonic_phrase,
+        "mnemonic_origin": "eth_native",  # derives ETH key via BIP44 m/44'/60'/0'/0/0
         "onboarding_seed_acknowledged": False,
         "biometric_enabled": False,
         "multisig_enabled": False,
@@ -528,6 +529,9 @@ async def _ensure_multichain_addresses(user: dict) -> dict:
             logger.warning(f"legacy mnemonic backfill failed: {e}")
             return {"btc": None, "sol": None}
         update["eth_mnemonic"] = mnemonic
+        # Tag the origin so /wallet/eth/mnemonic can refuse to "restore ETH"
+        # with a phrase that doesn't actually derive the user's ETH key.
+        update["mnemonic_origin"] = "multichain_only"
     try:
         addrs = derive_addresses(mnemonic)
     except Exception as e:
@@ -1002,8 +1006,17 @@ async def eth_mnemonic(user=Depends(get_current_user)):
     """Reveals the 12-word BIP-39 recovery phrase. For Sepolia testnet only."""
     mnemonic_phrase = user.get("eth_mnemonic")
     if not mnemonic_phrase:
-        # Backfill for users created before BIP-39 support
         raise HTTPException(status_code=404, detail="No recovery phrase on file. Re-register to get one.")
+    # Legacy users had their ETH key generated via Account.create() — the mnemonic
+    # we have on file derives BTC/SOL but NOT their ETH key. Refuse to misrepresent.
+    if user.get("mnemonic_origin") == "multichain_only":
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                "This account was created before BIP-39 onboarding, so we can't show a "
+                "recovery phrase for your existing ETH key. Use Export Private Key instead."
+            ),
+        )
     return {
         "address": user.get("wallet_address"),
         "mnemonic": mnemonic_phrase,

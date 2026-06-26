@@ -1,0 +1,46 @@
+{
+  "summary": "Iteration 11 — Semantic risk PARTIALLY closed: 20/21 pytest pass. The eth_native tagging path works perfectly for fresh registrations (TestFreshUserEthNative both pass): mnemonic_origin='eth_native' is written at registration, /wallet/eth/mnemonic returns 200 with a 12-word phrase, AND I independently verified via eth_account.Account.from_mnemonic() that the returned mnemonic DOES derive user.wallet_address byte-for-byte. The 409 guard on /wallet/eth/mnemonic also correctly fires when mnemonic_origin=='multichain_only' (code path verified at server.py:1012-1019). BUT one critical test fails: TestLegacyBackfillTagsOrigin::test_eth_mnemonic_endpoint_returns_409_for_legacy. Root cause: smoketest@vaulted.app was already backfilled in iter10 BEFORE the mnemonic_origin tagging was introduced — so user.btc_address and user.sol_address are already cached on the doc, and _ensure_multichain_addresses (server.py:520) short-circuits on the very first line, returning before the update['mnemonic_origin']='multichain_only' branch (line 534) ever executes. I confirmed empirically: GET /api/wallet/eth/mnemonic for smoketest returned 200 with address 0x1b92496c0847ceede67d53161b1dd17a03b17cbf and mnemonic 'prevent rose village dog collect artist feel north mistake primary surprise lonely'. Running eth_account.Account.from_mnemonic() on that phrase locally yields 0xfd0B2127dE2428be9a645A8EA1F936fdbcc23012 — i.e. the on-file mnemonic does NOT derive the user's ETH key, and the API is still happily handing it out to a legacy user. This is exactly the semantic mis-representation the iteration was supposed to prevent. Iter9+iter10 regression: ALL 19 tests pass (legacy btc/sol/usdc/eth info, fresh user multichain backfill, /assets, /chat/contacts alphabetical, /transactions/export CSV, /usdc/send validation, /chat/send_crypto no 5xx, /health GET+HEAD). Resend poller log confirms phoenix-atlas.com sender flipped as advertised.",
+  "backend_issues": {
+    "critical": [
+      {
+        "endpoint": "GET /api/wallet/eth/mnemonic",
+        "issue": "Legacy users already backfilled in iter10 (e.g. smoketest@vaulted.app) are NOT tagged mnemonic_origin='multichain_only', so the 409 guard never fires for them. The endpoint returns 200 with a 12-word phrase that demonstrably does NOT derive their ETH wallet_address (verified locally: stored mnemonic derives 0xfd0B...3012 but user.wallet_address is 0x1b92...7cbf). Root cause: the tagging assignment (server.py:534) lives INSIDE the 'mnemonic was missing → mint fresh' branch (lines 524-534), but for smoketest the iter10 backfill already minted a mnemonic and set btc_address/sol_address — so on every subsequent call, _ensure_multichain_addresses short-circuits at server.py:520 before ever reaching the tagging code. Result: the exact semantic mis-representation iter11 was supposed to prevent is still live for every legacy user that was backfilled in iter10.",
+        "priority": "HIGH"
+      }
+    ],
+    "minor": [
+      {"endpoint": "server.py", "issue": "Carry-over: 1996 lines, well past 700-line guideline. Splitting into routers/ (auth, wallet, multichain, chat, stripe) still recommended."},
+      {"endpoint": "carry-over", "issue": "Known: 28-byte JWT_SECRET (InsecureKeyLengthWarning), bcrypt __about__ AttributeError — not blocking tests."}
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [],
+    "react_native_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_iteration11.py",
+    "/app/test_reports/pytest/iter11_results.xml"
+  ],
+  "action_items": [
+    "Fix the legacy-user retro-tag gap. Two viable approaches: (A) Add a one-time startup migration that scans users with eth_mnemonic set + mnemonic_origin missing, derives Account.from_mnemonic(eth_mnemonic).address, and sets mnemonic_origin='eth_native' if it matches wallet_address else 'multichain_only'. (B) Make /wallet/eth/mnemonic self-healing: if mnemonic_origin is missing, derive Account.from_mnemonic(...).address inline, compare to user.wallet_address, persist the correct origin, then apply the guard. Approach (B) is lower risk and localized. The 409 explainer string is already correct at server.py:1015-1018.",
+    "(Carry-over) Set 32+ byte JWT_SECRET; pin bcrypt==4.0.1; split server.py into routers/."
+  ],
+  "critical_code_review_comments": [
+    "BUG: The mnemonic_origin tagging in _ensure_multichain_addresses (server.py:534) is unreachable for already-backfilled legacy users because the short-circuit at server.py:520 ('if user.get(\"btc_address\") and user.get(\"sol_address\"): return ...') executes before the tagging branch. Smoketest was backfilled in iter10 and now has btc_address+sol_address set but mnemonic_origin missing — so /wallet/eth/mnemonic returns 200 for them with a mnemonic that doesn't derive their ETH key. This iter11 fix lands cleanly for FUTURE legacy users (whose first backfill happens after the tagging code was added) but leaves a hole for any user already backfilled in iter10. Recommend a startup migration or self-healing in /wallet/eth/mnemonic.",
+    "Positive: the eth_native path is rock-solid. Registration at server.py:337 writes mnemonic_origin='eth_native' atomically with eth_mnemonic, and I verified end-to-end that Account.from_mnemonic(returned_mnemonic).address == user.wallet_address for a fresh registration — so the tag is meaningful, not just decorative.",
+    "Positive: the 409 explainer at server.py:1013-1019 reads well — mentions 'recovery phrase' semantic + points the user to Export Private Key as a workable alternative. The error body does not leak the mnemonic value.",
+    "Carry-over: server.py at 1996 lines is unwieldy. The wallet endpoints (eth/btc/sol/usdc + assets + send) form a natural ~600-line sub-module that should move to routers/wallet.py."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_iteration11.py (new — 21 tests: TestFreshUserEthNative x2, TestLegacyBackfillTagsOrigin x3, TestIter10Regression x8, TestIter9Regression x8)",
+    "/app/test_reports/pytest/iter11_results.xml (new)"
+  ],
+  "success_rate": {"backend": "95.2% (20/21) — the one failure is the central iter11 contract: 409 on /wallet/eth/mnemonic for legacy users still serves 200", "frontend": "not tested (backend-only iteration per review_request)"},
+  "seed_data_creation": "One fresh user TEST_iter11_<uuid>@vaulted.app via /api/auth/register to verify eth_native tagging + BIP44 derivation match. smoketest@vaulted.app reused as-is (already backfilled in iter10).",
+  "retest_needed": true,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "After main agent fixes the retro-tag gap, just re-run pytest /app/backend/tests/test_iteration11.py. The one failing test (TestLegacyBackfillTagsOrigin::test_eth_mnemonic_endpoint_returns_409_for_legacy) is the canary. Bonus check the next agent should add if main agent picks Approach B (self-healing endpoint): GET /api/wallet/eth/mnemonic for smoketest twice and assert the second call still 409s — i.e. the lazy tag was persisted, not just computed.",
+  "rca_of_issue": "BUG (live, not yet fixed): /api/wallet/eth/mnemonic returns 200 with a misleading mnemonic for legacy users backfilled in iter10. Reproduce: 1) POST /api/auth/login with smoketest@vaulted.app/test1234. 2) GET /api/wallet/eth/mnemonic — returns 200 with address=0x1b92...7cbf and mnemonic='prevent rose village dog collect artist feel north mistake primary surprise lonely'. 3) Run Account.from_mnemonic(returned_mnemonic).address — yields 0xfd0B...3012, NOT the on-file ETH address. The 12 words won't restore the user's funds anywhere. Root cause: the iter11 tagging code at server.py:531-534 only writes mnemonic_origin='multichain_only' inside the 'mnemonic was missing → mint fresh' branch. For smoketest, the iter10 backfill already wrote eth_mnemonic + btc_address + sol_address without the tag, and now every call to _ensure_multichain_addresses short-circuits at line 520 (btc_address & sol_address are truthy), returning before line 534 can ever execute. Mitigation: add a startup migration to scan {eth_mnemonic: {$ne: null}, mnemonic_origin: {$exists: false}} users, derive Account.from_mnemonic(eth_mnemonic).address, and persist 'eth_native' if it matches user.wallet_address else 'multichain_only'. Alternatively, make the /wallet/eth/mnemonic endpoint self-healing: derive + compare + persist on the fly when mnemonic_origin is missing. Either fix is a ~10-line change."
+}
