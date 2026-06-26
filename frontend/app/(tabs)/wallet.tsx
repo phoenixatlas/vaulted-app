@@ -88,7 +88,12 @@ export default function Wallet() {
         </View>
         <View style={s.assetCard}>
           {assets.map((a, idx) => (
-            <View key={a.id} testID={`asset-row-${a.symbol}`}>
+            <Pressable
+              key={a.id}
+              testID={`asset-row-${a.symbol}`}
+              onPress={() => router.push(`/receive?asset=${a.symbol}`)}
+              style={({ pressed }) => pressed && { opacity: 0.7 }}
+            >
               <View style={s.assetRow}>
                 <View style={[s.assetIcon, { backgroundColor: ASSET_ICON_COLORS[a.symbol] ?? colors.brandTertiary }]}>
                   <Text style={s.assetSym}>{a.symbol.slice(0, 1)}</Text>
@@ -121,7 +126,7 @@ export default function Wallet() {
                 </View>
               </View>
               {idx < assets.length - 1 && <View style={s.divider} />}
-            </View>
+            </Pressable>
           ))}
         </View>
 

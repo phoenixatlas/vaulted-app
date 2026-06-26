@@ -20,6 +20,19 @@ from pydantic import BaseModel, EmailStr, Field
 from passlib.context import CryptContext
 import jwt
 
+from multichain import (
+    derive_addresses,
+    fetch_btc_balance_sats,
+    fetch_sol_balance_lamports,
+    fetch_usdc_balance_micro,
+    encode_usdc_transfer,
+    explorer_url_btc,
+    explorer_url_sol,
+    USDC_CONTRACT,
+    BTC_TESTNET,
+    USE_MAINNET,
+)
+
 
 ROOT_DIR = Path(__file__).parent
 load_dotenv(ROOT_DIR / ".env")
@@ -225,7 +238,7 @@ DEFAULT_ASSETS = [
     {"symbol": "SOL", "name": "Solana", "price_usd": 158.22, "icon": "solana"},
 ]
 
-SEED_BALANCES = {"BTC": 0.0421, "ETH": 1.842, "USDC": 1250.00, "SOL": 12.55}
+SEED_BALANCES = {"BTC": 0, "ETH": 0, "USDC": 0, "SOL": 0}
 
 SEED_CONTACTS = [
     {"name": "Maya Chen", "email": "maya@vaulted.app", "priority": False,
@@ -400,29 +413,65 @@ async def wallet_assets(user=Depends(get_current_user)):
             logger.warning(f"eth balance fetch failed: {e}")
     eth_amount = eth_wei / 1e18
 
+    # Ensure BTC + SOL addresses exist (derived from the user's mnemonic).
+    multichain_addrs = await _ensure_multichain_addresses(user)
+    btc_addr = multichain_addrs.get("btc")
+    sol_addr = multichain_addrs.get("sol")
+
+    # Live balances on the real testnets
+    btc_amount = 0.0
+    sol_amount = 0.0
+    usdc_amount = 0.0
+    try:
+        if btc_addr:
+            btc_amount = (await fetch_btc_balance_sats(btc_addr)) / 1e8
+    except Exception as e:
+        logger.warning(f"btc balance fetch failed: {e}")
+    try:
+        if sol_addr:
+            sol_amount = (await fetch_sol_balance_lamports(sol_addr)) / 1e9
+    except Exception as e:
+        logger.warning(f"sol balance fetch failed: {e}")
+    try:
+        if addr and addr.startswith("0x"):
+            usdc_amount = (await fetch_usdc_balance_micro(addr)) / 1e6
+    except Exception as e:
+        logger.warning(f"usdc balance fetch failed: {e}")
+
+    on_chain_amount = {"ETH": eth_amount, "BTC": btc_amount, "USDC": usdc_amount, "SOL": sol_amount}
+    network_for = {
+        "ETH": "Mainnet" if USE_MAINNET else "Sepolia",
+        "USDC": "Mainnet" if USE_MAINNET else "Sepolia",
+        "BTC": "Mainnet" if not BTC_TESTNET else "Testnet",
+        "SOL": "Mainnet" if USE_MAINNET else "Devnet",
+    }
+    address_for = {"ETH": addr, "USDC": addr, "BTC": btc_addr, "SOL": sol_addr}
+
     total_usd = 0.0
     out = []
     for b in items:
-        p = price_map.get(b["symbol"], 0)
+        sym = b["symbol"]
+        p = price_map.get(sym, 0)
         amt = b["amount"]
         on_chain = False
-        if b["symbol"] == "ETH":
-            amt = eth_amount
+        if sym in on_chain_amount:
+            amt = on_chain_amount[sym]
             on_chain = True
             await db.balances.update_one(
-                {"user_id": user["id"], "symbol": "ETH"},
+                {"user_id": user["id"], "symbol": sym},
                 {"$set": {"amount": amt, "updated_at": iso(now_utc())}},
             )
         fiat = round(amt * p, 2)
         total_usd += fiat
-        ma = market_assets.get(b["symbol"], {})
+        ma = market_assets.get(sym, {})
         out.append({
             **b,
             "amount": amt,
             "price_usd": p,
             "fiat_value": fiat,
             "on_chain": on_chain,
-            "network": "Sepolia" if on_chain else None,
+            "network": network_for.get(sym) if on_chain else None,
+            "wallet_address": address_for.get(sym),
             "change_24h_pct": ma.get("change_24h_pct", 0.0),
             "sparkline_7d": ma.get("sparkline_7d", []),
         })
@@ -430,6 +479,8 @@ async def wallet_assets(user=Depends(get_current_user)):
     return {
         "total_usd": round(total_usd, 2),
         "wallet_address": addr,
+        "btc_address": btc_addr,
+        "sol_address": sol_addr,
         "assets": out,
         "prices_fetched_at": market.get("fetched_at"),
     }
@@ -457,6 +508,173 @@ async def eth_info(user=Depends(get_current_user)):
         "explorer": f"https://sepolia.etherscan.io/address/{addr}",
         "faucet": "https://sepoliafaucet.com/",
     }
+
+
+# ---------- Multichain (BTC + SOL + USDC) ------------------------------------
+async def _ensure_multichain_addresses(user: dict) -> dict:
+    """Derive BTC + SOL addresses from the user's mnemonic if not yet stored.
+    Cached on the user doc, so this only runs once per user."""
+    if user.get("btc_address") and user.get("sol_address"):
+        return {"btc": user["btc_address"], "sol": user["sol_address"]}
+    mnemonic = user.get("eth_mnemonic") or user.get("mnemonic")
+    if not mnemonic:
+        return {"btc": None, "sol": None}
+    try:
+        addrs = derive_addresses(mnemonic)
+    except Exception as e:
+        logger.warning(f"multichain derivation failed: {e}")
+        return {"btc": None, "sol": None}
+    await db.users.update_one(
+        {"id": user["id"]},
+        {"$set": {"btc_address": addrs["btc"], "sol_address": addrs["sol"]}},
+    )
+    user["btc_address"] = addrs["btc"]
+    user["sol_address"] = addrs["sol"]
+    return {"btc": addrs["btc"], "sol": addrs["sol"]}
+
+
+@api.get("/wallet/btc/info")
+async def btc_info(user=Depends(get_current_user)):
+    addrs = await _ensure_multichain_addresses(user)
+    a = addrs["btc"]
+    if not a:
+        raise HTTPException(status_code=400, detail="No BTC address (mnemonic missing)")
+    try:
+        sats = await fetch_btc_balance_sats(a)
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"BTC RPC error: {e}")
+    return {
+        "address": a,
+        "balance_sats": sats,
+        "balance_btc": sats / 1e8,
+        "network": "Mainnet" if not BTC_TESTNET else "Testnet",
+        "explorer": explorer_url_btc(a),
+        "faucet": "https://coinfaucet.eu/en/btc-testnet/" if BTC_TESTNET else None,
+        "send_supported": False,
+        "send_unsupported_reason": "BTC send is coming soon. Receive works now.",
+    }
+
+
+@api.get("/wallet/sol/info")
+async def sol_info(user=Depends(get_current_user)):
+    addrs = await _ensure_multichain_addresses(user)
+    a = addrs["sol"]
+    if not a:
+        raise HTTPException(status_code=400, detail="No SOL address (mnemonic missing)")
+    try:
+        lamports = await fetch_sol_balance_lamports(a)
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"SOL RPC error: {e}")
+    return {
+        "address": a,
+        "balance_lamports": lamports,
+        "balance_sol": lamports / 1e9,
+        "network": "Mainnet" if USE_MAINNET else "Devnet",
+        "explorer": explorer_url_sol(a),
+        "faucet": "https://faucet.solana.com/" if not USE_MAINNET else None,
+        "send_supported": False,
+        "send_unsupported_reason": "SOL send is coming soon. Receive works now.",
+    }
+
+
+@api.get("/wallet/usdc/info")
+async def usdc_info(user=Depends(get_current_user)):
+    addr = user.get("wallet_address")
+    if not addr:
+        raise HTTPException(status_code=400, detail="No wallet address")
+    try:
+        micro = await fetch_usdc_balance_micro(addr)
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"USDC balance error: {e}")
+    return {
+        "address": addr,
+        "balance_micro": micro,
+        "balance_usdc": micro / 1e6,
+        "network": "Mainnet" if USE_MAINNET else "Sepolia",
+        "contract": USDC_CONTRACT,
+        "explorer": f"https://sepolia.etherscan.io/address/{addr}",
+        "send_supported": True,
+    }
+
+
+class SendUsdcIn(BaseModel):
+    to_address: str
+    amount_usdc: float = Field(gt=0)
+
+
+@api.post("/wallet/usdc/send")
+async def usdc_send(body: SendUsdcIn, user=Depends(get_current_user)):
+    pk = user.get("eth_private_key")
+    addr = user.get("wallet_address")
+    if not pk or not addr:
+        raise HTTPException(status_code=400, detail="No ETH key on file")
+    to = body.to_address.strip()
+    if not (to.startswith("0x") and len(to) == 42):
+        raise HTTPException(status_code=400, detail="Invalid recipient address")
+
+    # Pre-flight USDC balance check (in micro-USDC)
+    try:
+        bal_micro = await fetch_usdc_balance_micro(addr)
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"USDC balance error: {e}")
+    need_micro = int(round(body.amount_usdc * 1_000_000))
+    if bal_micro < need_micro:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Insufficient USDC (need {body.amount_usdc}, have {bal_micro/1e6})",
+        )
+
+    # Build + sign + broadcast an ERC-20 transfer
+    try:
+        data = encode_usdc_transfer(to, body.amount_usdc)
+        nonce_resp = await _eth_rpc("eth_getTransactionCount", [addr, "latest"])
+        nonce = int(nonce_resp.get("result", "0x0"), 16)
+        gas_price_resp = await _eth_rpc("eth_gasPrice", [])
+        gas_price = int(gas_price_resp.get("result", "0x0"), 16)
+
+        tx = {
+            "to": USDC_CONTRACT,
+            "value": 0,
+            "gas": 100000,
+            "gasPrice": gas_price,
+            "nonce": nonce,
+            "data": data,
+            "chainId": SEPOLIA_CHAIN_ID,
+        }
+        signed = Account.from_key(pk).sign_transaction(tx)
+        raw_hex = signed.raw_transaction.hex() if hasattr(signed, "raw_transaction") else signed.rawTransaction.hex()
+        if not raw_hex.startswith("0x"):
+            raw_hex = "0x" + raw_hex
+        bcast = await _eth_rpc("eth_sendRawTransaction", [raw_hex])
+        tx_hash = bcast.get("result")
+        if not tx_hash:
+            err = bcast.get("error", {})
+            raise HTTPException(status_code=400, detail=err.get("message", "Broadcast failed"))
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"USDC send failed: {e}")
+
+    fiat = round(body.amount_usdc * 1.0, 2)  # USDC ≈ $1
+    record = {
+        "id": str(uuid.uuid4()),
+        "user_id": user["id"],
+        "type": "send",
+        "category": "Crypto · USDC",
+        "asset": "USDC",
+        "amount": body.amount_usdc,
+        "fiat_value": fiat,
+        "counterparty": to,
+        "network": "Mainnet" if USE_MAINNET else "Sepolia",
+        "tx_hash": tx_hash,
+        "explorer_url": f"https://sepolia.etherscan.io/tx/{tx_hash}",
+        "status": "pending",
+        "service_fee_usd": 0.0,
+        "created_at": iso(now_utc()),
+    }
+    await db.transactions.insert_one(record)
+    record.pop("_id", None)
+    return record
 
 
 class SendEthIn(BaseModel):

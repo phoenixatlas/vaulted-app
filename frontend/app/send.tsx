@@ -37,12 +37,19 @@ export default function SendCrypto() {
 
   const selected = assets.find((a) => a.symbol === sel);
   const isEth = sel === "ETH";
+  const isUsdc = sel === "USDC";
+  const isOnChain = isEth || isUsdc;
+  const sendDisabled = !isOnChain;  // BTC/SOL send coming soon
   const isPro = !!user?.is_pro;
   const baseServiceFee = isEth ? 0.10 : 0.10;
   const serviceFee = isPro ? baseServiceFee * 0.5 : baseServiceFee;
 
   const submit = async () => {
     setErr(null);
+    if (sendDisabled) {
+      setErr(`${sel} sends are coming soon. Receive works now.`);
+      return;
+    }
     const amt = parseFloat(amount);
     if (!amt || amt <= 0) { setErr("Enter a valid amount"); return; }
     if (!addr.trim()) { setErr("Enter recipient address"); return; }
@@ -63,6 +70,11 @@ export default function SendCrypto() {
         tx = await api("/wallet/eth/send", {
           method: "POST",
           body: { to_address: addr.trim(), amount_eth: amt },
+        });
+      } else if (isUsdc) {
+        tx = await api("/wallet/usdc/send", {
+          method: "POST",
+          body: { to_address: addr.trim(), amount_usdc: amt },
         });
       } else {
         tx = await api("/wallet/send", {
@@ -135,10 +147,28 @@ export default function SendCrypto() {
             </View>
           </View>
 
+          {sendDisabled && (
+            <View style={s.warnCard} testID="send-disabled-warn">
+              <Ionicons name="time-outline" size={16} color={colors.brandDeep} />
+              <Text style={s.warnText}>{sel} send is coming soon. Receive works now — tap an asset on the wallet to grab your address.</Text>
+            </View>
+          )}
+
           {err && <Text testID="send-error" style={s.error}>{err}</Text>}
 
-          <Pressable testID="send-confirm" disabled={submitting} onPress={submit} style={({ pressed }) => [s.cta, pressed && { opacity: 0.85 }]}>
-            {submitting ? <ActivityIndicator color="#fff" /> : <Text style={s.ctaText}>{t("confirm")} {isEth ? "on Sepolia" : ""}</Text>}
+          <Pressable
+            testID="send-confirm"
+            disabled={submitting || sendDisabled}
+            onPress={submit}
+            style={({ pressed }) => [s.cta, (pressed || sendDisabled) && { opacity: 0.55 }]}
+          >
+            {submitting
+              ? <ActivityIndicator color="#0F0B08" />
+              : <Text style={s.ctaText}>
+                  {sendDisabled
+                    ? `${sel} send coming soon`
+                    : `${t("confirm")} ${isEth ? "on Sepolia" : isUsdc ? "USDC on Sepolia" : ""}`.trim()}
+                </Text>}
           </Pressable>
 
           {isEth && (
@@ -177,5 +207,7 @@ const s = StyleSheet.create({
   ctaText: { color: "#0F0B08", fontSize: 16, fontWeight: "600" },
   faucet: { flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 6, marginTop: spacing.lg, padding: spacing.sm },
   faucetText: { color: colors.brand, fontSize: 13, fontWeight: "500" },
+  warnCard: { flexDirection: "row", gap: 8, alignItems: "flex-start", padding: spacing.md, backgroundColor: colors.brandTertiary, borderRadius: radius.md, borderWidth: 1, borderColor: "rgba(201,163,91,0.40)", marginTop: spacing.lg },
+  warnText: { color: colors.brandDeep, fontSize: 12, lineHeight: 16, fontWeight: "500", flex: 1 },
   error: { color: colors.error, marginTop: spacing.md, fontSize: 14 },
 });

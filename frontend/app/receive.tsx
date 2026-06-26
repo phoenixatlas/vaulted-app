@@ -1,49 +1,184 @@
-import { View, Text, StyleSheet, Pressable, Share, Platform } from "react-native";
+import { useEffect, useMemo, useState } from "react";
+import {
+  View, Text, StyleSheet, Pressable, Share, Platform, ActivityIndicator, ScrollView,
+} from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
-import { useRouter } from "expo-router";
+import { useRouter, useLocalSearchParams } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
-import { useAuth } from "@/src/lib/auth";
+import QRCode from "react-native-qrcode-svg";
+import * as Clipboard from "expo-clipboard";
+import { api } from "@/src/lib/api";
 import { useI18n } from "@/src/lib/i18n";
-import { colors, spacing, radius } from "@/src/lib/theme";
+import { colors, spacing, radius, ASSET_ICON_COLORS } from "@/src/lib/theme";
+
+type Asset = "ETH" | "USDC" | "BTC" | "SOL";
+
+type WalletInfo = {
+  address: string;
+  network: string;
+  faucet?: string | null;
+  explorer?: string;
+};
+
+const CHAIN_LABEL: Record<Asset, string> = {
+  ETH: "Ethereum",
+  USDC: "USD Coin",
+  BTC: "Bitcoin",
+  SOL: "Solana",
+};
+const CHAIN_PATH: Record<Asset, string> = {
+  ETH: "/wallet/eth/info",
+  USDC: "/wallet/usdc/info",
+  BTC: "/wallet/btc/info",
+  SOL: "/wallet/sol/info",
+};
+const CHAIN_BADGE: Record<Asset, string> = {
+  ETH: "ERC-20",
+  USDC: "ERC-20",
+  BTC: "P2PKH",
+  SOL: "ED25519",
+};
 
 export default function Receive() {
-  const { user } = useAuth();
   const { t } = useI18n();
   const router = useRouter();
+  const { asset: initial } = useLocalSearchParams<{ asset?: Asset }>();
+  const [asset, setAsset] = useState<Asset>((initial as Asset) || "ETH");
+  const [infoByAsset, setInfoByAsset] = useState<Partial<Record<Asset, WalletInfo>>>({});
+  const [loading, setLoading] = useState(false);
+  const [copied, setCopied] = useState(false);
 
-  const share = async () => {
-    if (user?.wallet_address) await Share.share({ message: user.wallet_address });
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      if (infoByAsset[asset]) return;
+      setLoading(true);
+      try {
+        const r = await api<WalletInfo & { explorer?: string }>(CHAIN_PATH[asset]);
+        if (!cancelled) setInfoByAsset((m) => ({ ...m, [asset]: r }));
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [asset, infoByAsset]);
+
+  const info = infoByAsset[asset];
+  const accent = useMemo(() => ASSET_ICON_COLORS[asset] ?? colors.brand, [asset]);
+
+  const onCopy = async () => {
+    if (!info?.address) return;
+    await Clipboard.setStringAsync(info.address);
+    setCopied(true);
+    setTimeout(() => setCopied(false), 1500);
+  };
+  const onShare = async () => {
+    if (info?.address) await Share.share({ message: info.address });
   };
 
   return (
     <SafeAreaView style={s.root} edges={["top", "bottom"]}>
       <View style={s.header}>
-        <Pressable testID="receive-back" onPress={() => router.back()}><Ionicons name="chevron-back" size={26} color={colors.onSurface} /></Pressable>
+        <Pressable testID="receive-back" onPress={() => router.back()}>
+          <Ionicons name="chevron-back" size={26} color={colors.onSurface} />
+        </Pressable>
         <Text style={s.title}>{t("receive_crypto")}</Text>
         <View style={{ width: 26 }} />
       </View>
-      <View style={s.body}>
-        <View style={s.qrBox}>
-          <Ionicons name="qr-code" size={180} color={colors.onSurface} />
+
+      <View style={s.chipRow}>
+        {(["ETH", "USDC", "BTC", "SOL"] as Asset[]).map((a) => (
+          <Pressable
+            key={a}
+            testID={`receive-asset-${a}`}
+            onPress={() => setAsset(a)}
+            style={[s.chip, asset === a && { backgroundColor: colors.brand, borderColor: colors.brand }]}
+          >
+            <View style={[s.chipDot, { backgroundColor: ASSET_ICON_COLORS[a] }]} />
+            <Text style={[s.chipText, asset === a && { color: "#0F0B08" }]}>{a}</Text>
+          </Pressable>
+        ))}
+      </View>
+
+      <ScrollView contentContainerStyle={s.body} keyboardShouldPersistTaps="handled">
+        <View style={[s.chainBadge, { borderColor: accent }]}>
+          <View style={[s.dot, { backgroundColor: accent }]} />
+          <Text style={s.chainLabel}>{CHAIN_LABEL[asset]} · {info?.network ?? "…"}</Text>
+          <Text style={s.chainKind}>{CHAIN_BADGE[asset]}</Text>
         </View>
+
+        <View style={s.qrCard}>
+          {loading || !info?.address ? (
+            <View style={s.qrPlaceholder}><ActivityIndicator color={colors.brand} /></View>
+          ) : (
+            <QRCode
+              value={info.address}
+              size={208}
+              color="#0F0B08"
+              backgroundColor="transparent"
+            />
+          )}
+        </View>
+
         <Text style={s.label}>{t("your_address")}</Text>
         <View style={s.addrBox}>
-          <Text testID="receive-address" style={s.addrText} selectable>{user?.wallet_address}</Text>
+          <Text testID="receive-address" style={s.addrText} selectable>
+            {info?.address ?? "…"}
+          </Text>
         </View>
-        <Pressable testID="share-address" onPress={share} style={s.cta}><Text style={s.ctaText}>Share address</Text></Pressable>
-      </View>
+
+        <View style={s.actionRow}>
+          <Pressable testID="receive-copy" onPress={onCopy} style={s.actionBtn}>
+            <Ionicons name={copied ? "checkmark" : "copy-outline"} size={18} color={colors.brandDeep} />
+            <Text style={s.actionText}>{copied ? t("copied") : t("copy")}</Text>
+          </Pressable>
+          <Pressable testID="receive-share" onPress={onShare} style={s.actionBtn}>
+            <Ionicons name="share-outline" size={18} color={colors.brandDeep} />
+            <Text style={s.actionText}>{t("share")}</Text>
+          </Pressable>
+        </View>
+
+        {info?.faucet ? (
+          <Pressable
+            testID="receive-faucet"
+            onPress={() => Share.share({ message: info.faucet ?? "" })}
+            style={s.faucetCard}
+          >
+            <Ionicons name="water-outline" size={16} color={colors.brand} />
+            <View style={{ flex: 1 }}>
+              <Text style={s.faucetTitle}>{t("get_testnet_funds")}</Text>
+              <Text style={s.faucetLink} numberOfLines={1}>{info.faucet}</Text>
+            </View>
+            <Ionicons name="open-outline" size={14} color={colors.brand} />
+          </Pressable>
+        ) : null}
+      </ScrollView>
     </SafeAreaView>
   );
 }
+
 const s = StyleSheet.create({
   root: { flex: 1, backgroundColor: colors.surface },
   header: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", paddingHorizontal: spacing.xl, paddingTop: spacing.sm, paddingBottom: spacing.md },
-  title: { fontSize: 17, fontWeight: "700", color: colors.onSurface },
-  body: { padding: spacing.xl, alignItems: "center", gap: spacing.lg },
-  qrBox: { width: 240, height: 240, borderRadius: radius.lg, backgroundColor: colors.surfaceSecondary, alignItems: "center", justifyContent: "center", marginTop: spacing.xl },
-  label: { fontSize: 13, color: colors.onSurfaceSecondary, marginTop: spacing.lg },
-  addrBox: { backgroundColor: colors.surfaceSecondary, paddingHorizontal: spacing.lg, paddingVertical: spacing.md, borderRadius: radius.md },
-  addrText: { color: colors.onSurface, fontSize: 13, fontFamily: Platform.OS === "ios" ? "Menlo" : "monospace" },
-  cta: { backgroundColor: colors.brand, borderRadius: radius.md, paddingVertical: 14, paddingHorizontal: spacing.xxl, marginTop: spacing.md },
-  ctaText: { color: "#0F0B08", fontSize: 15, fontWeight: "600" },
+  title: { fontSize: 17, fontWeight: "700", color: colors.onSurface, letterSpacing: -0.3 },
+  chipRow: { flexDirection: "row", gap: spacing.sm, paddingHorizontal: spacing.xl, paddingBottom: spacing.lg },
+  chip: { flexDirection: "row", alignItems: "center", gap: 6, paddingHorizontal: spacing.md, paddingVertical: 8, borderRadius: radius.pill, backgroundColor: colors.brandTertiary, borderWidth: 1, borderColor: "rgba(201,163,91,0.40)" },
+  chipDot: { width: 7, height: 7, borderRadius: 4 },
+  chipText: { fontSize: 12, fontWeight: "700", color: colors.brandDeep, letterSpacing: 0.5 },
+  body: { padding: spacing.xl, alignItems: "center", gap: spacing.md, paddingBottom: spacing.xxl + spacing.xl },
+  chainBadge: { flexDirection: "row", alignItems: "center", gap: 8, borderWidth: 1, paddingHorizontal: spacing.md, paddingVertical: 6, borderRadius: radius.pill, backgroundColor: "rgba(201,163,91,0.10)" },
+  dot: { width: 8, height: 8, borderRadius: 4 },
+  chainLabel: { fontSize: 12, fontWeight: "700", color: colors.onSurface, letterSpacing: 0.2 },
+  chainKind: { fontSize: 10, fontWeight: "700", color: colors.brandDeep, backgroundColor: "rgba(201,163,91,0.18)", paddingHorizontal: 6, paddingVertical: 2, borderRadius: 4, marginLeft: 4 },
+  qrCard: { width: 240, height: 240, borderRadius: radius.lg, backgroundColor: colors.surfaceSecondary, alignItems: "center", justifyContent: "center", marginTop: spacing.sm, borderWidth: 1, borderColor: "rgba(201,163,91,0.30)" },
+  qrPlaceholder: { width: 208, height: 208, alignItems: "center", justifyContent: "center" },
+  label: { fontSize: 11, color: colors.brandDeep, marginTop: spacing.lg, fontWeight: "700", letterSpacing: 0.5, textTransform: "uppercase" },
+  addrBox: { backgroundColor: colors.surfaceSecondary, paddingHorizontal: spacing.lg, paddingVertical: spacing.md, borderRadius: radius.md, borderWidth: 1, borderColor: colors.border, maxWidth: "100%" },
+  addrText: { color: colors.onSurface, fontSize: 13, fontFamily: Platform.OS === "ios" ? "Menlo" : "monospace", textAlign: "center" },
+  actionRow: { flexDirection: "row", gap: spacing.sm, marginTop: spacing.sm },
+  actionBtn: { flexDirection: "row", alignItems: "center", gap: 6, paddingHorizontal: spacing.lg, paddingVertical: 10, borderRadius: radius.pill, backgroundColor: colors.brandTertiary, borderWidth: 1, borderColor: "rgba(201,163,91,0.40)" },
+  actionText: { color: colors.brandDeep, fontWeight: "700", fontSize: 13 },
+  faucetCard: { flexDirection: "row", alignItems: "center", gap: spacing.sm, padding: spacing.md, backgroundColor: colors.surfaceInverse, borderRadius: radius.md, marginTop: spacing.lg, width: "100%", borderWidth: 1, borderColor: "rgba(201,163,91,0.35)" },
+  faucetTitle: { color: colors.onSurfaceInverse, fontWeight: "700", fontSize: 13 },
+  faucetLink: { color: "rgba(245,233,201,0.7)", fontSize: 11, marginTop: 2 },
 });
