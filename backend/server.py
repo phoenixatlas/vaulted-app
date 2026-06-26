@@ -5,6 +5,7 @@ from starlette.middleware.cors import CORSMiddleware
 from motor.motor_asyncio import AsyncIOMotorClient
 import os
 import logging
+import asyncio
 import uuid
 import secrets
 import json
@@ -46,6 +47,19 @@ SEPOLIA_CHAIN_ID = 11155111
 RESEND_API_KEY = os.environ.get("RESEND_API_KEY", "")
 # Sender address — defaults to Resend's shared sandbox until a custom domain is verified.
 RESEND_FROM = os.environ.get("RESEND_FROM", "Vaulted <onboarding@resend.dev>")
+# Domain we'd like to graduate the sender to once verified.
+RESEND_TARGET_DOMAIN = os.environ.get("RESEND_TARGET_DOMAIN", "phoenix-atlas.com")
+RESEND_TARGET_FROM = os.environ.get(
+    "RESEND_TARGET_FROM", f"Vaulted <noreply@{os.environ.get('RESEND_TARGET_DOMAIN', 'phoenix-atlas.com')}>"
+)
+# Mutable at runtime — the Resend poller flips this when the target domain verifies.
+_resolved_resend_from: Optional[str] = None
+
+
+def get_resend_from() -> str:
+    return _resolved_resend_from or RESEND_FROM
+
+
 MULTISIG_THRESHOLD_ETH = float(os.environ.get("MULTISIG_THRESHOLD_ETH", "0.01"))
 APPROVAL_TTL_HOURS = 24
 
@@ -101,6 +115,11 @@ class SendMessageIn(BaseModel):
     text: str = Field(min_length=1, max_length=8000)
     nonce: Optional[str] = None  # base64 NaCl secretbox nonce when encrypted
     encrypted: bool = False
+
+
+class SendChatCryptoIn(BaseModel):
+    conversation_id: str
+    amount_eth: float = Field(gt=0, le=1.0)
 
 
 class StartConversationIn(BaseModel):
@@ -583,7 +602,7 @@ async def _send_approval_email(pending: dict) -> None:
                 "https://api.resend.com/emails",
                 headers={"Authorization": f"Bearer {RESEND_API_KEY}", "Content-Type": "application/json"},
                 json={
-                    "from": RESEND_FROM,
+                    "from": get_resend_from(),
                     "to": [pending["cosigner_email"]],
                     "subject": f"Approve {pending['amount_eth']} ETH from Vaulted?",
                     "html": html,
@@ -625,7 +644,7 @@ async def add_cosigner(body: CosignerInviteIn, user=Depends(get_current_user)):
                     "https://api.resend.com/emails",
                     headers={"Authorization": f"Bearer {RESEND_API_KEY}", "Content-Type": "application/json"},
                     json={
-                        "from": RESEND_FROM,
+                        "from": get_resend_from(),
                         "to": [body.email],
                         "subject": f"You're now a Vaulted co-signer for {user.get('name')}",
                         "html": f"<p>{user.get('name')} ({user.get('email')}) added you as a co-signer on their Vaulted wallet. You'll receive an email any time they try to send ≥ {MULTISIG_THRESHOLD_ETH} ETH; tap Approve or Reject in those emails.</p>",
@@ -984,6 +1003,100 @@ async def send_message(body: SendMessageIn, user=Depends(get_current_user)):
     return msg
 
 
+# ---------- In-chat crypto sends ---------------------------------------------
+async def _get_or_create_contact_eth_address(contact_id: str) -> str:
+    """Lazily derive a deterministic Sepolia address for a seeded contact.
+    Stored once on the contact doc so subsequent sends are idempotent."""
+    c = await db.contacts.find_one({"id": contact_id}, {"_id": 0})
+    if not c:
+        raise HTTPException(status_code=404, detail="Contact not found")
+    addr = c.get("eth_address")
+    if addr and addr.startswith("0x") and len(addr) == 42:
+        return addr
+    # derive deterministically from email so the same contact always maps to the same address
+    import hashlib
+    seed = hashlib.sha256(f"vaulted-contact::{c.get('email','')}".encode()).digest()
+    acct = Account.from_key(seed)
+    addr = acct.address
+    await db.contacts.update_one({"id": contact_id}, {"$set": {"eth_address": addr}})
+    return addr
+
+
+@api.post("/chat/send_crypto")
+async def chat_send_crypto(body: SendChatCryptoIn, user=Depends(get_current_user)):
+    """Send ETH to the conversation's counter-party and post a tx_card message.
+
+    UX guard: capped below MULTISIG_THRESHOLD_ETH so in-chat sends never block
+    on email approval — anything bigger should go through the main Send screen.
+    """
+    if body.amount_eth >= MULTISIG_THRESHOLD_ETH:
+        raise HTTPException(
+            status_code=400,
+            detail=f"In-chat sends are capped under {MULTISIG_THRESHOLD_ETH} ETH. Use the Send screen for larger amounts.",
+        )
+    conv = await db.conversations.find_one(
+        {"id": body.conversation_id, "user_id": user["id"]}, {"_id": 0}
+    )
+    if not conv:
+        raise HTTPException(status_code=404, detail="Conversation not found")
+    contact_id = conv.get("contact_id")
+    if not contact_id:
+        raise HTTPException(status_code=400, detail="Conversation has no recipient")
+
+    pk = user.get("eth_private_key")
+    addr = user.get("wallet_address")
+    if not pk or not addr:
+        raise HTTPException(status_code=400, detail="No ETH key on file")
+
+    to_addr = await _get_or_create_contact_eth_address(contact_id)
+    result = await _broadcast_eth_send(user, addr, pk, to_addr, body.amount_eth)
+    tx_hash = result.get("tx_hash")
+    explorer = result.get("explorer_url")
+
+    # Post a structured "tx_card" message into the conversation.
+    msg = {
+        "id": str(uuid.uuid4()),
+        "conversation_id": body.conversation_id,
+        "user_id": user["id"],
+        "sender": "me",
+        "kind": "tx_card",
+        "text": f"Sent {body.amount_eth} ETH",
+        "tx_hash": tx_hash,
+        "explorer_url": explorer,
+        "amount_eth": body.amount_eth,
+        "asset": "ETH",
+        "to_address": to_addr,
+        "tx_status": result.get("status", "pending"),
+        "encrypted": False,
+        "created_at": iso(now_utc()),
+    }
+    await db.messages.insert_one(msg)
+
+    preview = f"💸 Sent {body.amount_eth} ETH"
+    await db.conversations.update_one(
+        {"id": body.conversation_id},
+        {"$set": {"last_message": preview, "last_message_at": msg["created_at"], "unread": 0}},
+    )
+    # Auto-acknowledge reply
+    ack = {
+        "id": str(uuid.uuid4()),
+        "conversation_id": body.conversation_id,
+        "user_id": user["id"],
+        "sender": "contact",
+        "kind": "text",
+        "text": f"Received {body.amount_eth} ETH — thank you! ✨",
+        "encrypted": False,
+        "created_at": iso(now_utc()),
+    }
+    await db.messages.insert_one(ack)
+    await db.conversations.update_one(
+        {"id": body.conversation_id},
+        {"$set": {"last_message": ack["text"], "last_message_at": ack["created_at"]}},
+    )
+    msg.pop("_id", None)
+    return msg
+
+
 # --------------------------- E2E Crypto Keys ---------------------------
 @api.post("/keys/register")
 async def register_public_key(body: RegisterKeyIn, user=Depends(get_current_user)):
@@ -1297,3 +1410,60 @@ app.add_middleware(
 @app.on_event("shutdown")
 async def shutdown_db_client():
     client.close()
+
+
+# ---------- Resend domain auto-poller -----------------------------------------
+# Periodically checks Resend for the target domain (e.g. phoenix-atlas.com).
+# As soon as it flips to "verified", we promote the sender by populating
+# `_resolved_resend_from`. No env-file rewriting required.
+async def _resend_domain_poller():
+    global _resolved_resend_from
+    if not RESEND_API_KEY:
+        logger.info("[resend-poller] no API key set; skipping")
+        return
+    interval = int(os.environ.get("RESEND_POLL_INTERVAL_SEC", "300"))  # 5 min default
+    backoff_until = 0.0
+    while True:
+        try:
+            now = asyncio.get_event_loop().time()
+            if now >= backoff_until:
+                async with httpx.AsyncClient(timeout=10) as cx:
+                    r = await cx.get(
+                        "https://api.resend.com/domains",
+                        headers={"Authorization": f"Bearer {RESEND_API_KEY}"},
+                    )
+                if r.status_code == 200:
+                    for d in (r.json() or {}).get("data", []):
+                        if d.get("name") == RESEND_TARGET_DOMAIN and d.get("status") == "verified":
+                            if _resolved_resend_from != RESEND_TARGET_FROM:
+                                _resolved_resend_from = RESEND_TARGET_FROM
+                                logger.info(
+                                    "[resend-poller] %s verified — sender promoted to %s",
+                                    RESEND_TARGET_DOMAIN, RESEND_TARGET_FROM,
+                                )
+                            return  # done forever
+                    # not verified yet, trigger a re-check from Resend's side
+                    domain_id = next(
+                        (d.get("id") for d in (r.json() or {}).get("data", []) if d.get("name") == RESEND_TARGET_DOMAIN),
+                        None,
+                    )
+                    if domain_id:
+                        async with httpx.AsyncClient(timeout=10) as cx2:
+                            await cx2.post(
+                                f"https://api.resend.com/domains/{domain_id}/verify",
+                                headers={"Authorization": f"Bearer {RESEND_API_KEY}"},
+                            )
+                elif r.status_code in (401, 403):
+                    logger.warning("[resend-poller] auth failed (%s); stopping", r.status_code)
+                    return
+                else:
+                    backoff_until = now + 60  # 1 min cool-down on transient errors
+        except Exception as e:  # pragma: no cover — best-effort
+            logger.warning("[resend-poller] iteration failed: %s", e)
+        await asyncio.sleep(interval)
+
+
+@app.on_event("startup")
+async def _start_resend_poller():
+    # Fire-and-forget; FastAPI will keep this task alive for the process lifetime.
+    asyncio.create_task(_resend_domain_poller())

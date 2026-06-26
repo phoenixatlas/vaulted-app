@@ -13,7 +13,12 @@
   - `POST /api/wallet/eth/send` gates ≥ threshold behind `approval_required:true` and emails the co-signer one-click Approve/Reject links pointing to `<APP_URL>/approve?token=...`.
   - `POST /api/approvals/decide` is the **public** decision endpoint (no auth — the token IS the credential). Approve attempts a real Sepolia broadcast. Idempotent; expired returns 410.
   - Frontend: `/cosigners`, `/approvals`, `/approve` screens; Settings → Security routes both into Pro-gated UX.
-- **Iter 7** — **PhoenixAtlas brand refresh + polish sweep.**
+- **Iter 8** — **Resend auto-poller + in-chat crypto sends.**
+  - **Resend poller**: backend startup task polls Resend every 5 min and *automatically* re-triggers verification for `phoenix-atlas.com`. The moment the domain flips to `verified`, the sender is promoted to `Vaulted <noreply@phoenix-atlas.com>` in-memory — no env-file rewriting, no restart, no manual script. New env vars: `RESEND_TARGET_DOMAIN`, `RESEND_TARGET_FROM`, `RESEND_POLL_INTERVAL_SEC`. Helper script `/app/scripts/check_resend_domain.sh` still works for manual flips.
+  - **In-chat crypto sends**: new endpoint `POST /api/chat/send_crypto` performs a real Sepolia broadcast to the conversation counter-party (recipient ETH address is deterministically derived from the seeded contact's email — stored once on first send), then inserts a structured `kind:"tx_card"` message into the conversation. Capped under `MULTISIG_THRESHOLD_ETH` (0.01) so in-chat sends never block on multi-sig email approval.
+  - **Chat UI**: composer now has a gold cash icon next to the message input → opens a bottom sheet ("Send ETH to <name>") with amount input, 3 quick-pill amounts (0.0001 / 0.001 / 0.005), and a brand-gold "Send now" CTA. Biometric scan required before broadcast if the user has biometric lock on. Errors (insufficient balance, cap) surface inline.
+  - **tx_card bubble**: rich gold-bordered receipt card showing amount, network, masked recipient, status pill, and an "VIEW ON ETHERSCAN" deep-link button. Renders inline in the chat thread.
+  - i18n keys extended (send_eth_to, send_now, cancel, sent_eth_label, network, to, view_on_etherscan, sepolia_testnet_note).
   - Wordmark + phoenix-mark imported from logo, processed (`brand-wordmark.png`, `brand-icon.png`, `brand-adaptive.png`) and wired into theme via `BRAND_IMAGES`.
   - New palette in `theme.ts`: warm metallic gold `#C9A35B` brand, deep warm-black `#0F0B08` inverse, cream-tinted light surfaces. Hybrid theme — gold-on-black chrome on auth/hero/CTAs; light cream surfaces for forms & lists for readability.
   - All 13 primary CTAs flipped from white-on-gold (poor contrast) to deep-black-on-gold (premium 7:1).
