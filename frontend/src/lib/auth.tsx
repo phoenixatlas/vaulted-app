@@ -1,5 +1,6 @@
 import React, { createContext, useContext, useEffect, useState, ReactNode } from "react";
 import { api, getToken, setToken } from "./api";
+import { registerForPush } from "./push";
 
 type User = {
   id: string;
@@ -52,6 +53,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       setLoading(false);
     })();
   }, []);
+
+  // Whenever we have an authenticated user, ensure the push token is registered
+  // with the Emergent push service. No-op on web / unsupported devices.
+  useEffect(() => {
+    if (user?.id) {
+      registerForPush(user.id).catch(() => undefined);
+    }
+  }, [user?.id]);
 
   const login = async (email: string, password: string) => {
     const res = await api<{ access_token: string; user: User }>("/auth/login", {

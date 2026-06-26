@@ -28,9 +28,14 @@ export default function ChatList() {
     <SafeAreaView style={s.root} edges={["top"]}>
       <View style={s.header}>
         <Text style={s.title}>{t("chat")}</Text>
-        <Pressable testID="open-video-call" onPress={() => router.push("/video-call")} style={s.callBtn}>
-          <Ionicons name="videocam" size={20} color={colors.brand} />
-        </Pressable>
+        <View style={s.headerActions}>
+          <Pressable testID="open-new-group" onPress={() => router.push("/chat/new-group")} style={s.callBtn}>
+            <Ionicons name="people" size={18} color={colors.brand} />
+          </Pressable>
+          <Pressable testID="open-video-call" onPress={() => router.push("/video-call")} style={s.callBtn}>
+            <Ionicons name="videocam" size={20} color={colors.brand} />
+          </Pressable>
+        </View>
       </View>
       {loading ? (
         <ActivityIndicator color={colors.brand} style={{ marginTop: 40 }} />
@@ -78,6 +83,7 @@ export default function ChatList() {
 const s = StyleSheet.create({
   root: { flex: 1, backgroundColor: colors.surface },
   header: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", paddingHorizontal: spacing.xl, paddingTop: spacing.md, paddingBottom: spacing.lg },
+  headerActions: { flexDirection: "row", gap: spacing.sm },
   title: { fontSize: 26, fontWeight: "700", color: colors.onSurface, letterSpacing: -0.6 },
   callBtn: { width: 40, height: 40, borderRadius: radius.pill, backgroundColor: colors.brandTertiary, alignItems: "center", justifyContent: "center" },
   row: { flexDirection: "row", alignItems: "center", gap: spacing.md, paddingHorizontal: spacing.xl, paddingVertical: spacing.md },

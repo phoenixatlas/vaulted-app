@@ -30,7 +30,14 @@ type Msg = {
   tx_status?: string;
   _plain?: string;
 };
-type Conv = { id: string; contact_name: string; contact_avatar: string };
+type Conv = {
+  id: string;
+  contact_name: string;
+  contact_avatar?: string;
+  is_group?: boolean;
+  group_name?: string;
+  members?: Array<{ contact_id: string; name: string; avatar?: string }>;
+};
 
 export default function Conversation() {
   const { id } = useLocalSearchParams<{ id: string }>();
@@ -47,6 +54,7 @@ export default function Conversation() {
   const [cryptoAmount, setCryptoAmount] = useState("");
   const [cryptoSending, setCryptoSending] = useState(false);
   const [cryptoErr, setCryptoErr] = useState<string | null>(null);
+  const [recipientId, setRecipientId] = useState<string | null>(null);
   const listRef = useRef<FlatList>(null);
 
   const decorate = async (rows: Msg[]): Promise<Msg[]> => {
@@ -104,6 +112,12 @@ export default function Conversation() {
   const openCryptoSheet = () => {
     setCryptoAmount("");
     setCryptoErr(null);
+    // For groups, default-select the first member; user can change with chips
+    if (conv?.is_group && conv.members?.length) {
+      setRecipientId(conv.members[0].contact_id);
+    } else {
+      setRecipientId(null);
+    }
     setShowCryptoSheet(true);
   };
 
@@ -112,17 +126,16 @@ export default function Conversation() {
     const amt = parseFloat(cryptoAmount);
     if (!amt || amt <= 0) { setCryptoErr("Enter a valid amount"); return; }
     if (amt >= 0.01) { setCryptoErr("In-chat sends are capped under 0.01 ETH. Use the Send screen for larger amounts."); return; }
-    // Biometric confirmation if enabled
+    if (conv?.is_group && !recipientId) { setCryptoErr("Pick a recipient from the group"); return; }
     if (user?.biometric_enabled) {
-      const ok = await authenticate({ reason: `Send ${amt} ETH to ${conv?.contact_name ?? "this contact"}?` });
+      const ok = await authenticate({ reason: `Send ${amt} ETH from this chat?` });
       if (!ok.success) { setCryptoErr("Biometric authentication failed"); return; }
     }
     setCryptoSending(true);
     try {
-      await api("/chat/send_crypto", {
-        method: "POST",
-        body: { conversation_id: id, amount_eth: amt },
-      });
+      const body: Record<string, unknown> = { conversation_id: id, amount_eth: amt };
+      if (recipientId) body.to_contact_id = recipientId;
+      await api("/chat/send_crypto", { method: "POST", body });
       setShowCryptoSheet(false);
       await load();
       setTimeout(() => listRef.current?.scrollToEnd({ animated: true }), 100);
@@ -139,13 +152,21 @@ export default function Conversation() {
         <Pressable testID="chat-back" onPress={() => router.back()}>
           <Ionicons name="chevron-back" size={26} color={colors.onSurface} />
         </Pressable>
-        {conv && <Image source={{ uri: conv.contact_avatar }} style={s.avatar} />}
+        {conv?.is_group ? (
+          <View style={[s.avatar, s.groupAvatar]}>
+            <Ionicons name="people" size={18} color={colors.brand} />
+          </View>
+        ) : conv ? (
+          <Image source={{ uri: conv.contact_avatar }} style={s.avatar} />
+        ) : null}
         <View style={{ flex: 1 }}>
-          <Text style={s.name}>{conv?.contact_name ?? "…"}</Text>
+          <Text style={s.name}>{conv?.group_name ?? conv?.contact_name ?? "…"}</Text>
           <View style={s.encRow}>
             <Ionicons name="lock-closed" size={10} color={colors.success} />
             <Text style={s.enc}>
-              {t("encrypted")} · key {fp || "…"}
+              {conv?.is_group
+                ? `${conv.members?.length ?? 0} ${t("members_label")} · ${t("encrypted")}`
+                : `${t("encrypted")} · key ${fp || "…"}`}
             </Text>
           </View>
         </View>
@@ -258,8 +279,35 @@ export default function Conversation() {
         <Pressable style={s.sheetBackdrop} onPress={() => !cryptoSending && setShowCryptoSheet(false)} />
         <View style={s.sheet} testID="chat-crypto-sheet">
           <View style={s.sheetHandle} />
-          <Text style={s.sheetTitle}>{t("send_eth_to")} {conv?.contact_name ?? ""}</Text>
+          <Text style={s.sheetTitle}>
+            {conv?.is_group
+              ? `${t("send_eth_to_member")}`
+              : `${t("send_eth_to")} ${conv?.contact_name ?? ""}`}
+          </Text>
           <Text style={s.sheetHint}>{t("sepolia_testnet_note")}</Text>
+
+          {conv?.is_group && conv.members?.length ? (
+            <>
+              <Text style={s.sheetLabel}>{t("recipient")}</Text>
+              <View style={s.memberChips}>
+                {conv.members.map((m) => {
+                  const active = recipientId === m.contact_id;
+                  return (
+                    <Pressable
+                      key={m.contact_id}
+                      testID={`pick-member-${m.contact_id}`}
+                      onPress={() => setRecipientId(m.contact_id)}
+                      style={[s.memberChip, active && s.memberChipActive]}
+                    >
+                      <Text style={[s.memberChipText, active && { color: "#0F0B08" }]} numberOfLines={1}>
+                        @{(m.name ?? "").split(" ")[0]}
+                      </Text>
+                    </Pressable>
+                  );
+                })}
+              </View>
+            </>
+          ) : null}
 
           <Text style={s.sheetLabel}>{t("amount")} (ETH)</Text>
           <TextInput
@@ -316,6 +364,7 @@ const s = StyleSheet.create({
     borderBottomWidth: 1, borderBottomColor: colors.divider,
   },
   avatar: { width: 36, height: 36, borderRadius: radius.pill },
+  groupAvatar: { backgroundColor: colors.brandTertiary, alignItems: "center", justifyContent: "center", borderWidth: 1, borderColor: "rgba(201,163,91,0.40)" },
   name: { color: colors.onSurface, fontWeight: "700", fontSize: 15 },
   encRow: { flexDirection: "row", alignItems: "center", gap: 4, marginTop: 2 },
   enc: { color: colors.onSurfaceTertiary, fontSize: 11 },
@@ -406,6 +455,14 @@ const s = StyleSheet.create({
   },
   quickPillActive: { backgroundColor: colors.brand, borderColor: colors.brand },
   quickText: { fontSize: 12, color: colors.brandDeep, fontWeight: "700" },
+  memberChips: { flexDirection: "row", flexWrap: "wrap", gap: spacing.sm, marginBottom: spacing.md },
+  memberChip: {
+    paddingHorizontal: spacing.md, paddingVertical: 8, borderRadius: radius.pill,
+    backgroundColor: colors.brandTertiary, borderWidth: 1, borderColor: "rgba(201,163,91,0.40)",
+    maxWidth: 140,
+  },
+  memberChipActive: { backgroundColor: colors.brand, borderColor: colors.brand },
+  memberChipText: { fontSize: 12, color: colors.brandDeep, fontWeight: "700" },
   sheetErr: { color: colors.error, fontSize: 13, marginBottom: spacing.sm, marginTop: 2 },
   cta: { backgroundColor: colors.brand, borderRadius: radius.md, paddingVertical: 14, alignItems: "center", marginTop: spacing.sm, shadowColor: colors.brand, shadowOpacity: 0.3, shadowRadius: 12, shadowOffset: { width: 0, height: 4 } },
   ctaText: { color: "#0F0B08", fontSize: 16, fontWeight: "700", letterSpacing: 0.3 },

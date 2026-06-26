@@ -1,11 +1,12 @@
 import { useCallback, useState } from "react";
-import { View, Text, StyleSheet, FlatList, ActivityIndicator, RefreshControl } from "react-native";
+import { View, Text, StyleSheet, FlatList, ActivityIndicator, RefreshControl, Pressable } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { useFocusEffect } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
 import { api } from "@/src/lib/api";
 import { useI18n } from "@/src/lib/i18n";
 import { colors, spacing, radius } from "@/src/lib/theme";
+import { ExportSheet } from "@/src/components/ExportSheet";
 
 type Tx = {
   id: string; type: string; category: string; asset: string; amount: number; fiat_value: number;
@@ -25,6 +26,7 @@ export default function Activity() {
   const [items, setItems] = useState<Tx[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
+  const [showExport, setShowExport] = useState(false);
 
   const load = async () => { try { setItems(await api<Tx[]>("/transactions")); } catch (e) { console.log(e); } };
   useFocusEffect(useCallback(() => { setLoading(true); load().finally(() => setLoading(false)); }, []));
@@ -32,7 +34,13 @@ export default function Activity() {
 
   return (
     <SafeAreaView style={s.root} edges={["top"]}>
-      <View style={s.header}><Text style={s.title}>{t("transactions")}</Text></View>
+      <View style={s.header}>
+        <Text style={s.title}>{t("transactions")}</Text>
+        <Pressable testID="open-export" onPress={() => setShowExport(true)} style={s.exportBtn}>
+          <Ionicons name="download-outline" size={16} color={colors.brand} />
+          <Text style={s.exportText}>{t("export")}</Text>
+        </Pressable>
+      </View>
       {loading ? <ActivityIndicator color={colors.brand} style={{ marginTop: 40 }} /> :
         items.length === 0 ? (
           <View style={s.empty}><Text style={s.emptyText}>{t("no_tx")}</Text></View>
@@ -65,13 +73,20 @@ export default function Activity() {
             ItemSeparatorComponent={() => <View style={s.sep} />}
           />
         )}
+      <ExportSheet visible={showExport} onClose={() => setShowExport(false)} />
     </SafeAreaView>
   );
 }
 const s = StyleSheet.create({
   root: { flex: 1, backgroundColor: colors.surface },
-  header: { paddingHorizontal: spacing.xl, paddingTop: spacing.md, paddingBottom: spacing.lg },
+  header: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", paddingHorizontal: spacing.xl, paddingTop: spacing.md, paddingBottom: spacing.lg },
   title: { fontSize: 26, fontWeight: "700", color: colors.onSurface, letterSpacing: -0.6 },
+  exportBtn: {
+    flexDirection: "row", alignItems: "center", gap: 6,
+    paddingHorizontal: spacing.md, paddingVertical: 8, borderRadius: radius.pill,
+    backgroundColor: colors.brandTertiary, borderWidth: 1, borderColor: "rgba(201,163,91,0.35)",
+  },
+  exportText: { fontSize: 12, color: colors.brandDeep, fontWeight: "700", letterSpacing: 0.3 },
   row: { flexDirection: "row", alignItems: "center", gap: spacing.md, paddingHorizontal: spacing.xl, paddingVertical: spacing.md },
   icon: { width: 40, height: 40, borderRadius: radius.pill, alignItems: "center", justifyContent: "center" },
   txTitle: { fontSize: 14, fontWeight: "600", color: colors.onSurface },

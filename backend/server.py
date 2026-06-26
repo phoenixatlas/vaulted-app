@@ -120,6 +120,12 @@ class SendMessageIn(BaseModel):
 class SendChatCryptoIn(BaseModel):
     conversation_id: str
     amount_eth: float = Field(gt=0, le=1.0)
+    to_contact_id: Optional[str] = None  # required for group chats; ignored for 1-on-1
+
+
+class CreateGroupIn(BaseModel):
+    name: str = Field(min_length=1, max_length=80)
+    contact_ids: list[str] = Field(min_length=1, max_length=20)
 
 
 class StartConversationIn(BaseModel):
@@ -697,6 +703,18 @@ async def decide_approval(body: ApprovalActionIn):
         await db.eth_approvals.update_one(
             {"id": approval["id"]}, {"$set": {"status": "rejected", "decided_at": iso(now_utc())}}
         )
+        try:
+            await send_push(
+                recipients=[approval["user_id"]],
+                data={
+                    "title": f"⛔ Co-signer rejected {approval['amount_eth']} ETH",
+                    "message": "Your multi-sig transaction was not broadcast.",
+                    "action_url": "/approvals",
+                },
+                idempotency_key=f"approval-{approval['id']}-rejected",
+            )
+        except Exception as e:
+            logger.warning("push approval-rejected failed: %s", e)
         return {"status": "rejected", "approval_id": approval["id"]}
 
     # Approve → broadcast the tx now using the sender's key
@@ -723,6 +741,19 @@ async def decide_approval(body: ApprovalActionIn):
             "explorer_url": tx_record.get("explorer_url"),
         }},
     )
+    # Notify the wallet owner that their cosigner approved & the broadcast is live
+    try:
+        await send_push(
+            recipients=[approval["user_id"]],
+            data={
+                "title": f"✅ Co-signer approved {approval['amount_eth']} ETH",
+                "message": "Your multi-sig transaction is now on Sepolia.",
+                "action_url": "/approvals",
+            },
+            idempotency_key=f"approval-{approval['id']}-approved",
+        )
+    except Exception as e:
+        logger.warning("push approval-approved failed: %s", e)
     return {"status": "approved", "approval_id": approval["id"], "tx_hash": tx_record.get("tx_hash"), "explorer_url": tx_record.get("explorer_url")}
 
 
@@ -931,6 +962,83 @@ async def list_transactions(user=Depends(get_current_user), limit: int = 100):
     return await cur.to_list(limit)
 
 
+# ---------- CSV / tax export -------------------------------------------------
+@api.get("/transactions/export")
+async def export_transactions_csv(
+    user=Depends(get_current_user),
+    date_from: Optional[str] = None,
+    date_to: Optional[str] = None,
+    assets: Optional[str] = None,   # comma-separated symbols, e.g. "ETH,USDC"
+    types: Optional[str] = None,    # comma-separated, e.g. "send,receive"
+):
+    """Return a tax-ready CSV of the user's transactions, filterable by
+    date range / asset / type. Compatible with most accounting tools
+    (Koinly, CoinTracker, Excel, Google Sheets)."""
+    from io import StringIO
+    import csv
+    from fastapi.responses import StreamingResponse
+
+    q: dict = {"user_id": user["id"]}
+    if date_from:
+        q.setdefault("created_at", {})["$gte"] = date_from
+    if date_to:
+        # treat date_to as inclusive end-of-day
+        q.setdefault("created_at", {})["$lte"] = f"{date_to}T23:59:59.999Z"
+    if assets:
+        wanted = [a.strip().upper() for a in assets.split(",") if a.strip()]
+        if wanted:
+            q["asset"] = {"$in": wanted}
+    if types:
+        wanted_t = [t.strip().lower() for t in types.split(",") if t.strip()]
+        if wanted_t:
+            q["type"] = {"$in": wanted_t}
+
+    cur = db.transactions.find(q, {"_id": 0}).sort("created_at", 1)
+    rows = await cur.to_list(10000)
+
+    buf = StringIO()
+    writer = csv.writer(buf)
+    writer.writerow([
+        "Date (UTC)", "Type", "Category", "Asset", "Amount",
+        "USD Value", "Cost Basis USD", "Service Fee USD", "Net USD",
+        "Counterparty", "Network", "Tx Hash", "Status", "Explorer URL",
+    ])
+    for r in rows:
+        fiat = float(r.get("fiat_value") or 0)
+        fee = float(r.get("service_fee_usd") or 0)
+        t = r.get("type")
+        # Net = USD value the user actually exchanged hands with (after fees)
+        sign = -1 if t in ("send", "withdraw") else 1
+        net = round(sign * fiat - fee, 2)
+        writer.writerow([
+            r.get("created_at", ""),
+            t or "",
+            r.get("category", ""),
+            r.get("asset", ""),
+            r.get("amount", ""),
+            f"{fiat:.2f}",
+            f"{fiat:.2f}",   # cost basis = fiat value at time of tx (snapshot)
+            f"{fee:.2f}",
+            f"{net:.2f}",
+            r.get("counterparty", ""),
+            r.get("network", ""),
+            r.get("tx_hash", ""),
+            r.get("status", ""),
+            r.get("explorer_url", ""),
+        ])
+
+    name = "vaulted-transactions"
+    if date_from or date_to:
+        name += f"-{(date_from or 'all')}_to_{(date_to or 'now')}"
+    name += ".csv"
+    buf.seek(0)
+    return StreamingResponse(
+        iter([buf.getvalue()]),
+        media_type="text/csv",
+        headers={"Content-Disposition": f'attachment; filename="{name}"'},
+    )
+
+
 # Chat
 @api.get("/chat/contacts")
 async def contacts(user=Depends(get_current_user)):
@@ -1000,10 +1108,28 @@ async def send_message(body: SendMessageIn, user=Depends(get_current_user)):
         {"$set": {"last_message": auto["text"], "last_message_at": auto["created_at"]}},
     )
     msg.pop("_id", None)
+    # Push the encrypted-message notification to the other party
+    try:
+        if conv.get("is_group"):
+            recipients = [m.get("contact_id") for m in (conv.get("members") or []) if m.get("contact_id")]
+            title = f"💬 New message in {conv.get('group_name') or 'group'}"
+        else:
+            cid = conv.get("contact_id")
+            recipients = [cid] if cid else []
+            title = f"💬 {user.get('name') or 'A friend'} sent you a message"
+        if recipients:
+            await send_push(
+                recipients=recipients,
+                data={
+                    "title": title,
+                    "message": "🔒 Encrypted message · tap to read",
+                    "action_url": f"/chat/{body.conversation_id}",
+                },
+                idempotency_key=f"chat-msg-{msg['id']}",
+            )
+    except Exception as e:
+        logger.warning("push chat-msg failed: %s", e)
     return msg
-
-
-# ---------- In-chat crypto sends ---------------------------------------------
 async def _get_or_create_contact_eth_address(contact_id: str) -> str:
     """Lazily derive a deterministic Sepolia address for a seeded contact.
     Stored once on the contact doc so subsequent sends are idempotent."""
@@ -1024,10 +1150,11 @@ async def _get_or_create_contact_eth_address(contact_id: str) -> str:
 
 @api.post("/chat/send_crypto")
 async def chat_send_crypto(body: SendChatCryptoIn, user=Depends(get_current_user)):
-    """Send ETH to the conversation's counter-party and post a tx_card message.
+    """Send ETH inside a chat and post a tx_card receipt.
 
-    UX guard: capped below MULTISIG_THRESHOLD_ETH so in-chat sends never block
-    on email approval — anything bigger should go through the main Send screen.
+    For 1-on-1 chats the recipient is the conversation's contact. For groups,
+    `to_contact_id` MUST identify a member of the group. UX guard caps
+    in-chat sends below MULTISIG_THRESHOLD_ETH to avoid email-approval gating.
     """
     if body.amount_eth >= MULTISIG_THRESHOLD_ETH:
         raise HTTPException(
@@ -1039,9 +1166,19 @@ async def chat_send_crypto(body: SendChatCryptoIn, user=Depends(get_current_user
     )
     if not conv:
         raise HTTPException(status_code=404, detail="Conversation not found")
-    contact_id = conv.get("contact_id")
-    if not contact_id:
-        raise HTTPException(status_code=400, detail="Conversation has no recipient")
+
+    is_group = bool(conv.get("is_group"))
+    if is_group:
+        if not body.to_contact_id:
+            raise HTTPException(status_code=400, detail="Pick a recipient from the group")
+        members = conv.get("members") or []
+        if not any(m.get("contact_id") == body.to_contact_id for m in members):
+            raise HTTPException(status_code=400, detail="Recipient is not in this group")
+        contact_id = body.to_contact_id
+    else:
+        contact_id = conv.get("contact_id")
+        if not contact_id:
+            raise HTTPException(status_code=400, detail="Conversation has no recipient")
 
     pk = user.get("eth_private_key")
     addr = user.get("wallet_address")
@@ -1053,48 +1190,120 @@ async def chat_send_crypto(body: SendChatCryptoIn, user=Depends(get_current_user
     tx_hash = result.get("tx_hash")
     explorer = result.get("explorer_url")
 
-    # Post a structured "tx_card" message into the conversation.
+    # Find recipient display name for the tx_card label
+    recipient_name = None
+    if is_group:
+        recipient_name = next(
+            (m.get("name") for m in (conv.get("members") or []) if m.get("contact_id") == contact_id),
+            None,
+        )
+    else:
+        recipient_name = conv.get("contact_name")
+
     msg = {
         "id": str(uuid.uuid4()),
         "conversation_id": body.conversation_id,
         "user_id": user["id"],
         "sender": "me",
         "kind": "tx_card",
-        "text": f"Sent {body.amount_eth} ETH",
+        "text": f"Sent {body.amount_eth} ETH" + (f" to {recipient_name}" if recipient_name else ""),
         "tx_hash": tx_hash,
         "explorer_url": explorer,
         "amount_eth": body.amount_eth,
         "asset": "ETH",
         "to_address": to_addr,
+        "to_contact_id": contact_id,
+        "to_name": recipient_name,
         "tx_status": result.get("status", "pending"),
         "encrypted": False,
         "created_at": iso(now_utc()),
     }
     await db.messages.insert_one(msg)
 
-    preview = f"💸 Sent {body.amount_eth} ETH"
+    preview = f"💸 Sent {body.amount_eth} ETH" + (f" to {recipient_name}" if recipient_name else "")
     await db.conversations.update_one(
         {"id": body.conversation_id},
         {"$set": {"last_message": preview, "last_message_at": msg["created_at"], "unread": 0}},
     )
-    # Auto-acknowledge reply
-    ack = {
+    # Auto-ack only for 1-on-1 chats (groups would feel chatty)
+    if not is_group:
+        ack = {
+            "id": str(uuid.uuid4()),
+            "conversation_id": body.conversation_id,
+            "user_id": user["id"],
+            "sender": "contact",
+            "kind": "text",
+            "text": f"Received {body.amount_eth} ETH — thank you! ✨",
+            "encrypted": False,
+            "created_at": iso(now_utc()),
+        }
+        await db.messages.insert_one(ack)
+        await db.conversations.update_one(
+            {"id": body.conversation_id},
+            {"$set": {"last_message": ack["text"], "last_message_at": ack["created_at"]}},
+        )
+    msg.pop("_id", None)
+    # Fire-and-forget push to the recipient — never blocks the broadcast
+    if contact_id:
+        try:
+            await send_push(
+                recipients=[contact_id],
+                data={
+                    "title": f"💸 {user.get('name') or 'A friend'} sent you {body.amount_eth} ETH",
+                    "message": "Tap to view the transaction in your chat.",
+                    "action_url": f"/chat/{body.conversation_id}",
+                },
+                idempotency_key=f"chat-crypto-{msg['id']}",
+            )
+        except Exception as e:
+            logger.warning("push send_crypto failed: %s", e)
+    return msg
+
+
+# ---------- Contacts & Groups -------------------------------------------------
+@api.post("/chat/groups")
+async def create_group(body: CreateGroupIn, user=Depends(get_current_user)):
+    """Spin up an encrypted group conversation with the given contact ids."""
+    if not body.contact_ids:
+        raise HTTPException(status_code=400, detail="Pick at least one member")
+    cur = db.contacts.find({"user_id": user["id"], "id": {"$in": body.contact_ids}}, {"_id": 0})
+    contacts = await cur.to_list(50)
+    if len(contacts) != len(set(body.contact_ids)):
+        raise HTTPException(status_code=400, detail="Some contacts not found")
+    members = [
+        {"contact_id": c["id"], "name": c.get("name"), "avatar": c.get("avatar")}
+        for c in contacts
+    ]
+    conv_id = str(uuid.uuid4())
+    conv = {
+        "id": conv_id,
+        "user_id": user["id"],
+        "is_group": True,
+        "group_name": body.name.strip(),
+        "contact_name": body.name.strip(),  # used by list rows
+        "contact_avatar": (contacts[0].get("avatar") if contacts else None),
+        "members": members,
+        "last_message": f"Group created with {len(members)} member{'s' if len(members)!=1 else ''}.",
+        "last_message_at": iso(now_utc()),
+        "encrypted": True,
+        "priority": False,
+        "unread": 0,
+    }
+    await db.conversations.insert_one(conv)
+    # Seed a system message inside the group so it isn't empty.
+    sys_msg = {
         "id": str(uuid.uuid4()),
-        "conversation_id": body.conversation_id,
+        "conversation_id": conv_id,
         "user_id": user["id"],
         "sender": "contact",
         "kind": "text",
-        "text": f"Received {body.amount_eth} ETH — thank you! ✨",
+        "text": f"🔒 {body.name.strip()} created. Messages here are end-to-end encrypted.",
         "encrypted": False,
         "created_at": iso(now_utc()),
     }
-    await db.messages.insert_one(ack)
-    await db.conversations.update_one(
-        {"id": body.conversation_id},
-        {"$set": {"last_message": ack["text"], "last_message_at": ack["created_at"]}},
-    )
-    msg.pop("_id", None)
-    return msg
+    await db.messages.insert_one(sys_msg)
+    conv.pop("_id", None)
+    return conv
 
 
 # --------------------------- E2E Crypto Keys ---------------------------
@@ -1467,3 +1676,65 @@ async def _resend_domain_poller():
 async def _start_resend_poller():
     # Fire-and-forget; FastAPI will keep this task alive for the process lifetime.
     asyncio.create_task(_resend_domain_poller())
+
+
+# ---------- Emergent push notifications --------------------------------------
+PUSH_BASE_URL = "https://integrations.emergentagent.com"
+EMERGENT_PUSH_KEY = os.environ.get("EMERGENT_PUSH_KEY", "placeholder")
+
+_push_client = httpx.AsyncClient(
+    base_url=PUSH_BASE_URL,
+    headers={"X-Push-Key": EMERGENT_PUSH_KEY},
+    timeout=10.0,
+)
+
+
+class RegisterPushBody(BaseModel):
+    user_id: str
+    platform: str
+    device_token: str
+
+
+@app.post("/api/register-push", status_code=201)
+async def register_push(body: RegisterPushBody):
+    """Relay device-token registration to the Emergent Push service."""
+    try:
+        resp = await _push_client.post(
+            "/api/v1/push/users/register", json=body.model_dump()
+        )
+        if resp.status_code == 401:
+            raise HTTPException(500, "EMERGENT_PUSH_KEY missing or invalid")
+        if resp.status_code >= 500:
+            raise HTTPException(502, "Push provider unavailable")
+        resp.raise_for_status()
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.warning("register-push relay failed: %s", e)
+        raise HTTPException(502, "Push provider unavailable") from e
+    return {"status": "registered"}
+
+
+async def send_push(
+    recipients: list[str],
+    data: dict,
+    idempotency_key: Optional[str] = None,
+) -> None:
+    """Fire a push to one or more user_ids via Emergent. Never raises."""
+    try:
+        if not recipients:
+            return
+        if "title" not in data or "message" not in data:
+            logger.warning("send_push payload missing title/message: %s", data)
+            return
+        # chunk to <= 100
+        for i in range(0, len(recipients), 100):
+            chunk = recipients[i:i + 100]
+            payload: dict = {"recipients": chunk, "data": data}
+            if idempotency_key:
+                payload["$idempotency_key"] = f"{idempotency_key}-{i}"
+            resp = await _push_client.post("/api/v1/push/trigger", json=payload)
+            if resp.status_code >= 400:
+                logger.warning("send_push %s -> %s body=%s", chunk, resp.status_code, resp.text[:200])
+    except Exception as e:  # pragma: no cover — best-effort
+        logger.warning("send_push failed (non-blocking): %s", e)
