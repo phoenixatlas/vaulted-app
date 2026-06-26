@@ -1,0 +1,40 @@
+{
+  "summary": "Iter11 follow-up — self-heal fix on GET /api/wallet/eth/mnemonic CLOSES the retro-tag gap. Full pytest suite 21/21 PASS (zero failures, zero skips). The canary that failed last iteration (TestLegacyBackfillTagsOrigin::test_eth_mnemonic_endpoint_returns_409_for_legacy) now passes — for smoketest@vaulted.app, the endpoint runs Account.from_mnemonic(eth_mnemonic).address inline, compares against user.wallet_address (case-insensitive), finds a mismatch, persists mnemonic_origin='multichain_only', and returns 409 with the explainer 'This account was created before BIP-39 onboarding, so we can't show a recovery phrase for your existing ETH key. Use Export Private Key instead.' Verified end-to-end via curl: 1st/2nd/3rd consecutive calls all return 409 → tag is persisted, not just computed (idempotency confirmed). Verified fresh-user path is unaffected: a TEST_iter11_<uuid>@vaulted.app registration returns 200 with mnemonic+word_count=12+address, AND Account.from_mnemonic(returned_mnemonic).address matches user.wallet_address byte-for-byte (TestFreshUserEthNative both pass). All iter9 (health GET/HEAD, contacts alphabetical, /usdc/send 400 cases, transactions/export CSV, chat/send_crypto no 5xx) and iter10 (legacy+fresh btc/sol/usdc/eth info, /assets) regression tests still green. Note: First pytest run had 2 transient 502s on /wallet/btc/info (ingress/upstream mempool flake), both passed on immediate re-run — not a real regression.",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {"endpoint": "/api/wallet/btc/info", "issue": "First pytest run produced 2x 502 (HTML error page) on /wallet/btc/info for both smoketest and fresh user, then passed on immediate re-run with no code changes. Likely transient — either Kubernetes ingress timeout or mempool.space testnet API flake. Not blocking, but worth a defensive timeout/retry around the upstream BTC call if the issue recurs."},
+      {"endpoint": "server.py", "issue": "Carry-over: 2016 lines, well past 700-line guideline. Splitting into routers/ (auth, wallet, multichain, chat, stripe) still recommended."},
+      {"endpoint": "carry-over", "issue": "Known: 28-byte JWT_SECRET (InsecureKeyLengthWarning), bcrypt __about__ AttributeError — not blocking tests."}
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [],
+    "react_native_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_iteration11.py",
+    "/app/test_reports/pytest/iter11_results.xml"
+  ],
+  "action_items": [
+    "No iter11 follow-up needed — the retro-tag bug is closed. Optional: add a defensive try/except around the upstream BTC RPC call so transient 502s degrade to a cached/default response instead of bubbling up as ingress 502.",
+    "(Carry-over) Set 32+ byte JWT_SECRET; pin bcrypt==4.0.1; split server.py into routers/."
+  ],
+  "critical_code_review_comments": [
+    "Fix is clean and well-placed at server.py:1011-1028. Self-heal runs only when user.mnemonic_origin is missing → idempotent by construction. The Account.from_mnemonic(...) call is wrapped in try/except so a malformed legacy mnemonic falls through to 'multichain_only' (safe-by-default) rather than 500ing the endpoint.",
+    "case-insensitive .lower() comparison on both derived_addr and stored_addr correctly handles EIP-55 checksum vs lowercase storage variants — verified the canary user has a lowercase wallet_address (0x1b92...7cbf) while Account.from_mnemonic returns checksummed.",
+    "The 409 explainer (server.py:1036-1037) does not leak the mnemonic value in the error body — confirmed via the test_eth_mnemonic_endpoint_returns_409_for_legacy assertion and direct curl inspection.",
+    "Carry-over: server.py at 2016 lines is unwieldy; the wallet endpoints form a natural ~600-line sub-module that should move to routers/wallet.py."
+  ],
+  "updated_files": [
+    "/app/test_reports/pytest/iter11_results.xml (regenerated — 21 passed)"
+  ],
+  "success_rate": {"backend": "100% (21/21)", "frontend": "not tested (backend-only iteration per review_request)"},
+  "seed_data_creation": "One fresh user TEST_iter11_<uuid>@vaulted.app per pytest session via /api/auth/register (cleanup not required — disposable test accounts). smoketest@vaulted.app reused; its user doc now has mnemonic_origin='multichain_only' persisted (was missing before this run).",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "Iter11 is fully closed. The smoketest user doc now has mnemonic_origin='multichain_only' persisted, so future calls hit the cached origin and skip re-derivation (faster path). If the BTC 502s reproduce in iter12, look at the upstream mempool.space testnet RPC (likely needs a circuit-breaker or stub).",
+  "rca_of_issue": "ROOT CAUSE (iter11 original bug): mnemonic_origin tag was only written inside the mint-fresh branch of _ensure_multichain_addresses, so users already backfilled in iter10 (with btc_address+sol_address already set) short-circuited at the top of the function and never hit the tagging line. FIX (iter11 follow-up, this iteration): moved tagging out of _ensure_multichain_addresses and into the /wallet/eth/mnemonic endpoint itself as a read-time self-heal — derive Account.from_mnemonic(eth_mnemonic).address, compare against user.wallet_address, persist mnemonic_origin accordingly, then enforce the 409 guard. The fix is idempotent (only fires when mnemonic_origin is unset), safe-by-default (Account.from_mnemonic failure falls through to 'multichain_only'), and requires no DB migration. Verified live via 21/21 pytest pass + direct curl: 3 consecutive calls all 409, confirming persistence."
+}

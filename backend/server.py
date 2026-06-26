@@ -1007,9 +1007,29 @@ async def eth_mnemonic(user=Depends(get_current_user)):
     mnemonic_phrase = user.get("eth_mnemonic")
     if not mnemonic_phrase:
         raise HTTPException(status_code=404, detail="No recovery phrase on file. Re-register to get one.")
+
+    # Self-heal: if mnemonic_origin isn't set yet, derive + compare against the
+    # stored ETH address. Mismatch → tag as multichain_only and persist; match
+    # → tag as eth_native. This closes the iter10 backfill gap for any user
+    # who was backfilled before iter11 started tagging at write-time.
+    origin = user.get("mnemonic_origin")
+    if not origin:
+        try:
+            Account.enable_unaudited_hdwallet_features()
+            derived_addr = Account.from_mnemonic(mnemonic_phrase).address
+        except Exception:
+            derived_addr = None
+        stored_addr = user.get("wallet_address")
+        if derived_addr and stored_addr and derived_addr.lower() == stored_addr.lower():
+            origin = "eth_native"
+        else:
+            origin = "multichain_only"
+        await db.users.update_one({"id": user["id"]}, {"$set": {"mnemonic_origin": origin}})
+        user["mnemonic_origin"] = origin
+
     # Legacy users had their ETH key generated via Account.create() — the mnemonic
     # we have on file derives BTC/SOL but NOT their ETH key. Refuse to misrepresent.
-    if user.get("mnemonic_origin") == "multichain_only":
+    if origin == "multichain_only":
         raise HTTPException(
             status_code=409,
             detail=(
