@@ -1,10 +1,11 @@
 import { useEffect, useState } from "react";
-import { View, Text, StyleSheet, Pressable, ScrollView, ActivityIndicator } from "react-native";
+import { View, Text, StyleSheet, Pressable, ScrollView, ActivityIndicator, Linking } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { useRouter } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
 import { useAuth } from "@/src/lib/auth";
 import { startSubscriptionCheckout, syncStripeSession, cancelSubscription } from "@/src/lib/stripe";
+import { api } from "@/src/lib/api";
 import { colors, spacing, radius } from "@/src/lib/theme";
 
 const PERKS = [
@@ -129,18 +130,34 @@ export default function VaultPro() {
             )}
           </Pressable>
         ) : (
-          <Pressable
-            testID="vaultpro-cancel"
-            onPress={onCancel}
-            disabled={loading}
-            style={({ pressed }) => [s.ctaOutline, pressed && { opacity: 0.7 }]}
-          >
-            {loading ? (
-              <ActivityIndicator color={colors.error} />
-            ) : (
-              <Text style={[s.ctaText, { color: colors.error }]}>Cancel subscription</Text>
-            )}
-          </Pressable>
+          <>
+            <Pressable
+              testID="vaultpro-manage-billing"
+              onPress={async () => {
+                try {
+                  const r = await api<{ url: string }>("/stripe/portal", { method: "POST" });
+                  await Linking.openURL(r.url);
+                } catch (e: any) {
+                  setMsg(e.message);
+                }
+              }}
+              style={({ pressed }) => [s.ctaOutlineBrand, pressed && { opacity: 0.7 }]}
+            >
+              <Text style={[s.ctaText, { color: colors.brand }]}>Manage billing</Text>
+            </Pressable>
+            <Pressable
+              testID="vaultpro-cancel"
+              onPress={onCancel}
+              disabled={loading}
+              style={({ pressed }) => [s.ctaOutline, pressed && { opacity: 0.7 }]}
+            >
+              {loading ? (
+                <ActivityIndicator color={colors.error} />
+              ) : (
+                <Text style={[s.ctaText, { color: colors.error }]}>Cancel subscription</Text>
+              )}
+            </Pressable>
+          </>
         )}
         <Text style={s.tinyNote}>Securely billed by Stripe</Text>
       </ScrollView>
@@ -166,7 +183,8 @@ const s = StyleSheet.create({
   perkDesc: { fontSize: 12, color: colors.onSurfaceSecondary, marginTop: 2 },
   divider: { height: 1, backgroundColor: colors.divider, marginLeft: spacing.lg + 36 + spacing.md },
   cta: { backgroundColor: colors.brand, borderRadius: radius.md, paddingVertical: 16, alignItems: "center", marginTop: spacing.xl },
-  ctaOutline: { borderRadius: radius.md, paddingVertical: 16, alignItems: "center", marginTop: spacing.xl, borderWidth: 1, borderColor: colors.error },
+  ctaOutline: { borderRadius: radius.md, paddingVertical: 16, alignItems: "center", marginTop: spacing.md, borderWidth: 1, borderColor: colors.error },
+  ctaOutlineBrand: { borderRadius: radius.md, paddingVertical: 16, alignItems: "center", marginTop: spacing.xl, borderWidth: 1, borderColor: colors.brand },
   ctaText: { color: "#fff", fontSize: 16, fontWeight: "600" },
   msg: { color: colors.onSurfaceSecondary, marginTop: spacing.md, textAlign: "center" },
   tinyNote: { color: colors.onSurfaceTertiary, fontSize: 10, marginTop: spacing.lg, textAlign: "center" },

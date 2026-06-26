@@ -114,6 +114,13 @@ export default function Settings() {
               />
             }
           />
+          <View style={s.sep} />
+          <Row
+            icon="document-text"
+            label="Export private key"
+            testID="open-export-key"
+            onPress={() => router.push("/export-key")}
+          />
         </View>
 
         <Pressable testID="logout-button" onPress={async () => { await logout(); router.replace("/(auth)/login"); }} style={s.logout}>

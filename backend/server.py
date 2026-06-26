@@ -10,6 +10,7 @@ import secrets
 import json
 import httpx
 import stripe
+from eth_account import Account
 from pathlib import Path
 from datetime import datetime, timedelta, timezone
 from typing import List, Optional, Literal
@@ -39,6 +40,11 @@ DAILY_API_KEY = os.environ.get("DAILY_API_KEY", "")
 DAILY_DOMAIN = os.environ.get("DAILY_DOMAIN", "")
 VAULT_PRO_PRICE_USD = float(os.environ.get("VAULT_PRO_PRICE_USD", "9.99"))
 APP_PUBLIC_URL = os.environ.get("APP_PUBLIC_URL", "")
+SEPOLIA_RPC_URL = os.environ.get("SEPOLIA_RPC_URL", "https://ethereum-sepolia-rpc.publicnode.com")
+SEPOLIA_CHAIN_ID = 11155111
+
+# Enable HD wallet features
+Account.enable_unaudited_hdwallet_features()
 
 if STRIPE_API_KEY:
     stripe.api_key = STRIPE_API_KEY
@@ -180,11 +186,11 @@ DEFAULT_ASSETS = [
 SEED_BALANCES = {"BTC": 0.0421, "ETH": 1.842, "USDC": 1250.00, "SOL": 12.55}
 
 SEED_CONTACTS = [
-    {"name": "Maya Chen", "email": "maya@vaulted.app",
+    {"name": "Maya Chen", "email": "maya@vaulted.app", "priority": False,
      "avatar": "https://images.pexels.com/photos/8384889/pexels-photo-8384889.jpeg?auto=compress&cs=tinysrgb&dpr=2&h=200&w=200"},
-    {"name": "Daniel Park", "email": "daniel@vaulted.app",
+    {"name": "Daniel Park", "email": "daniel@vaulted.app", "priority": False,
      "avatar": "https://images.pexels.com/photos/35334114/pexels-photo-35334114.jpeg?auto=compress&cs=tinysrgb&dpr=2&h=200&w=200"},
-    {"name": "Vault Support", "email": "support@vaulted.app",
+    {"name": "Vault Support", "email": "support@vaulted.app", "priority": True,
      "avatar": "https://images.unsplash.com/photo-1534528741775-53994a69daeb?crop=entropy&cs=srgb&fm=jpg&w=200&h=200&fit=crop"},
 ]
 
@@ -210,6 +216,7 @@ async def seed_user_data(user_id: str) -> None:
             "name": c["name"],
             "email": c["email"],
             "avatar": c["avatar"],
+            "priority": c.get("priority", False),
             "created_at": iso(now_utc()),
         })
         conv_id = str(uuid.uuid4())
@@ -222,6 +229,7 @@ async def seed_user_data(user_id: str) -> None:
             "last_message": "Welcome to Vaulted secure chat.",
             "last_message_at": iso(now_utc()),
             "encrypted": True,
+            "priority": c.get("priority", False),
             "unread": 1,
         })
         await db.messages.insert_one({
@@ -260,13 +268,16 @@ async def register(body: RegisterIn):
     if existing:
         raise HTTPException(status_code=400, detail="Email already registered")
     uid = str(uuid.uuid4())
+    # Generate a real Ethereum keypair for Sepolia testnet usage
+    acct = Account.create()
     user_doc = {
         "id": uid,
         "email": body.email.lower(),
         "name": body.name.strip(),
         "password_hash": pwd_ctx.hash(body.password),
         "language": "en",
-        "wallet_address": "0x" + secrets.token_hex(20),
+        "wallet_address": acct.address,
+        "eth_private_key": acct.key.hex(),  # 0x-prefixed hex; testnet only
         "biometric_enabled": False,
         "multisig_enabled": False,
         "created_at": iso(now_utc()),
@@ -311,28 +322,174 @@ async def update_security(
 
 
 # Wallet
+async def _eth_rpc(method: str, params: list) -> dict:
+    async with httpx.AsyncClient(timeout=12) as cx:
+        r = await cx.post(SEPOLIA_RPC_URL, json={"jsonrpc": "2.0", "method": method, "params": params, "id": 1})
+        return r.json()
+
+
+async def _fetch_eth_balance_wei(addr: str) -> int:
+    data = await _eth_rpc("eth_getBalance", [addr, "latest"])
+    return int(data.get("result", "0x0"), 16)
+
+
 @api.get("/wallet/assets")
 async def wallet_assets(user=Depends(get_current_user)):
     cursor = db.balances.find({"user_id": user["id"]}, {"_id": 0})
     items = await cursor.to_list(100)
     price_map = {a["symbol"]: a["price_usd"] for a in DEFAULT_ASSETS}
+
+    # Fetch live ETH balance from Sepolia
+    addr = user.get("wallet_address")
+    eth_wei = 0
+    if addr and addr.startswith("0x") and len(addr) == 42:
+        try:
+            eth_wei = await _fetch_eth_balance_wei(addr)
+        except Exception as e:
+            logger.warning(f"eth balance fetch failed: {e}")
+    eth_amount = eth_wei / 1e18
+
     total_usd = 0.0
     out = []
     for b in items:
         p = price_map.get(b["symbol"], 0)
-        fiat = round(b["amount"] * p, 2)
+        amt = b["amount"]
+        on_chain = False
+        if b["symbol"] == "ETH":
+            amt = eth_amount
+            on_chain = True
+            # Also persist the on-chain balance so it shows consistent values
+            await db.balances.update_one(
+                {"user_id": user["id"], "symbol": "ETH"},
+                {"$set": {"amount": amt, "updated_at": iso(now_utc())}},
+            )
+        fiat = round(amt * p, 2)
         total_usd += fiat
-        out.append({**b, "price_usd": p, "fiat_value": fiat})
+        out.append({**b, "amount": amt, "price_usd": p, "fiat_value": fiat, "on_chain": on_chain, "network": "Sepolia" if on_chain else None})
     out.sort(key=lambda x: x["fiat_value"], reverse=True)
     return {
         "total_usd": round(total_usd, 2),
-        "wallet_address": user.get("wallet_address"),
+        "wallet_address": addr,
         "assets": out,
     }
 
 
+@api.get("/wallet/eth/info")
+async def eth_info(user=Depends(get_current_user)):
+    addr = user.get("wallet_address")
+    if not addr:
+        raise HTTPException(status_code=400, detail="No wallet address")
+    try:
+        wei = await _fetch_eth_balance_wei(addr)
+        gas_price_resp = await _eth_rpc("eth_gasPrice", [])
+        gas_price_wei = int(gas_price_resp.get("result", "0x0"), 16)
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"Sepolia RPC error: {e}")
+    return {
+        "address": addr,
+        "balance_wei": str(wei),
+        "balance_eth": wei / 1e18,
+        "chain_id": SEPOLIA_CHAIN_ID,
+        "network": "Sepolia",
+        "gas_price_wei": str(gas_price_wei),
+        "gas_price_gwei": gas_price_wei / 1e9,
+        "explorer": f"https://sepolia.etherscan.io/address/{addr}",
+        "faucet": "https://sepoliafaucet.com/",
+    }
+
+
+class SendEthIn(BaseModel):
+    to_address: str
+    amount_eth: float = Field(gt=0)
+
+
+@api.post("/wallet/eth/send")
+async def eth_send(body: SendEthIn, user=Depends(get_current_user)):
+    pk = user.get("eth_private_key")
+    addr = user.get("wallet_address")
+    if not pk or not addr:
+        raise HTTPException(status_code=400, detail="No ETH key on file")
+    to = body.to_address.strip()
+    if not (to.startswith("0x") and len(to) == 42):
+        raise HTTPException(status_code=400, detail="Invalid recipient address")
+
+    value_wei = int(round(body.amount_eth * 1e18))
+    try:
+        nonce_resp = await _eth_rpc("eth_getTransactionCount", [addr, "pending"])
+        nonce = int(nonce_resp["result"], 16)
+        gas_resp = await _eth_rpc("eth_gasPrice", [])
+        gas_price = int(gas_resp["result"], 16)
+        bal_wei = await _fetch_eth_balance_wei(addr)
+        gas_limit = 21000
+        total_cost = value_wei + gas_price * gas_limit
+        if total_cost > bal_wei:
+            raise HTTPException(status_code=400, detail=f"Insufficient ETH (need {total_cost/1e18:.6f}, have {bal_wei/1e18:.6f})")
+
+        tx = {
+            "nonce": nonce,
+            "to": to,
+            "value": value_wei,
+            "gas": gas_limit,
+            "gasPrice": gas_price,
+            "chainId": SEPOLIA_CHAIN_ID,
+        }
+        signed = Account.sign_transaction(tx, pk)
+        send_resp = await _eth_rpc("eth_sendRawTransaction", [signed.raw_transaction.hex()])
+        if "error" in send_resp:
+            raise HTTPException(status_code=502, detail=f"RPC error: {send_resp['error']}")
+        tx_hash = send_resp["result"]
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"Sepolia send failed: {e}")
+
+    # Vault Pro fee discount: simulated 50% off the dust fee we charge
+    is_pro = (user.get("subscription") or {}).get("status") in ("active", "trialing")
+    service_fee_usd = 0.10 if not is_pro else 0.05
+
+    price = next((a["price_usd"] for a in DEFAULT_ASSETS if a["symbol"] == "ETH"), 0)
+    tx_record = {
+        "id": str(uuid.uuid4()),
+        "user_id": user["id"],
+        "type": "send",
+        "category": "crypto",
+        "asset": "ETH",
+        "amount": body.amount_eth,
+        "fiat_value": round(body.amount_eth * price, 2),
+        "counterparty": to,
+        "tx_hash": tx_hash,
+        "network": "Sepolia",
+        "service_fee_usd": service_fee_usd,
+        "pro_discount_applied": is_pro,
+        "explorer_url": f"https://sepolia.etherscan.io/tx/{tx_hash}",
+        "status": "pending",
+        "created_at": iso(now_utc()),
+    }
+    await db.transactions.insert_one(tx_record)
+    tx_record.pop("_id", None)
+    return tx_record
+
+
+@api.get("/wallet/eth/export")
+async def eth_export_key(user=Depends(get_current_user)):
+    """Reveals the private key so the user can take true self-custody.
+    For Sepolia testnet only; never expose live keys this way in production."""
+    pk = user.get("eth_private_key")
+    if not pk:
+        raise HTTPException(status_code=404, detail="No private key on file")
+    return {
+        "address": user.get("wallet_address"),
+        "private_key": pk,
+        "network": "Sepolia (chain id 11155111)",
+        "warning": "Never share this key. Anyone with it controls your wallet.",
+    }
+
+
+# Existing simulated send for non-ETH assets
 @api.post("/wallet/send")
 async def wallet_send(body: SendCryptoIn, user=Depends(get_current_user)):
+    if body.asset.upper() == "ETH":
+        raise HTTPException(status_code=400, detail="Use /wallet/eth/send for ETH (on-chain)")
     bal = await db.balances.find_one({"user_id": user["id"], "symbol": body.asset.upper()}, {"_id": 0})
     if not bal:
         raise HTTPException(status_code=400, detail="Asset not found")
@@ -710,6 +867,25 @@ async def stripe_webhook(request: Request, stripe_signature: Optional[str] = Hea
             {"$set": {"subscription.status": sub.get("status"), "subscription.current_period_end": sub.get("current_period_end")}},
         )
     return {"status": "ok"}
+
+
+@api.post("/stripe/portal")
+async def stripe_portal(user=Depends(get_current_user)):
+    """Returns a Stripe Billing Portal URL so the user can manage their subscription."""
+    if not STRIPE_API_KEY:
+        raise HTTPException(status_code=503, detail="Stripe not configured")
+    customer_id = (user.get("stripe") or {}).get("customer_id")
+    if not customer_id:
+        raise HTTPException(status_code=400, detail="No billing customer; subscribe first.")
+    base = APP_PUBLIC_URL.rstrip("/") if APP_PUBLIC_URL else "https://example.com"
+    try:
+        session = stripe.billing_portal.Session.create(
+            customer=customer_id,
+            return_url=f"{base}/vault-pro",
+        )
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"Stripe portal error: {e}")
+    return {"url": session.url}
 
 
 @api.post("/stripe/cancel")

@@ -7,7 +7,7 @@ import { api } from "@/src/lib/api";
 import { useI18n } from "@/src/lib/i18n";
 import { colors, spacing, radius } from "@/src/lib/theme";
 
-type Conv = { id: string; contact_name: string; contact_avatar: string; last_message: string; last_message_at: string; encrypted: boolean; unread: number };
+type Conv = { id: string; contact_name: string; contact_avatar: string; last_message: string; last_message_at: string; encrypted: boolean; unread: number; priority?: boolean };
 
 export default function ChatList() {
   const { t } = useI18n();
@@ -53,6 +53,12 @@ export default function ChatList() {
                 <View style={s.nameRow}>
                   <Text style={s.name}>{item.contact_name}</Text>
                   {item.encrypted && <Ionicons name="lock-closed" size={11} color={colors.onSurfaceTertiary} />}
+                  {item.priority && (
+                    <View style={s.priorityBadge}>
+                      <Ionicons name="flash" size={9} color="#fff" />
+                      <Text style={s.priorityText}>PRIORITY</Text>
+                    </View>
+                  )}
                 </View>
                 <Text style={s.preview} numberOfLines={1}>{item.last_message}</Text>
               </View>
@@ -80,6 +86,8 @@ const s = StyleSheet.create({
   sep: { height: 1, backgroundColor: colors.divider, marginLeft: spacing.xl + 48 + spacing.md },
   badge: { backgroundColor: colors.brand, minWidth: 22, height: 22, borderRadius: 11, alignItems: "center", justifyContent: "center", paddingHorizontal: 6 },
   badgeText: { color: "#fff", fontSize: 11, fontWeight: "700" },
+  priorityBadge: { flexDirection: "row", alignItems: "center", gap: 2, backgroundColor: colors.brand, paddingHorizontal: 5, paddingVertical: 2, borderRadius: radius.pill },
+  priorityText: { color: "#fff", fontSize: 8, fontWeight: "800", letterSpacing: 0.5 },
   empty: { flex: 1, alignItems: "center", justifyContent: "center", padding: spacing.xl, gap: spacing.md },
   emptyIcon: { width: 72, height: 72, borderRadius: radius.pill, backgroundColor: colors.brandTertiary, alignItems: "center", justifyContent: "center" },
   emptyText: { fontSize: 15, color: colors.onSurfaceSecondary },

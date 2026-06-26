@@ -1,0 +1,55 @@
+{
+  "summary": "Iteration 3 (real Sepolia ETH + live Stripe sk_test_ + live Daily.co + Vault Pro perks) thoroughly tested. Backend: 17/17 pytest tests pass + 1 expected skip (can't promote test user to Pro without DB write). REAL Ethereum keypair on register validated (eth_account.Account.create() produces valid 0x address + 64-char hex private key). GET /wallet/eth/info live-hits Sepolia RPC, returns chain_id 11155111, real gas price (~8.67 gwei), 0 balance for fresh accts. GET /wallet/assets puts ETH row as on_chain:true network:'Sepolia' amount:0. POST /wallet/eth/send 400's on insufficient ETH (correct) and on bad recipient address. POST /wallet/send with asset='ETH' is now blocked with 400 'Use /wallet/eth/send'. GET /wallet/eth/export returns address+private_key+warning. Stripe LIVE: deposit & subscription checkout both return real https://checkout.stripe.com/ URLs + cs_test_ session IDs. POST /stripe/portal returns 400 'No billing customer' for never-subscribed users. Daily.co LIVE: POST /calls/room returns configured:true with phoenixatl.daily.co room URL + meeting token (real JWT). Frontend (Expo web, 390x844): 13/14 UI checks pass — Sepolia badge on ETH row, Get-Sepolia-testnet-ETH faucet CTA below assets, fee-summary card shows 'Network fee (~8.67 gwei)' + Vaulted service fee, faucet-link visible on Send when ETH chip selected, Sepolia net pill present, Settings exposes 'Export private key' row, /export-key screen renders warning + confirm-checkbox + reveal-button, reveal flow shows the 64-char private key + Etherscan link, Vault Pro (non-pro) shows Subscribe and correctly HIDES Manage-billing button. TWO BUGS FOUND (both 'Pro-user pinning' related): (1) BACKEND /api/chat/conversations does NOT reorder Vault Support to top for Pro users — sort is always chronological regardless of is_pro (spec violation). (2) FRONTEND chat list shows the green PRIORITY badge next to Vault Support for ALL users including NON-Pro — the badge is rendered unconditionally on item.priority without gating on user.is_pro. The remainder of all 17 spec features work as expected.",
+  "backend_issues": {
+    "critical": [
+      {"endpoint": "GET /api/chat/conversations", "issue": "Pro-user pinning of priority=true conversations is NOT implemented. Code at server.py:590-593 just sorts by last_message_at desc for everyone. Spec requires: 'for a Pro user pins priority=true (Vault Support) to the top; for non-Pro users, original chronological order applies'. Fix: branch on (user.subscription.status in {active,trialing}) and add priority-first secondary sort.", "priority": "HIGH"}
+    ],
+    "minor": [
+      {"endpoint": "GET /api/wallet/eth/export", "issue": "private_key returned WITHOUT 0x prefix (eth_account .key.hex() in installed version drops the prefix). Code comment at server.py:280 says '0x-prefixed hex' which is now incorrect. Wallets accept both, so functional impact is nil — recommend prefixing with '0x' for canonical form: pk = '0x' + acct.key.hex() if not already prefixed."},
+      {"endpoint": "JWT signing", "issue": "Carried from iter 1/2: InsecureKeyLengthWarning (28-byte JWT_SECRET, below 32-byte SHA256 minimum)."},
+      {"endpoint": "passlib/bcrypt", "issue": "Carried from iter 1/2: 'module bcrypt has no attribute __about__' warning at startup. Cosmetic — pin bcrypt==4.0.1 to silence."}
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [
+      {"component": "(tabs)/chat.tsx PRIORITY badge", "issue": "Spec: 'Chat list FOR PRO USERS shows a small PRIORITY badge'. Code at chat.tsx:56 renders the badge whenever item.priority is true, without checking user.is_pro. Result: non-Pro users also see the badge next to Vault Support. Fix: change `{item.priority && (` to `{item.priority && user?.is_pro && (`.", "testID": "n/a (badge has no testID)", "priority": "MEDIUM"}
+    ],
+    "integration_issues": [],
+    "design_issues": [
+      {"screen": "vault-pro.tsx", "issues": ["Carry-over from iter 2: footer caption 'Securely billed by Stripe' was previously 'Test mode • Stripe sk_test_emergent' — now updated to live key, please confirm no key string is leaking in UI footer."]}
+    ],
+    "react_native_issues": [
+      {"component": "Expo SDK package versions", "issue": "Carried from iter 1/2: expo@54.0.34 (expected ~54.0.35), expo-font@14.0.11 (~14.0.12), expo-router@6.0.23 (~6.0.24). Run `npx expo install --check`."},
+      {"component": "Image (multiple)", "issue": "Carried: console warning 'Image: style.resizeMode is deprecated. Please use props.resizeMode'."},
+      {"component": "Pressable/View", "issue": "Carried: 'props.pointerEvents is deprecated. Use style.pointerEvents'."}
+    ]
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_iteration3.py",
+    "/app/backend/tests/test_iteration2.py",
+    "/app/backend/tests/test_vaulted_api.py",
+    "/app/test_reports/pytest/iter3_results.xml"
+  ],
+  "action_items": [
+    "FIX BACKEND: GET /api/chat/conversations — for is_pro users, sort priority=true to the top. Example: `cur = db.conversations.find({'user_id': user['id']}, {'_id': 0}); convs = await cur.to_list(200); if (user.get('subscription') or {}).get('status') in ('active','trialing'): convs.sort(key=lambda c: (not c.get('priority', False), -datetime.fromisoformat(c['last_message_at']).timestamp())); return convs`.",
+    "FIX FRONTEND: app/(tabs)/chat.tsx:56 — gate the PRIORITY badge behind `user?.is_pro` so non-Pro users don't see it.",
+    "(Minor) server.py:280 — prefix eth_private_key with '0x' for canonical form, and update fully-qualified docstring.",
+    "(Carry-over) Set 32+ byte JWT_SECRET, pin bcrypt==4.0.1, run `npx expo install --check`, migrate deprecated Image.resizeMode/pointerEvents props."
+  ],
+  "critical_code_review_comments": [
+    "server.py is now 962 lines — well past the 700-line guideline. Recommend splitting into routers/auth.py, routers/wallet.py (esp. the new /wallet/eth/* block), routers/chat.py, routers/stripe.py, routers/calls.py.",
+    "Real ETH self-custody via eth_account works cleanly — Account.create() on register, signed tx broadcast in /wallet/eth/send with gas-price + nonce fetched live from Sepolia RPC, insufficient-balance check correctly subtracts (value+gas*gas_limit). Good.",
+    "Stripe LIVE integration: deposit & subscription checkout sessions create successfully against the real sk_test_ key, customer auto-created on first subscription, /stripe/portal correctly 400's pre-customer.",
+    "Daily.co LIVE: rooms + meeting tokens created against phoenixatl.daily.co. Good.",
+    "BUG: chat.tsx renders PRIORITY badge solely on `item.priority` — not gated by is_pro as the spec requires. Same logical gap exists server-side in /api/chat/conversations which never reorders by priority. Both need a single is_pro check."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_iteration3.py (new — 18 tests: ETH keypair, /wallet/eth/info, /wallet/assets on-chain ETH, /wallet/eth/send insufficient/bad-addr, /wallet/send blocks ETH, /wallet/eth/export, Stripe live deposit+sub+portal, Daily live, Pro pinning regression, fiat regression)"
+  ],
+  "success_rate": {"backend": "100% (17/17 + 1 skip)", "frontend": "93% (13/14 UI checks)"},
+  "seed_data_creation": "Registered fresh it3_<uuid>@vaulted.app users per test module — produces a new Sepolia keypair each time. Smoke account smoketest@vaulted.app reused for regression.",
+  "retest_needed": true,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "Two bugs to verify after fix: (1) GET /api/chat/conversations should sort priority=true items to top ONLY for is_pro users — verify by promoting a test user to Pro (mark subscription.status='active' directly or via Stripe sub) and asserting convs[0].priority is True. (2) Frontend chat list PRIORITY badge should be hidden for non-Pro and shown for Pro. To test Pro state on UI without paying Stripe, the main agent can either log in as a manually-promoted user or temporarily stub `user.is_pro=true` in /auth/me response. New iteration-3 testIDs: faucet-cta (wallet), fee-summary + faucet-link + chip-ETH (send), open-export-key (settings), export-confirm-check + export-reveal + export-pk + export-explorer + export-back + export-share + export-address (export-key screen), vaultpro-manage-billing (vault-pro, only visible when is_pro). Sepolia RPC https://ethereum-sepolia-rpc.publicnode.com is rate-limited at the public endpoint — running >50 calls in a few seconds may 429. All flows tested without 429 in this iteration.",
+  "rca_of_issue": "Pro-pinning was specified for both server (chat/conversations sort) and client (chat.tsx PRIORITY badge gate) but neither was implemented gated on is_pro. Repro: register a fresh user (is_pro=false) → GET /api/chat/conversations returns chronological order which happens to put the most-recently-seeded conversation first (no priority-aware sort) AND the chat.tsx list still shows the PRIORITY badge next to Vault Support. Fix: add `is_pro` branch in server.py conversations route AND `user?.is_pro &&` gate around chat.tsx:56 badge render."
+}

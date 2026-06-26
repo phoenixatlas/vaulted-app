@@ -1,6 +1,6 @@
 import { useCallback, useState } from "react";
 import {
-  View, Text, StyleSheet, ScrollView, Pressable, RefreshControl, ActivityIndicator, ImageBackground,
+  View, Text, StyleSheet, ScrollView, Pressable, RefreshControl, ActivityIndicator, ImageBackground, Linking,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { useFocusEffect, useRouter } from "expo-router";
@@ -10,7 +10,7 @@ import { useAuth } from "@/src/lib/auth";
 import { useI18n } from "@/src/lib/i18n";
 import { colors, spacing, radius, ASSET_ICON_COLORS } from "@/src/lib/theme";
 
-type Asset = { id: string; symbol: string; name: string; amount: number; price_usd: number; fiat_value: number };
+type Asset = { id: string; symbol: string; name: string; amount: number; price_usd: number; fiat_value: number; on_chain?: boolean; network?: string | null };
 
 export default function Wallet() {
   const { user } = useAuth();
@@ -93,7 +93,15 @@ export default function Wallet() {
                   <Text style={s.assetSym}>{a.symbol.slice(0, 1)}</Text>
                 </View>
                 <View style={{ flex: 1 }}>
-                  <Text style={s.assetName}>{a.name}</Text>
+                  <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
+                    <Text style={s.assetName}>{a.name}</Text>
+                    {a.on_chain && (
+                      <View style={s.chainBadge}>
+                        <Ionicons name="globe" size={9} color={colors.brand} />
+                        <Text style={s.chainBadgeText}>{a.network ?? "On-chain"}</Text>
+                      </View>
+                    )}
+                  </View>
                   <Text style={s.assetMuted}>{a.amount.toLocaleString(undefined, { maximumFractionDigits: 6 })} {a.symbol}</Text>
                 </View>
                 <View style={{ alignItems: "flex-end" }}>
@@ -105,6 +113,16 @@ export default function Wallet() {
             </View>
           ))}
         </View>
+
+        <Pressable
+          testID="faucet-cta"
+          onPress={() => Linking.openURL("https://sepoliafaucet.com/")}
+          style={s.faucetCta}
+        >
+          <Ionicons name="water-outline" size={16} color={colors.brand} />
+          <Text style={s.faucetCtaText}>Get free Sepolia testnet ETH</Text>
+          <Ionicons name="open-outline" size={14} color={colors.brand} />
+        </Pressable>
       </ScrollView>
     </SafeAreaView>
   );
@@ -135,4 +153,8 @@ const s = StyleSheet.create({
   assetMuted: { color: colors.onSurfaceTertiary, fontSize: 12, marginTop: 2 },
   assetFiat: { color: colors.onSurface, fontSize: 15, fontWeight: "700" },
   divider: { height: 1, backgroundColor: colors.divider, marginLeft: spacing.lg + 40 + spacing.md },
+  chainBadge: { flexDirection: "row", alignItems: "center", gap: 3, backgroundColor: colors.brandTertiary, paddingHorizontal: 6, paddingVertical: 2, borderRadius: radius.pill },
+  chainBadgeText: { color: colors.brand, fontSize: 9, fontWeight: "700", letterSpacing: 0.3 },
+  faucetCta: { flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 6, marginTop: spacing.lg, marginHorizontal: spacing.xl, paddingVertical: 14, borderRadius: radius.md, borderWidth: 1, borderColor: colors.border, backgroundColor: colors.surface },
+  faucetCtaText: { color: colors.brand, fontSize: 13, fontWeight: "600" },
 });
