@@ -151,6 +151,7 @@ def public_user(u: dict) -> dict:
         "biometric_enabled": u.get("biometric_enabled", False),
         "multisig_enabled": u.get("multisig_enabled", False),
         "public_key": u.get("public_key"),
+        "onboarding_seed_acknowledged": u.get("onboarding_seed_acknowledged", False),
         "subscription": {
             "tier": sub.get("tier", "free"),
             "status": sub.get("status", "inactive"),
@@ -268,8 +269,8 @@ async def register(body: RegisterIn):
     if existing:
         raise HTTPException(status_code=400, detail="Email already registered")
     uid = str(uuid.uuid4())
-    # Generate a real Ethereum keypair for Sepolia testnet usage
-    acct = Account.create()
+    # Generate a real Ethereum keypair + BIP-39 mnemonic for Sepolia testnet
+    acct, mnemonic_phrase = Account.create_with_mnemonic()
     user_doc = {
         "id": uid,
         "email": body.email.lower(),
@@ -277,7 +278,9 @@ async def register(body: RegisterIn):
         "password_hash": pwd_ctx.hash(body.password),
         "language": "en",
         "wallet_address": acct.address,
-        "eth_private_key": "0x" + acct.key.hex(),  # canonical 0x-prefixed hex; testnet only
+        "eth_private_key": "0x" + acct.key.hex(),
+        "eth_mnemonic": mnemonic_phrase,
+        "onboarding_seed_acknowledged": False,
         "biometric_enabled": False,
         "multisig_enabled": False,
         "created_at": iso(now_utc()),
@@ -337,7 +340,14 @@ async def _fetch_eth_balance_wei(addr: str) -> int:
 async def wallet_assets(user=Depends(get_current_user)):
     cursor = db.balances.find({"user_id": user["id"]}, {"_id": 0})
     items = await cursor.to_list(100)
-    price_map = {a["symbol"]: a["price_usd"] for a in DEFAULT_ASSETS}
+
+    # Fetch live prices + sparklines (cached server-side)
+    market = await _refresh_market_prices()
+    market_assets = market.get("assets") or {}
+    price_map = {sym: ma.get("price_usd", 0) for sym, ma in market_assets.items()}
+    # Fall back to defaults for any missing symbol
+    for a in DEFAULT_ASSETS:
+        price_map.setdefault(a["symbol"], a["price_usd"])
 
     # Fetch live ETH balance from Sepolia
     addr = user.get("wallet_address")
@@ -358,19 +368,29 @@ async def wallet_assets(user=Depends(get_current_user)):
         if b["symbol"] == "ETH":
             amt = eth_amount
             on_chain = True
-            # Also persist the on-chain balance so it shows consistent values
             await db.balances.update_one(
                 {"user_id": user["id"], "symbol": "ETH"},
                 {"$set": {"amount": amt, "updated_at": iso(now_utc())}},
             )
         fiat = round(amt * p, 2)
         total_usd += fiat
-        out.append({**b, "amount": amt, "price_usd": p, "fiat_value": fiat, "on_chain": on_chain, "network": "Sepolia" if on_chain else None})
+        ma = market_assets.get(b["symbol"], {})
+        out.append({
+            **b,
+            "amount": amt,
+            "price_usd": p,
+            "fiat_value": fiat,
+            "on_chain": on_chain,
+            "network": "Sepolia" if on_chain else None,
+            "change_24h_pct": ma.get("change_24h_pct", 0.0),
+            "sparkline_7d": ma.get("sparkline_7d", []),
+        })
     out.sort(key=lambda x: x["fiat_value"], reverse=True)
     return {
         "total_usd": round(total_usd, 2),
         "wallet_address": addr,
         "assets": out,
+        "prices_fetched_at": market.get("fetched_at"),
     }
 
 
@@ -483,6 +503,101 @@ async def eth_export_key(user=Depends(get_current_user)):
         "network": "Sepolia (chain id 11155111)",
         "warning": "Never share this key. Anyone with it controls your wallet.",
     }
+
+
+@api.get("/wallet/eth/mnemonic")
+async def eth_mnemonic(user=Depends(get_current_user)):
+    """Reveals the 12-word BIP-39 recovery phrase. For Sepolia testnet only."""
+    mnemonic_phrase = user.get("eth_mnemonic")
+    if not mnemonic_phrase:
+        # Backfill for users created before BIP-39 support
+        raise HTTPException(status_code=404, detail="No recovery phrase on file. Re-register to get one.")
+    return {
+        "address": user.get("wallet_address"),
+        "mnemonic": mnemonic_phrase,
+        "word_count": len(mnemonic_phrase.split()),
+        "network": "Sepolia (chain id 11155111)",
+        "warning": "Anyone with these 12 words controls your wallet.",
+    }
+
+
+@api.post("/auth/onboarding-complete")
+async def complete_onboarding(user=Depends(get_current_user)):
+    await db.users.update_one({"id": user["id"]}, {"$set": {"onboarding_seed_acknowledged": True}})
+    u = await db.users.find_one({"id": user["id"]}, {"_id": 0})
+    return public_user(u)
+
+
+# --------------------------- Live market prices (CoinGecko, cached) ---------------------------
+COINGECKO_IDS = {
+    "BTC": "bitcoin",
+    "ETH": "ethereum",
+    "USDC": "usd-coin",
+    "SOL": "solana",
+}
+PRICE_CACHE_TTL_SECONDS = 300
+
+
+async def _refresh_market_prices() -> dict:
+    """Fetch latest prices + 24h change + 7d sparkline. Cache in DB with TTL."""
+    cached = await db.market_cache.find_one({"_id": "prices"}, {"_id": 0})
+    if cached and cached.get("fetched_at"):
+        try:
+            t = datetime.fromisoformat(cached["fetched_at"])
+            age = (now_utc() - t).total_seconds()
+            if age < PRICE_CACHE_TTL_SECONDS:
+                return cached
+        except Exception:
+            pass
+
+    ids = ",".join(COINGECKO_IDS.values())
+    url = f"https://api.coingecko.com/api/v3/coins/markets?ids={ids}&vs_currency=usd&sparkline=true&price_change_percentage=24h"
+    out_assets: dict[str, dict] = {}
+    try:
+        async with httpx.AsyncClient(timeout=10) as cx:
+            r = await cx.get(url)
+            if r.status_code == 200:
+                data = r.json()
+                if isinstance(data, list):
+                    cg_to_sym = {v: k for k, v in COINGECKO_IDS.items()}
+                    for coin in data:
+                        sym = cg_to_sym.get(coin.get("id"))
+                        if not sym:
+                            continue
+                        sparkline = coin.get("sparkline_in_7d", {}).get("price", [])
+                        out_assets[sym] = {
+                            "symbol": sym,
+                            "price_usd": float(coin.get("current_price") or 0),
+                            "change_24h_pct": float(coin.get("price_change_percentage_24h") or 0),
+                            "sparkline_7d": [float(x) for x in sparkline[-48:]],  # last 48 hourly points
+                            "market_cap": coin.get("market_cap"),
+                        }
+    except Exception as e:
+        logger.warning(f"coingecko fetch failed: {e}")
+
+    if not out_assets:
+        # Fall back to whatever cached value we have, even if stale
+        if cached and cached.get("assets"):
+            return cached
+        # Last-resort defaults so the app keeps working
+        out_assets = {
+            sym: {"symbol": sym, "price_usd": p, "change_24h_pct": 0.0, "sparkline_7d": []}
+            for sym, p in [("BTC", 67000), ("ETH", 3500), ("USDC", 1.0), ("SOL", 150)]
+        }
+
+    record = {
+        "assets": out_assets,
+        "fetched_at": iso(now_utc()),
+        "stale": False,
+    }
+    await db.market_cache.update_one({"_id": "prices"}, {"$set": record}, upsert=True)
+    return record
+
+
+@api.get("/market/prices")
+async def market_prices(_=Depends(get_current_user)):
+    rec = await _refresh_market_prices()
+    return {"assets": rec["assets"], "fetched_at": rec.get("fetched_at"), "ttl_seconds": PRICE_CACHE_TTL_SECONDS}
 
 
 # Existing simulated send for non-ETH assets

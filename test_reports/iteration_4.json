@@ -1,0 +1,48 @@
+{
+  "summary": "Iteration 4 (Live CoinGecko prices + BIP-39 12-word mnemonic onboarding) fully tested: Backend 21/21 pytest pass; Frontend full onboarding flow verified on mobile viewport (390x844). GET /api/market/prices returns BTC/ETH/USDC/SOL with price_usd, change_24h_pct, sparkline_7d (live CoinGecko at ~48 hourly points), fetched_at, ttl_seconds:300 — 401 without auth. Second call within 300s returns the SAME fetched_at (server-side cache working — no second CoinGecko hit). GET /api/wallet/assets now includes change_24h_pct, sparkline_7d (per-asset), and top-level prices_fetched_at. Register now produces a real BIP-39 12-word mnemonic stored in eth_mnemonic; Account.from_mnemonic(mnemonic).address EXACTLY matches the user.wallet_address (cryptographically verified). GET /api/wallet/eth/mnemonic returns {address, mnemonic, word_count:12, network 'Sepolia', warning} — 401 unauth. POST /api/auth/onboarding-complete flips onboarding_seed_acknowledged from false→true (verified via /auth/me before+after). Regression iter1/2/3 all green: ETH info/export, Stripe deposit + subscription live checkout, Daily.co room creation, conversations + messages, legacy BTC simulated send. Frontend (Expo web 390x844): registering fresh account redirects to /onboarding/seed (✓). Seed screen shows obscured 'Tap to reveal' card initially, words grid hidden, Continue disabled; tapping reveal exposes 12 numbered word cells via testID 'seed-words-grid'; tapping seed-continue routes to /onboarding/verify with the words as URL params (✓). Verify screen shows 4 word-position prompts (Word #4, #7, #10, #12) each with 4 chips; wrong picks show 'Some answers don't match'; correct picks call POST /auth/onboarding-complete and route to /(tabs)/wallet (✓). Wallet hero balance displays LIVE-computed total $4,652.46 = 0.0421 BTC ($2528.36 @ ~$60,055) + 1250 USDC ($1249.62) + 12.55 SOL ($874.48 @ ~$69.68) + 0 ETH — NOT the old hardcoded $4,650 (✓). Sparkline SVGs render for all 4 assets, 24h percentages colored green for positive (SOL +1.14%) and red for negative (BTC -2.53%, USDC -0.01%, ETH -5.29%) (✓). Settings Security card shows two new rows: 'Show recovery phrase' (testID open-seed-phrase, navigates to /onboarding/seed) and 'Export private key' (testID open-export-key) — both visible and tappable (✓). Minor non-blocker: verify-screen chip testIDs use 0-based index (`verify-pick-3-<word>` is for displayed 'Word #4') — the user-visible behavior is correct but the testID off-by-one is mildly confusing for downstream test writers.",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {"endpoint": "JWT signing", "issue": "Carry-over from prior iters: InsecureKeyLengthWarning (28-byte JWT_SECRET, below 32-byte SHA256 minimum). Cosmetic — emits at every encode/decode."},
+      {"endpoint": "passlib/bcrypt", "issue": "Carry-over: 'module bcrypt has no attribute __about__' warning at startup. Pin bcrypt==4.0.1 to silence."},
+      {"endpoint": "server.py organisation", "issue": "server.py is now ~1083 lines (well past 700-line guideline). Recommend splitting into routers/auth.py, routers/wallet.py, routers/market.py, routers/chat.py, routers/stripe.py, routers/calls.py."}
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [
+      {"component": "onboarding/verify.tsx chip testIDs", "issue": "Chip testID uses 0-based array index while prompt label uses 1-based position. E.g., for displayed 'Word #4' the chip testIDs are `verify-pick-3-<word>` not `verify-pick-4-<word>`. User behavior is CORRECT (chip set matches the prompt's word) — this is purely a testID ergonomics issue. Suggest renaming to `verify-pick-${position}-${word}` so testID matches the human-readable label.", "testID": "verify-pick-{0-based-idx}-{word}", "priority": "LOW"}
+    ],
+    "integration_issues": [],
+    "design_issues": [],
+    "react_native_issues": [
+      {"component": "Expo SDK package versions", "issue": "Carry-over from prior iters: expo@54.0.34 (expected ~54.0.35), expo-font@14.0.11 (~14.0.12), expo-router@6.0.23 (~6.0.24). Run `npx expo install --check`."},
+      {"component": "Image (multiple)", "issue": "Carry-over: console warning 'Image: style.resizeMode is deprecated. Please use props.resizeMode'."},
+      {"component": "Pressable/View", "issue": "Carry-over: 'props.pointerEvents is deprecated. Use style.pointerEvents'."}
+    ]
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_iteration4.py",
+    "/app/test_reports/pytest/iter4_results.xml"
+  ],
+  "action_items": [
+    "(Low-priority polish) onboarding/verify.tsx: rename chip testID from `verify-pick-${idx}-${word}` (0-based) to `verify-pick-${idx+1}-${word}` so it aligns with the displayed 'Word #${idx+1}' label.",
+    "(Carry-over from prior iters) Set 32+ byte JWT_SECRET, pin bcrypt==4.0.1, run `npx expo install --check`, migrate deprecated Image.resizeMode / props.pointerEvents.",
+    "(Carry-over) Consider splitting server.py (1083 lines) into multiple router modules."
+  ],
+  "critical_code_review_comments": [
+    "Live CoinGecko integration is well-designed: server-side cache keyed on db.market_cache with 300s TTL prevents API hammering; on CoinGecko error the code returns the (possibly stale) cached value; only as a last resort does it fall back to hardcoded defaults so the app never breaks. Verified by reading 600+ lines of server.py.",
+    "BIP-39 implementation correct: Account.enable_unaudited_hdwallet_features() called once at module load; Account.create_with_mnemonic() on register persists both eth_private_key and eth_mnemonic; the mnemonic deterministically derives back to the same wallet_address (cryptographically asserted in test_mnemonic_derives_to_wallet_address).",
+    "Sparkline last-48-points trimming (server.py:572 `sparkline[-48:]`) correctly caps the size while keeping the most recent data — good for bandwidth.",
+    "Onboarding flow UX is clean: words obscured initially, tap-to-reveal pattern, 4-out-of-12 word verification gate before unlocking the wallet — a standard production crypto onboarding UX.",
+    "MINOR off-by-one testID inconsistency on verify screen — does NOT affect production behavior, only test readability."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_iteration4.py (new — 21 tests covering market prices, sparklines, cache, BIP-39 mnemonic generation + derivation verification, onboarding-complete flow, and full iter1/2/3 regression)"
+  ],
+  "success_rate": {"backend": "100% (21/21)", "frontend": "100% (all 14 spec features verified)"},
+  "seed_data_creation": "Per-test-module fresh user `it4_<uuid>@vaulted.app` (BIP-39 mnemonic generated). UI test users `uitest_<uuid>@vaulted.app` and `uitest2_<uuid>@vaulted.app`. Smoke account smoketest@vaulted.app reused for regression login.",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "All iter4 spec items pass. New endpoints: GET /api/market/prices (auth required, 300s cache), GET /api/wallet/eth/mnemonic (auth required, returns 12 BIP-39 words), POST /api/auth/onboarding-complete (sets onboarding_seed_acknowledged=true). GET /api/wallet/assets response now includes change_24h_pct, sparkline_7d (per asset), and prices_fetched_at at top level. New testIDs: seed-reveal, seed-words-grid, seed-continue, verify-back, verify-pick-{0idx}-{word}, verify-error, verify-submit, verify-back-to-seed, open-seed-phrase, open-export-key. Note onboarding/verify testID is 0-based but displayed labels are 1-based — if writing UI tests, use the testID idx (0-3) and resolve correct word as words[idx]. The Sepolia RPC is the public endpoint and is rate-limited (~10 RPS); avoid running >30 register operations in a tight loop. CoinGecko free tier 10-30/min — the 300s cache makes this safe. STRIPE_API_KEY (sk_test_) and DAILY_API_KEY are LIVE in .env.",
+  "rca_of_issue": "No production-blocking bugs found in iteration 4. The only finding is the verify-screen testID off-by-one which is a testability nit (the user-visible Word #N label and the chip set match correctly). Repro: register fresh user → /onboarding/seed → reveal → continue → /onboarding/verify → inspect DOM. Mitigation suggested: rename chip testID to `verify-pick-${idx+1}-${word}`."
+}

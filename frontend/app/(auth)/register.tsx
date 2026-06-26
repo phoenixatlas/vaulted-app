@@ -25,7 +25,7 @@ export default function Register() {
     setLoading(true);
     try {
       await register(email.trim(), password, name.trim());
-      router.replace("/(tabs)/wallet");
+      router.replace("/onboarding/seed");
     } catch (e: any) {
       setErr(e.message);
     } finally {

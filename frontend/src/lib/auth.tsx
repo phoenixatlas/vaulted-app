@@ -12,6 +12,7 @@ type User = {
   public_key?: string | null;
   is_pro?: boolean;
   subscription?: { tier: string; status: string; current_period_end?: number | null };
+  onboarding_seed_acknowledged?: boolean;
 };
 
 type AuthCtx = {

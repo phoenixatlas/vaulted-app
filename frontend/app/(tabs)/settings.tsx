@@ -116,6 +116,13 @@ export default function Settings() {
           />
           <View style={s.sep} />
           <Row
+            icon="reader"
+            label="Show recovery phrase"
+            testID="open-seed-phrase"
+            onPress={() => router.push("/onboarding/seed")}
+          />
+          <View style={s.sep} />
+          <Row
             icon="document-text"
             label="Export private key"
             testID="open-export-key"

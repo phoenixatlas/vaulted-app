@@ -9,8 +9,9 @@ import { api } from "@/src/lib/api";
 import { useAuth } from "@/src/lib/auth";
 import { useI18n } from "@/src/lib/i18n";
 import { colors, spacing, radius, ASSET_ICON_COLORS } from "@/src/lib/theme";
+import Sparkline from "@/src/components/Sparkline";
 
-type Asset = { id: string; symbol: string; name: string; amount: number; price_usd: number; fiat_value: number; on_chain?: boolean; network?: string | null };
+type Asset = { id: string; symbol: string; name: string; amount: number; price_usd: number; fiat_value: number; on_chain?: boolean; network?: string | null; change_24h_pct?: number; sparkline_7d?: number[] };
 
 export default function Wallet() {
   const { user } = useAuth();
@@ -104,9 +105,19 @@ export default function Wallet() {
                   </View>
                   <Text style={s.assetMuted}>{a.amount.toLocaleString(undefined, { maximumFractionDigits: 6 })} {a.symbol}</Text>
                 </View>
-                <View style={{ alignItems: "flex-end" }}>
+                {a.sparkline_7d && a.sparkline_7d.length > 1 && (
+                  <Sparkline
+                    data={a.sparkline_7d}
+                    width={56}
+                    height={24}
+                    color={(a.change_24h_pct ?? 0) >= 0 ? colors.success : colors.error}
+                  />
+                )}
+                <View style={{ alignItems: "flex-end", marginLeft: 8 }}>
                   <Text style={s.assetFiat}>${a.fiat_value.toLocaleString(undefined, { maximumFractionDigits: 2 })}</Text>
-                  <Text style={s.assetMuted}>${a.price_usd.toLocaleString()}</Text>
+                  <Text style={[s.changeText, { color: (a.change_24h_pct ?? 0) >= 0 ? colors.success : colors.error }]}>
+                    {(a.change_24h_pct ?? 0) >= 0 ? "+" : ""}{(a.change_24h_pct ?? 0).toFixed(2)}%
+                  </Text>
                 </View>
               </View>
               {idx < assets.length - 1 && <View style={s.divider} />}
@@ -157,4 +168,5 @@ const s = StyleSheet.create({
   chainBadgeText: { color: colors.brand, fontSize: 9, fontWeight: "700", letterSpacing: 0.3 },
   faucetCta: { flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 6, marginTop: spacing.lg, marginHorizontal: spacing.xl, paddingVertical: 14, borderRadius: radius.md, borderWidth: 1, borderColor: colors.border, backgroundColor: colors.surface },
   faucetCtaText: { color: colors.brand, fontSize: 13, fontWeight: "600" },
+  changeText: { fontSize: 11, fontWeight: "600", marginTop: 2 },
 });
