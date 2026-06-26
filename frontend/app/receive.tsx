@@ -47,23 +47,33 @@ export default function Receive() {
   const [infoByAsset, setInfoByAsset] = useState<Partial<Record<Asset, WalletInfo>>>({});
   const [loading, setLoading] = useState(false);
   const [copied, setCopied] = useState(false);
+  const [errByAsset, setErrByAsset] = useState<Partial<Record<Asset, string>>>({});
 
   useEffect(() => {
     let cancelled = false;
     (async () => {
-      if (infoByAsset[asset]) return;
+      if (infoByAsset[asset] || errByAsset[asset]) return;
       setLoading(true);
       try {
         const r = await api<WalletInfo & { explorer?: string }>(CHAIN_PATH[asset]);
         if (!cancelled) setInfoByAsset((m) => ({ ...m, [asset]: r }));
+      } catch (e: any) {
+        if (!cancelled) {
+          let msg = e?.message ?? "Couldn't load address";
+          if (typeof msg === "string" && msg.includes("mnemonic missing")) {
+            msg = "This account was created before multi-chain onboarding. Re-import or migrate the wallet to enable this chain.";
+          }
+          setErrByAsset((m) => ({ ...m, [asset]: msg }));
+        }
       } finally {
         if (!cancelled) setLoading(false);
       }
     })();
     return () => { cancelled = true; };
-  }, [asset, infoByAsset]);
+  }, [asset, infoByAsset, errByAsset]);
 
   const info = infoByAsset[asset];
+  const assetErr = errByAsset[asset];
   const accent = useMemo(() => ASSET_ICON_COLORS[asset] ?? colors.brand, [asset]);
 
   const onCopy = async () => {
@@ -108,7 +118,12 @@ export default function Receive() {
         </View>
 
         <View style={s.qrCard}>
-          {loading || !info?.address ? (
+          {assetErr ? (
+            <View style={s.qrPlaceholder}>
+              <Ionicons name="alert-circle-outline" size={36} color={colors.brandDeep} />
+              <Text style={s.qrErrText}>{assetErr}</Text>
+            </View>
+          ) : loading || !info?.address ? (
             <View style={s.qrPlaceholder}><ActivityIndicator color={colors.brand} /></View>
           ) : (
             <QRCode
@@ -123,7 +138,7 @@ export default function Receive() {
         <Text style={s.label}>{t("your_address")}</Text>
         <View style={s.addrBox}>
           <Text testID="receive-address" style={s.addrText} selectable>
-            {info?.address ?? "…"}
+            {assetErr ? "—" : info?.address ?? "…"}
           </Text>
         </View>
 
@@ -171,7 +186,8 @@ const s = StyleSheet.create({
   chainLabel: { fontSize: 12, fontWeight: "700", color: colors.onSurface, letterSpacing: 0.2 },
   chainKind: { fontSize: 10, fontWeight: "700", color: colors.brandDeep, backgroundColor: "rgba(201,163,91,0.18)", paddingHorizontal: 6, paddingVertical: 2, borderRadius: 4, marginLeft: 4 },
   qrCard: { width: 240, height: 240, borderRadius: radius.lg, backgroundColor: colors.surfaceSecondary, alignItems: "center", justifyContent: "center", marginTop: spacing.sm, borderWidth: 1, borderColor: "rgba(201,163,91,0.30)" },
-  qrPlaceholder: { width: 208, height: 208, alignItems: "center", justifyContent: "center" },
+  qrPlaceholder: { width: 208, height: 208, alignItems: "center", justifyContent: "center", paddingHorizontal: 12, gap: 10 },
+  qrErrText: { color: colors.brandDeep, fontSize: 12, textAlign: "center", lineHeight: 16, fontWeight: "500" },
   label: { fontSize: 11, color: colors.brandDeep, marginTop: spacing.lg, fontWeight: "700", letterSpacing: 0.5, textTransform: "uppercase" },
   addrBox: { backgroundColor: colors.surfaceSecondary, paddingHorizontal: spacing.lg, paddingVertical: spacing.md, borderRadius: radius.md, borderWidth: 1, borderColor: colors.border, maxWidth: "100%" },
   addrText: { color: colors.onSurface, fontSize: 13, fontFamily: Platform.OS === "ios" ? "Menlo" : "monospace", textAlign: "center" },

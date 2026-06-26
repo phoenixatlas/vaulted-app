@@ -513,23 +513,30 @@ async def eth_info(user=Depends(get_current_user)):
 # ---------- Multichain (BTC + SOL + USDC) ------------------------------------
 async def _ensure_multichain_addresses(user: dict) -> dict:
     """Derive BTC + SOL addresses from the user's mnemonic if not yet stored.
-    Cached on the user doc, so this only runs once per user."""
+    For legacy accounts created before BIP-39 onboarding, a fresh mnemonic is
+    generated transparently — the old ETH key is preserved untouched (BTC/SOL
+    derivation just needs *a* mnemonic, not the one that birthed the ETH key)."""
     if user.get("btc_address") and user.get("sol_address"):
         return {"btc": user["btc_address"], "sol": user["sol_address"]}
     mnemonic = user.get("eth_mnemonic") or user.get("mnemonic")
+    update: dict = {}
     if not mnemonic:
-        return {"btc": None, "sol": None}
+        try:
+            Account.enable_unaudited_hdwallet_features()
+            _, mnemonic = Account.create_with_mnemonic()
+        except Exception as e:
+            logger.warning(f"legacy mnemonic backfill failed: {e}")
+            return {"btc": None, "sol": None}
+        update["eth_mnemonic"] = mnemonic
     try:
         addrs = derive_addresses(mnemonic)
     except Exception as e:
         logger.warning(f"multichain derivation failed: {e}")
         return {"btc": None, "sol": None}
-    await db.users.update_one(
-        {"id": user["id"]},
-        {"$set": {"btc_address": addrs["btc"], "sol_address": addrs["sol"]}},
-    )
-    user["btc_address"] = addrs["btc"]
-    user["sol_address"] = addrs["sol"]
+    update["btc_address"] = addrs["btc"]
+    update["sol_address"] = addrs["sol"]
+    await db.users.update_one({"id": user["id"]}, {"$set": update})
+    user.update(update)
     return {"btc": addrs["btc"], "sol": addrs["sol"]}
 
 
