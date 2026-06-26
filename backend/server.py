@@ -277,7 +277,7 @@ async def register(body: RegisterIn):
         "password_hash": pwd_ctx.hash(body.password),
         "language": "en",
         "wallet_address": acct.address,
-        "eth_private_key": acct.key.hex(),  # 0x-prefixed hex; testnet only
+        "eth_private_key": "0x" + acct.key.hex(),  # canonical 0x-prefixed hex; testnet only
         "biometric_enabled": False,
         "multisig_enabled": False,
         "created_at": iso(now_utc()),
@@ -589,8 +589,14 @@ async def contacts(user=Depends(get_current_user)):
 
 @api.get("/chat/conversations")
 async def conversations(user=Depends(get_current_user)):
+    is_pro = (user.get("subscription") or {}).get("status") in ("active", "trialing")
     cur = db.conversations.find({"user_id": user["id"]}, {"_id": 0}).sort("last_message_at", -1)
-    return await cur.to_list(200)
+    items = await cur.to_list(200)
+    if is_pro:
+        # Pin priority conversations (Vault Support) to the top while preserving
+        # last_message_at ordering within each group (Python sort is stable).
+        items.sort(key=lambda c: 0 if c.get("priority") else 1)
+    return items
 
 
 @api.get("/chat/messages/{conversation_id}")

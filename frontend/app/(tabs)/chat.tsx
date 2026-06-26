@@ -4,6 +4,7 @@ import { SafeAreaView } from "react-native-safe-area-context";
 import { useFocusEffect, useRouter } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
 import { api } from "@/src/lib/api";
+import { useAuth } from "@/src/lib/auth";
 import { useI18n } from "@/src/lib/i18n";
 import { colors, spacing, radius } from "@/src/lib/theme";
 
@@ -11,6 +12,7 @@ type Conv = { id: string; contact_name: string; contact_avatar: string; last_mes
 
 export default function ChatList() {
   const { t } = useI18n();
+  const { user } = useAuth();
   const router = useRouter();
   const [items, setItems] = useState<Conv[]>([]);
   const [loading, setLoading] = useState(true);
@@ -53,7 +55,7 @@ export default function ChatList() {
                 <View style={s.nameRow}>
                   <Text style={s.name}>{item.contact_name}</Text>
                   {item.encrypted && <Ionicons name="lock-closed" size={11} color={colors.onSurfaceTertiary} />}
-                  {item.priority && (
+                  {item.priority && user?.is_pro && (
                     <View style={s.priorityBadge}>
                       <Ionicons name="flash" size={9} color="#fff" />
                       <Text style={s.priorityText}>PRIORITY</Text>
