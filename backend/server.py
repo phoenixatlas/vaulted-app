@@ -28,6 +28,8 @@ from multichain import (
     encode_usdc_transfer,
     explorer_url_btc,
     explorer_url_sol,
+    btc_send,
+    sol_send,
     USDC_CONTRACT,
     BTC_TESTNET,
     USE_MAINNET,
@@ -561,8 +563,7 @@ async def btc_info(user=Depends(get_current_user)):
         "network": "Mainnet" if not BTC_TESTNET else "Testnet",
         "explorer": explorer_url_btc(a),
         "faucet": "https://coinfaucet.eu/en/btc-testnet/" if BTC_TESTNET else None,
-        "send_supported": False,
-        "send_unsupported_reason": "BTC send is coming soon. Receive works now.",
+        "send_supported": True,
     }
 
 
@@ -583,8 +584,7 @@ async def sol_info(user=Depends(get_current_user)):
         "network": "Mainnet" if USE_MAINNET else "Devnet",
         "explorer": explorer_url_sol(a),
         "faucet": "https://faucet.solana.com/" if not USE_MAINNET else None,
-        "send_supported": False,
-        "send_unsupported_reason": "SOL send is coming soon. Receive works now.",
+        "send_supported": True,
     }
 
 
@@ -686,6 +686,128 @@ async def usdc_send(body: SendUsdcIn, user=Depends(get_current_user)):
     await db.transactions.insert_one(record)
     record.pop("_id", None)
     return record
+
+
+class SendCoinIn(BaseModel):
+    to_address: str
+    amount: float = Field(gt=0)
+
+
+@api.post("/wallet/btc/send")
+async def btc_send_route(body: SendCoinIn, user=Depends(get_current_user)):
+    """Broadcast a BTC transfer (testnet3 by default). `bit` selects UTXOs and
+    handles change automatically. The mnemonic is loaded from the user's doc;
+    addresses are auto-derived on first call."""
+    # ensure addresses are derived + mnemonic backfilled if needed
+    await _ensure_multichain_addresses(user)
+    mnemonic = user.get("eth_mnemonic") or user.get("mnemonic")
+    if not mnemonic:
+        raise HTTPException(status_code=400, detail="No mnemonic on file")
+    to = body.to_address.strip()
+    # Loose validation — bit will reject bad addresses on its own with a clearer error.
+    if not to or len(to) < 26:
+        raise HTTPException(status_code=400, detail="Invalid recipient address")
+
+    try:
+        result = await btc_send(mnemonic, to, body.amount)
+    except Exception as e:
+        msg = str(e)
+        if "insufficient" in msg.lower():
+            raise HTTPException(status_code=400, detail="Insufficient BTC (incl. miner fee)") from e
+        raise HTTPException(status_code=502, detail=f"BTC broadcast failed: {msg[:200]}") from e
+
+    fiat_value = await _btc_to_usd(body.amount)
+    record = {
+        "id": str(uuid.uuid4()),
+        "user_id": user["id"],
+        "type": "send",
+        "category": "Crypto · BTC",
+        "asset": "BTC",
+        "amount": body.amount,
+        "fiat_value": fiat_value,
+        "counterparty": to,
+        "network": "Mainnet" if not BTC_TESTNET else "Testnet",
+        "tx_hash": result["tx_hash"],
+        "explorer_url": result["explorer_url"],
+        "status": "pending",
+        "service_fee_usd": 0.0,
+        "created_at": iso(now_utc()),
+    }
+    await db.transactions.insert_one(record)
+    record.pop("_id", None)
+    return record
+
+
+@api.post("/wallet/sol/send")
+async def sol_send_route(body: SendCoinIn, user=Depends(get_current_user)):
+    """Broadcast a SOL transfer (devnet by default). Signs via solders ed25519."""
+    await _ensure_multichain_addresses(user)
+    mnemonic = user.get("eth_mnemonic") or user.get("mnemonic")
+    if not mnemonic:
+        raise HTTPException(status_code=400, detail="No mnemonic on file")
+    to = body.to_address.strip()
+    if not to or len(to) < 32:
+        raise HTTPException(status_code=400, detail="Invalid Solana address")
+
+    # Pre-flight balance check so we surface the friendly error before signing
+    addr = user.get("sol_address")
+    if addr:
+        try:
+            bal = await fetch_sol_balance_lamports(addr)
+        except Exception:
+            bal = None
+        if bal is not None:
+            need = int(round(body.amount * 1_000_000_000))
+            # Leave a tiny buffer for the fee (~5000 lamports)
+            if bal < need + 5000:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Insufficient SOL (need {body.amount}+fee, have {bal/1e9})",
+                )
+
+    try:
+        result = await sol_send(mnemonic, to, body.amount)
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"SOL broadcast failed: {str(e)[:200]}") from e
+
+    fiat_value = await _sol_to_usd(body.amount)
+    record = {
+        "id": str(uuid.uuid4()),
+        "user_id": user["id"],
+        "type": "send",
+        "category": "Crypto · SOL",
+        "asset": "SOL",
+        "amount": body.amount,
+        "fiat_value": fiat_value,
+        "counterparty": to,
+        "network": "Mainnet" if USE_MAINNET else "Devnet",
+        "tx_hash": result["tx_hash"],
+        "explorer_url": result["explorer_url"],
+        "status": "pending",
+        "service_fee_usd": 0.0,
+        "created_at": iso(now_utc()),
+    }
+    await db.transactions.insert_one(record)
+    record.pop("_id", None)
+    return record
+
+
+async def _btc_to_usd(amount_btc: float) -> float:
+    try:
+        market = await _refresh_market_prices()
+        price = next((a.get("price_usd", 0) for a in market.get("assets", []) if a.get("symbol") == "BTC"), 0)
+        return round(amount_btc * price, 2)
+    except Exception:
+        return 0.0
+
+
+async def _sol_to_usd(amount_sol: float) -> float:
+    try:
+        market = await _refresh_market_prices()
+        price = next((a.get("price_usd", 0) for a in market.get("assets", []) if a.get("symbol") == "SOL"), 0)
+        return round(amount_sol * price, 2)
+    except Exception:
+        return 0.0
 
 
 class SendEthIn(BaseModel):
@@ -857,7 +979,7 @@ async def list_cosigners(user=Depends(get_current_user)):
 
 @api.post("/cosigners")
 async def add_cosigner(body: CosignerInviteIn, user=Depends(get_current_user)):
-    if not (user.get("subscription") or {}).get("status") in ("active", "trialing"):
+    if (user.get("subscription") or {}).get("status") not in ("active", "trialing"):
         raise HTTPException(status_code=402, detail="Vault Pro required to add co-signers")
     existing = await db.cosigners.find_one({"user_id": user["id"], "email": body.email.lower()}, {"_id": 0})
     if existing:

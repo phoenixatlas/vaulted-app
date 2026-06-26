@@ -38,11 +38,15 @@ export default function SendCrypto() {
   const selected = assets.find((a) => a.symbol === sel);
   const isEth = sel === "ETH";
   const isUsdc = sel === "USDC";
-  const isOnChain = isEth || isUsdc;
-  const sendDisabled = !isOnChain;  // BTC/SOL send coming soon
+  const isBtc = sel === "BTC";
+  const isSol = sel === "SOL";
+  const isOnChain = isEth || isUsdc || isBtc || isSol;
+  const sendDisabled = !isOnChain;
   const isPro = !!user?.is_pro;
-  const baseServiceFee = isEth ? 0.10 : 0.10;
+  const baseServiceFee = 0.10;
   const serviceFee = isPro ? baseServiceFee * 0.5 : baseServiceFee;
+  const networkLabel = isEth || isUsdc ? "Sepolia" : isBtc ? "Testnet3" : isSol ? "Devnet" : "";
+  const addrPlaceholder = isEth || isUsdc ? "0x..." : isBtc ? "tb1q... / m... / n..." : isSol ? "Base58 address" : "address";
 
   const submit = async () => {
     setErr(null);
@@ -75,6 +79,16 @@ export default function SendCrypto() {
         tx = await api("/wallet/usdc/send", {
           method: "POST",
           body: { to_address: addr.trim(), amount_usdc: amt },
+        });
+      } else if (isBtc) {
+        tx = await api("/wallet/btc/send", {
+          method: "POST",
+          body: { to_address: addr.trim(), amount: amt },
+        });
+      } else if (isSol) {
+        tx = await api("/wallet/sol/send", {
+          method: "POST",
+          body: { to_address: addr.trim(), amount: amt },
         });
       } else {
         tx = await api("/wallet/send", {
@@ -113,8 +127,8 @@ export default function SendCrypto() {
           {selected && (
             <View style={s.balRow}>
               <Text style={s.bal}>Available: {selected.amount.toLocaleString(undefined, {maximumFractionDigits: 6})} {selected.symbol}</Text>
-              {isEth && (
-                <View style={s.netPill}><Ionicons name="globe" size={10} color={colors.brand} /><Text style={s.netText}>Sepolia</Text></View>
+              {isOnChain && (
+                <View style={s.netPill}><Ionicons name="globe" size={10} color={colors.brand} /><Text style={s.netText}>{networkLabel}</Text></View>
               )}
             </View>
           )}
@@ -123,9 +137,9 @@ export default function SendCrypto() {
           <TextInput testID="send-amount" value={amount} onChangeText={setAmount} keyboardType="decimal-pad" placeholder="0.00" placeholderTextColor={colors.onSurfaceTertiary} style={s.input} />
 
           <Text style={s.label}>{t("recipient")}</Text>
-          <TextInput testID="send-address" value={addr} onChangeText={setAddr} autoCapitalize="none" placeholder={isEth ? "0x..." : "address"} placeholderTextColor={colors.onSurfaceTertiary} style={s.input} />
+          <TextInput testID="send-address" value={addr} onChangeText={setAddr} autoCapitalize="none" placeholder={addrPlaceholder} placeholderTextColor={colors.onSurfaceTertiary} style={s.input} />
 
-          {!isEth && (
+          {!isOnChain && (
             <>
               <Text style={s.label}>{t("memo")}</Text>
               <TextInput testID="send-memo" value={memo} onChangeText={setMemo} placeholder="optional" placeholderTextColor={colors.onSurfaceTertiary} style={s.input} />
@@ -134,8 +148,12 @@ export default function SendCrypto() {
 
           <View style={s.feeCard} testID="fee-summary">
             <View style={s.feeRow}>
-              <Text style={s.feeLabel}>Network fee {isEth && gasGwei ? `(~${gasGwei.toFixed(2)} gwei)` : ""}</Text>
-              <Text style={s.feeValue}>{isEth ? "~0.00002 ETH" : "$0.00"}</Text>
+              <Text style={s.feeLabel}>
+                Network fee{isEth && gasGwei ? ` (~${gasGwei.toFixed(2)} gwei)` : isBtc ? " (miner fee)" : isSol ? " (~0.000005 SOL)" : ""}
+              </Text>
+              <Text style={s.feeValue}>
+                {isEth ? "~0.00002 ETH" : isBtc ? "auto" : isSol ? "~5000 lamports" : "$0.00"}
+              </Text>
             </View>
             <View style={s.feeRow}>
               <Text style={s.feeLabel}>Vaulted service fee</Text>
@@ -167,7 +185,7 @@ export default function SendCrypto() {
               : <Text style={s.ctaText}>
                   {sendDisabled
                     ? `${sel} send coming soon`
-                    : `${t("confirm")} ${isEth ? "on Sepolia" : isUsdc ? "USDC on Sepolia" : ""}`.trim()}
+                    : `${t("confirm")} ${isEth ? "on Sepolia" : isUsdc ? "USDC on Sepolia" : isBtc ? "on BTC Testnet" : isSol ? "on SOL Devnet" : ""}`.trim()}
                 </Text>}
           </Pressable>
 
@@ -175,6 +193,18 @@ export default function SendCrypto() {
             <Pressable testID="faucet-link" onPress={() => Linking.openURL("https://sepoliafaucet.com/")} style={s.faucet}>
               <Ionicons name="water-outline" size={16} color={colors.brand} />
               <Text style={s.faucetText}>Need test ETH? Open Sepolia faucet</Text>
+            </Pressable>
+          )}
+          {isBtc && (
+            <Pressable testID="faucet-link-btc" onPress={() => Linking.openURL("https://coinfaucet.eu/en/btc-testnet/")} style={s.faucet}>
+              <Ionicons name="water-outline" size={16} color={colors.brand} />
+              <Text style={s.faucetText}>Need test BTC? Open testnet faucet</Text>
+            </Pressable>
+          )}
+          {isSol && (
+            <Pressable testID="faucet-link-sol" onPress={() => Linking.openURL("https://faucet.solana.com/")} style={s.faucet}>
+              <Ionicons name="water-outline" size={16} color={colors.brand} />
+              <Text style={s.faucetText}>Need devnet SOL? Open Solana faucet</Text>
             </Pressable>
           )}
         </ScrollView>

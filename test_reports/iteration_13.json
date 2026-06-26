@@ -1,0 +1,46 @@
+{
+  "summary": "Iteration 13 — BTC/SOL send wiring (backend only per request). 14/14 pytest PASS. New POST /api/wallet/btc/send and /api/wallet/sol/send routes behave per spec: (a) require JWT (401 without), (b) reject short/invalid addresses with 400, (c) reject zero amount with 422 (Pydantic gt=0), (d) for a fresh user with zero testnet BTC the BTC send reaches the broadcast layer and surfaces a clean 502 'BTC broadcast failed' — confirmed in backend access log as '502 Bad Gateway', NO 500 traceback. Note: at the ingress/Cloudflare layer the 502 body is overwritten with an HTML error page (Content-Type text/html), but the upstream FastAPI response status is 502 from server.py:717 — so the route's error surface is correct; the test accepts non-JSON body when status is 502 from the ingress. (e) SOL pre-flight balance check returns 400 'Insufficient SOL (need 0.001+fee, have 0.0)' as expected. (f) /wallet/eth/send + /wallet/usdc/send unchanged (regression green — 400 on invalid addr / insufficient). (g) GET /wallet/assets returns BTC and SOL with on_chain:true, network='Testnet' / 'Devnet' (note: code uses 'Testnet' not 'Testnet3' in the response — see minor issue below), and the top-level body now exposes btc_address + sol_address. (h) Lint: server.py and multichain.py both PASS (the `not (... in tuple)` → `... not in tuple` cleanup is intact at server.py:982). Frontend wiring sanity (code-read of /app/frontend/app/send.tsx): asset==='BTC' → POST /wallet/btc/send with body {to_address, amount}; asset==='SOL' → POST /wallet/sol/send with body {to_address, amount} — wiring matches backend SendCoinIn schema exactly.",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {"endpoint": "/api/wallet/assets", "issue": "Review request states network label should be 'Testnet3' for BTC, but backend returns 'Testnet' (server.py:448: `'Mainnet' if not BTC_TESTNET else 'Testnet'`). The frontend send.tsx uses its own 'Testnet3' literal client-side, so user-facing copy is fine, but the /assets payload disagrees with the spec's wording. Either tighten the backend label to 'Testnet3' or update the spec — non-blocking."},
+      {"endpoint": "/api/wallet/btc/send", "issue": "When the bit library raises a non-'insufficient' broadcast error, the response status is 502 but the ingress (Cloudflare) replaces the JSON body with an HTML 502 page (Content-Type: text/html). The client-side JSON parse in send.tsx (`e.message` from api()) will likely fall back to a generic message instead of 'BTC broadcast failed: ...'. Consider: (i) returning 400 with a 'Broadcast failed — try again' message instead of 502 so the ingress passes the JSON through, OR (ii) catching specific bit exceptions to return a clean 400."},
+      {"endpoint": "carry-over", "issue": "server.py is now 2032+ lines (still past 700-line guideline). 28-byte JWT_SECRET (InsecureKeyLengthWarning), bcrypt __about__ AttributeError still present — not blocking. Splitting into routers/wallet.py recommended."}
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [],
+    "react_native_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_iteration13.py",
+    "/app/test_reports/pytest/iter13_results.xml"
+  ],
+  "action_items": [
+    "(Optional) Align BTC network label between backend (`'Testnet'`) and spec (`'Testnet3'`) in server.py:448 so /wallet/assets matches the review brief.",
+    "(Optional) Convert the BTC broadcast-failure path from 502 → 400 in btc_send_route (server.py:717) so the Cloudflare ingress doesn't swallow the JSON detail with an HTML 502 page. The user-facing error in send.tsx is currently a generic ingress message instead of 'BTC broadcast failed: ...'.",
+    "(Carry-over) Set 32+ byte JWT_SECRET; pin bcrypt==4.0.1; split server.py into routers/.",
+    "(Carry-over) Update Expo packages — expo@54.0.34→~54.0.35, expo-font@14.0.11→~14.0.12, expo-router@6.0.23→~6.0.24 (per expo doctor warnings in supervisor logs)."
+  ],
+  "critical_code_review_comments": [
+    "btc_send_route (server.py:696-738) and sol_send_route (server.py:741-792) are well-structured: (i) auto-derive multichain addresses if not yet stored, (ii) loose syntactic address validation before reaching the chain, (iii) SOL has a pre-flight balance check using fetch_sol_balance_lamports + 5000 lamport fee buffer (server.py:762) that correctly returns 400 instead of letting solders raise mid-broadcast, (iv) `from e` exception chaining preserves cause for log traces, (v) detail strings are truncated to [:200] which prevents stack-trace leakage, (vi) tx records are persisted to db.transactions only after a successful broadcast.",
+    "multichain.btc_send (multichain.py:113-128) correctly runs the sync bit.send() inside asyncio.to_thread so the event loop isn't blocked — good async hygiene.",
+    "multichain.sol_send (multichain.py:143-188) signs locally via solders ed25519 and broadcasts via raw JSON-RPC — no third-party Python client coupling, easy to swap RPC endpoints.",
+    "SendCoinIn (server.py:691-693) is a clean shared schema for BTC + SOL; amount: float = Field(gt=0) gives free 422 on zero/negative.",
+    "The `not in` lint fix at server.py:982 is correct: `(... or {}).get('status') not in ('active', 'trialing')`.",
+    "BTC pre-flight balance check is absent (only SOL has one). For symmetry — and to dodge the ingress 502-HTML issue — consider adding `fetch_btc_balance_sats(btc_addr) >= sats_needed + ~10000_fee_buffer` before calling btc_send.",
+    "(Carry-over) server.py at 2032 lines remains unwieldy; wallet endpoints form a natural ~700-line sub-module."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_iteration13.py (new — 14 tests)",
+    "/app/test_reports/pytest/iter13_results.xml (regenerated — 14 passed)"
+  ],
+  "success_rate": {"backend": "100% (14/14)", "frontend": "not tested (backend-only per review_request)"},
+  "seed_data_creation": "One fresh user TEST_iter13_<uuid>@vaulted.app per pytest session via /api/auth/register. smoketest@vaulted.app reused for module-scoped token. No on-chain funds were moved (intentional — fresh accounts have zero BTC/SOL).",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "BTC/SOL send routes are wired and graceful. The only quirk worth a follow-up is that BTC broadcast failures bubble as 502 → Cloudflare swallows the JSON body with its own HTML 502 page, so the frontend's e.message will read like 'preview.emergentagent.com | 502: Bad gateway' rather than the friendly 'BTC broadcast failed: ...'. Switching the broadcast-failure status to 400 (or adding a pre-flight BTC balance check) would fix this end-to-end. SOL has both behaviors right because its insufficient check fires before the RPC call.",
+  "rca_of_issue": "N/A — no bug to fix this iteration. Behavior matches the review brief: validation 400s, insufficient-balance 400s, broadcast failures 502s, never 500s, JWT enforced, /wallet/assets reports BTC + SOL on-chain. The 502→HTML-body quirk is an ingress behavior (Cloudflare overrides 5xx bodies); from FastAPI's perspective the response is a clean JSONResponse with status_code=502."
+}

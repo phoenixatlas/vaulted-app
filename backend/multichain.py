@@ -99,6 +99,95 @@ async def fetch_sol_balance_lamports(address: str) -> int:
         return int(((r.json() or {}).get("result") or {}).get("value", 0))
 
 
+# ---------- BTC send (testnet3 / mainnet via the `bit` library) -------------
+def _btc_wif_from_mnemonic(mnemonic: str) -> str:
+    seed = Bip39SeedGenerator(mnemonic).Generate()
+    coin = Bip44Coins.BITCOIN_TESTNET if BTC_TESTNET else Bip44Coins.BITCOIN
+    node = (
+        Bip44.FromSeed(seed, coin)
+        .Purpose().Coin().Account(0).Change(Bip44Changes.CHAIN_EXT).AddressIndex(0)
+    )
+    return node.PrivateKey().ToWif()
+
+
+async def btc_send(mnemonic: str, to_address: str, amount_btc: float) -> dict:
+    """Broadcast a BTC transfer on testnet3 (or mainnet if WALLET_NETWORK=mainnet).
+    `bit` handles UTXO selection, change, and broadcast — it just needs a WIF.
+    Returns {tx_hash, explorer_url}."""
+    import asyncio
+    wif = _btc_wif_from_mnemonic(mnemonic)
+
+    def _send_sync():
+        from bit import PrivateKey, PrivateKeyTestnet
+        key = (PrivateKey if not BTC_TESTNET else PrivateKeyTestnet)(wif)
+        # Outputs list of (address, amount, 'btc') tuples
+        return key.send([(to_address, amount_btc, "btc")])
+
+    # bit's blockstream calls are sync — run in a thread to avoid blocking the loop
+    tx_hash = await asyncio.to_thread(_send_sync)
+    return {"tx_hash": tx_hash, "explorer_url": explorer_url_btc(tx_hash, is_tx=True)}
+
+
+# ---------- SOL send (devnet / mainnet) -------------------------------------
+def _sol_keypair_from_mnemonic(mnemonic: str):
+    from solders.keypair import Keypair
+    seed = Bip39SeedGenerator(mnemonic).Generate()
+    node = (
+        Bip44.FromSeed(seed, Bip44Coins.SOLANA)
+        .Purpose().Coin().Account(0).Change(Bip44Changes.CHAIN_EXT).AddressIndex(0)
+    )
+    priv = node.PrivateKey().Raw().ToBytes()
+    return Keypair.from_seed(priv)
+
+
+async def sol_send(mnemonic: str, to_address: str, amount_sol: float) -> dict:
+    """Broadcast a SOL transfer on devnet (or mainnet if WALLET_NETWORK=mainnet)."""
+    from solders.pubkey import Pubkey
+    from solders.system_program import TransferParams, transfer as sol_transfer
+    from solders.message import Message
+    from solders.transaction import Transaction
+    from solders.hash import Hash
+
+    kp = _sol_keypair_from_mnemonic(mnemonic)
+    to_pk = Pubkey.from_string(to_address)
+    lamports = int(round(amount_sol * 1_000_000_000))
+    if lamports <= 0:
+        raise ValueError("Amount too small (1 lamport = 1e-9 SOL)")
+
+    async with httpx.AsyncClient(timeout=15) as c:
+        bh_resp = await c.post(
+            SOL_RPC_URL,
+            json={"jsonrpc": "2.0", "id": 1, "method": "getLatestBlockhash", "params": []},
+        )
+        bh_json = bh_resp.json() or {}
+        blockhash_str = ((bh_json.get("result") or {}).get("value") or {}).get("blockhash")
+        if not blockhash_str:
+            raise RuntimeError(f"getLatestBlockhash failed: {bh_json.get('error') or bh_json}")
+        blockhash = Hash.from_string(blockhash_str)
+
+        ix = sol_transfer(TransferParams(from_pubkey=kp.pubkey(), to_pubkey=to_pk, lamports=lamports))
+        msg = Message.new_with_blockhash([ix], kp.pubkey(), blockhash)
+        tx = Transaction([kp], msg, blockhash)
+        raw = base64.b64encode(bytes(tx)).decode()
+
+        send_resp = await c.post(
+            SOL_RPC_URL,
+            json={
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": "sendTransaction",
+                "params": [raw, {"encoding": "base64", "preflightCommitment": "confirmed"}],
+            },
+        )
+        send_json = send_resp.json() or {}
+        if send_json.get("error"):
+            raise RuntimeError(send_json["error"].get("message") or str(send_json["error"]))
+        sig = send_json.get("result")
+        if not sig:
+            raise RuntimeError(f"sendTransaction returned no signature: {send_json}")
+        return {"tx_hash": sig, "explorer_url": explorer_url_sol(sig, is_tx=True)}
+
+
 async def fetch_usdc_balance_micro(eth_address: str) -> int:
     """USDC has 6 decimals — returns balance in micro-USDC (1 USDC = 1_000_000)."""
     if not (eth_address and eth_address.startswith("0x") and len(eth_address) == 42):
@@ -155,4 +244,5 @@ __all__ = [
     "fetch_btc_balance_sats", "fetch_sol_balance_lamports", "fetch_usdc_balance_micro",
     "encode_usdc_transfer",
     "explorer_url_btc", "explorer_url_sol",
+    "btc_send", "sol_send",
 ]
