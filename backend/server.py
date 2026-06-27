@@ -1742,8 +1742,8 @@ async def _get_or_create_vault_pro_price() -> str:
     try:
         product = stripe.Product.create(name="Vault Pro", description="Premium tier: multi-sig, lower fees, priority support")
         price = stripe.Price.create(
-            unit_amount=int(VAULT_PRO_PRICE_USD * 100),
-            currency="usd",
+            unit_amount=int(VAULT_PRO_PRICE_USD * 100),  # env var name is legacy; value is now in GBP
+            currency="gbp",
             recurring={"interval": "month"},
             product=product.id,
         )

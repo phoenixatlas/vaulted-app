@@ -81,7 +81,7 @@ export default function VaultPro() {
             <Ionicons name="star" size={28} color={colors.brand} />
           </View>
           <Text style={s.heroTitle}>{isPro ? "You're a Pro member" : "Unlock Vault Pro"}</Text>
-          <Text style={s.heroPrice} testID="vaultpro-price">$9.99 / month</Text>
+          <Text style={s.heroPrice} testID="vaultpro-price">£9.99 / month</Text>
           <Text style={s.heroSub}>Cancel anytime. Securely billed by Stripe.</Text>
           {isPro && (
             <View style={s.activeBadge}>
