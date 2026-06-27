@@ -40,7 +40,17 @@ ROOT_DIR = Path(__file__).parent
 load_dotenv(ROOT_DIR / ".env")
 
 mongo_url = os.environ["MONGO_URL"]
-client = AsyncIOMotorClient(mongo_url)
+# Pass certifi's CA bundle explicitly when connecting to Atlas (mongodb+srv://).
+# Fixes "SSL handshake failed: TLSV1_ALERT_INTERNAL_ERROR" on hosted platforms
+# (Render, Railway, etc.) whose default OS trust store can be stale/incomplete.
+_mongo_kwargs: dict = {}
+if "mongodb+srv" in mongo_url or "mongodb.net" in mongo_url:
+    try:
+        import certifi
+        _mongo_kwargs["tlsCAFile"] = certifi.where()
+    except Exception:
+        pass
+client = AsyncIOMotorClient(mongo_url, **_mongo_kwargs)
 db = client[os.environ["DB_NAME"]]
 
 JWT_SECRET = os.environ.get("JWT_SECRET", "vaulted-dev-secret-change-me")
