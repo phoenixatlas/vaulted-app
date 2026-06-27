@@ -15,7 +15,10 @@
 - `JWT_SECRET` = `1187f6ea010a0f6e59e2dc43a7397d1153f8bb148cfe44c00878e5c9dca73131`
 - `CORS_ALLOW_ORIGINS` = `https://app.phoenix-atlas.com,https://vaulted-app-one.vercel.app`
 - `APP_PUBLIC_URL` = `https://app.phoenix-atlas.com`
-- `STRIPE_API_KEY` = test mode (`sk_test_...`)
+- `STRIPE_API_KEY` (live) = `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`
+- `STRIPE_WEBHOOK_SECRET` = `whsec_uCw2pywJfQU5bcF9UBQE20QnY49Kh5Je`
+- Stripe Webhook Destination ID: `we_1TmwA92Zkc1SL713jbr6pJWO`
+- Stripe currency: **GBP** (£9.99/mo for Vault Pro)
 - `RESEND_API_KEY`, `DAILY_API_KEY` = production
 - `SEPOLIA_RPC_URL` = `https://ethereum-sepolia-rpc.publicnode.com`
 
