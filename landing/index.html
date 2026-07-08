@@ -4,10 +4,10 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <meta name="theme-color" content="#0A0807">
-  <title>Vaulted — Self-Custody Crypto Wallet with Encrypted Chat & Video Calls</title>
-  <meta name="description" content="The wallet you actually own. Self-custody crypto with BTC, ETH, USDC, SOL — plus end-to-end encrypted chat, video calls, multi-signature security, and biometric authentication.">
-  <meta property="og:title" content="Vaulted — Self-Custody Crypto Wallet">
-  <meta property="og:description" content="The wallet you actually own. Self-custody. Encrypted. Sovereign.">
+  <title>Vaulted — Send Money Worldwide from £0.50 · Self-Custody Crypto Wallet</title>
+  <meta name="description" content="Send money to Kenya, Nigeria, India, Philippines, Senegal in seconds — from £0.50. Self-custody crypto wallet with cross-border remittance, encrypted chat, and video calls. Your keys. Your money.">
+  <meta property="og:title" content="Vaulted — Send Money Worldwide from £0.50">
+  <meta property="og:description" content="Cross-border remittance in seconds, from £0.50. Self-custody wallet with encrypted chat + video calls. Six chains. Eight corridors.">
   <meta property="og:url" content="https://phoenix-atlas.com">
   <meta property="og:type" content="website">
   <meta name="twitter:card" content="summary_large_image">
@@ -277,6 +277,73 @@
       color: var(--text-secondary);
     }
 
+    /* CORRIDORS */
+    .corridors-hero {
+      text-align: center; max-width: 720px; margin: 0 auto 56px;
+    }
+    .corridor-headline {
+      font-family: 'Cormorant Garamond', serif;
+      font-size: clamp(30px, 4.5vw, 46px);
+      line-height: 1.15;
+      color: var(--gold-cream);
+      margin-bottom: 12px;
+      letter-spacing: -0.5px;
+    }
+    .corridor-headline .italic {
+      font-style: italic;
+      background: var(--gradient);
+      -webkit-background-clip: text; background-clip: text; color: transparent;
+    }
+    .corridors-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+      gap: 16px;
+      max-width: 1080px; margin: 0 auto;
+    }
+    .corridor-card {
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      border-radius: 20px;
+      padding: 24px 22px;
+      display: flex; flex-direction: column;
+      transition: transform 0.15s ease, border-color 0.15s ease, box-shadow 0.15s ease;
+      text-decoration: none; color: inherit;
+    }
+    .corridor-card:hover {
+      transform: translateY(-3px);
+      border-color: rgba(201, 163, 91, 0.45);
+      box-shadow: 0 12px 40px -12px rgba(201, 163, 91, 0.30);
+    }
+    .corridor-top {
+      display: flex; align-items: center; justify-content: space-between;
+      margin-bottom: 16px;
+    }
+    .corridor-flag { font-size: 32px; line-height: 1; }
+    .corridor-eta {
+      font-size: 11px; font-weight: 700; letter-spacing: 1px;
+      color: var(--gold); text-transform: uppercase;
+      background: rgba(201, 163, 91, 0.10);
+      padding: 4px 10px; border-radius: 999px;
+    }
+    .corridor-country { font-size: 17px; font-weight: 700; color: var(--gold-cream); margin-bottom: 4px; }
+    .corridor-currency { font-size: 12px; color: var(--text-muted); letter-spacing: 1.5px; text-transform: uppercase; margin-bottom: 18px; }
+    .corridor-example {
+      background: rgba(10, 8, 7, 0.55);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 14px 14px;
+      margin-top: auto;
+      font-size: 13px;
+      color: var(--text-secondary);
+    }
+    .corridor-example .arrow { color: var(--gold); font-weight: 700; margin: 0 6px; }
+    .corridor-example .receive { color: var(--gold-cream); font-weight: 700; }
+    .corridor-fee {
+      margin-top: 10px;
+      font-size: 11px; color: var(--text-muted);
+    }
+    .corridor-fee strong { color: var(--gold); font-weight: 700; }
+
     /* PRICING */
     .pricing-grid {
       display: grid;
@@ -487,6 +554,8 @@
       </div>
       <div class="nav-links">
         <a href="#features">Features</a>
+        <a href="#corridors">Send Money</a>
+        <a href="#features">Features</a>
         <a href="#pricing">Pricing</a>
         <a href="#security">Security</a>
         <a class="btn btn-primary" href="https://app.phoenix-atlas.com">Launch App →</a>
@@ -497,20 +566,94 @@
   <!-- HERO -->
   <section class="hero">
     <div class="container">
-      <div class="eyebrow">A PhoenixAtlas Product</div>
-      <h1>The wallet you <span class="gold-text">actually</span> own.</h1>
-      <p class="hero-sub">Self-custody crypto with built-in end-to-end encrypted chat, video calls, and multi-signature security. Your keys. Your conversations. Your sovereignty.</p>
+      <div class="eyebrow">Cross-border remittance · Six chains · Eight corridors</div>
+      <h1>Send £50 to Kenya in <span class="gold-text">5 seconds</span>. Fees from £0.50.</h1>
+      <p class="hero-sub">Vaulted turns self-custody crypto into a fiat-first remittance app. Pick a country, enter pounds, we auto-pick the cheapest chain (XLM · XRP · USDC on Polygon/Base/Arbitrum). No middlemen. No exit fees. Your keys throughout.</p>
       <div class="hero-cta-row">
-        <a class="btn btn-primary btn-large" href="https://app.phoenix-atlas.com">Launch Vaulted →</a>
-        <a class="btn btn-ghost btn-large" href="#features">Explore features</a>
+        <a class="btn btn-primary btn-large" href="https://app.phoenix-atlas.com">Send money now →</a>
+        <a class="btn btn-ghost btn-large" href="#corridors">See corridors</a>
       </div>
       <div class="hero-chips">
-        <div class="chip"><span class="chip-dot"></span>Bitcoin</div>
-        <div class="chip"><span class="chip-dot"></span>Ethereum</div>
-        <div class="chip"><span class="chip-dot"></span>USDC</div>
-        <div class="chip"><span class="chip-dot"></span>Solana</div>
-        <div class="chip"><span class="chip-dot"></span>Multi-signature</div>
+        <div class="chip">🇰🇪 Kenya · KES</div>
+        <div class="chip">🇳🇬 Nigeria · NGN</div>
+        <div class="chip">🇮🇳 India · INR</div>
+        <div class="chip">🇵🇭 Philippines · PHP</div>
+        <div class="chip">🇸🇳 Senegal · XOF</div>
+        <div class="chip">🇬🇭 Ghana · GHS</div>
+        <div class="chip">🇲🇽 Mexico · MXN</div>
       </div>
+    </div>
+  </section>
+
+  <!-- CORRIDORS -->
+  <section id="corridors" style="background: var(--bg-elevated);">
+    <div class="container">
+      <div class="corridors-hero">
+        <div class="section-eyebrow">Live corridors</div>
+        <div class="corridor-headline">Send money to <span class="italic">eight countries</span> in seconds.</div>
+        <p class="section-sub">Fiat-first UX. Enter pounds, dollars or euros — recipient gets their local currency. Vaulted auto-picks the cheapest chain (XLM, XRP, or USDC on Polygon / Base / Arbitrum) so you never pay Ethereum L1 gas.</p>
+      </div>
+      <div class="corridors-grid">
+        <a class="corridor-card" href="https://app.phoenix-atlas.com">
+          <div class="corridor-top"><span class="corridor-flag">🇰🇪</span><span class="corridor-eta">~30 sec</span></div>
+          <div class="corridor-country">Kenya</div>
+          <div class="corridor-currency">KES · via M-Pesa (Phase C)</div>
+          <div class="corridor-example">£50 <span class="arrow">→</span> <span class="receive">~8,631 KES</span></div>
+          <div class="corridor-fee">Fee <strong>£0.75</strong> · Free tier: 3 sends / month</div>
+        </a>
+        <a class="corridor-card" href="https://app.phoenix-atlas.com">
+          <div class="corridor-top"><span class="corridor-flag">🇳🇬</span><span class="corridor-eta">~1 min</span></div>
+          <div class="corridor-country">Nigeria</div>
+          <div class="corridor-currency">NGN · Bank transfer (Phase C)</div>
+          <div class="corridor-example">£50 <span class="arrow">→</span> <span class="receive">~104,912 NGN</span></div>
+          <div class="corridor-fee">Fee <strong>£0.75</strong> · Free tier: 3 sends / month</div>
+        </a>
+        <a class="corridor-card" href="https://app.phoenix-atlas.com">
+          <div class="corridor-top"><span class="corridor-flag">🇮🇳</span><span class="corridor-eta">~1 min</span></div>
+          <div class="corridor-country">India</div>
+          <div class="corridor-currency">INR · UPI / bank (Phase C)</div>
+          <div class="corridor-example">£50 <span class="arrow">→</span> <span class="receive">~5,538 INR</span></div>
+          <div class="corridor-fee">Fee <strong>£0.75</strong> · Free tier: 3 sends / month</div>
+        </a>
+        <a class="corridor-card" href="https://app.phoenix-atlas.com">
+          <div class="corridor-top"><span class="corridor-flag">🇵🇭</span><span class="corridor-eta">~1 min</span></div>
+          <div class="corridor-country">Philippines</div>
+          <div class="corridor-currency">PHP · GCash / bank (Phase C)</div>
+          <div class="corridor-example">£50 <span class="arrow">→</span> <span class="receive">~3,884 PHP</span></div>
+          <div class="corridor-fee">Fee <strong>£0.75</strong> · Free tier: 3 sends / month</div>
+        </a>
+        <a class="corridor-card" href="https://app.phoenix-atlas.com">
+          <div class="corridor-top"><span class="corridor-flag">🇸🇳</span><span class="corridor-eta">~30 sec</span></div>
+          <div class="corridor-country">Senegal</div>
+          <div class="corridor-currency">XOF · Wave / Orange Money</div>
+          <div class="corridor-example">£50 <span class="arrow">→</span> <span class="receive">~40,158 XOF</span></div>
+          <div class="corridor-fee">Fee <strong>£0.75</strong> · Free tier: 3 sends / month</div>
+        </a>
+        <a class="corridor-card" href="https://app.phoenix-atlas.com">
+          <div class="corridor-top"><span class="corridor-flag">🇨🇮</span><span class="corridor-eta">~30 sec</span></div>
+          <div class="corridor-country">Côte d'Ivoire</div>
+          <div class="corridor-currency">XOF · Wave / Orange Money</div>
+          <div class="corridor-example">£50 <span class="arrow">→</span> <span class="receive">~40,158 XOF</span></div>
+          <div class="corridor-fee">Fee <strong>£0.75</strong> · Free tier: 3 sends / month</div>
+        </a>
+        <a class="corridor-card" href="https://app.phoenix-atlas.com">
+          <div class="corridor-top"><span class="corridor-flag">🇬🇭</span><span class="corridor-eta">~30 sec</span></div>
+          <div class="corridor-country">Ghana</div>
+          <div class="corridor-currency">GHS · MoMo (Phase C)</div>
+          <div class="corridor-example">£50 <span class="arrow">→</span> <span class="receive">~1,008 GHS</span></div>
+          <div class="corridor-fee">Fee <strong>£0.75</strong> · Free tier: 3 sends / month</div>
+        </a>
+        <a class="corridor-card" href="https://app.phoenix-atlas.com">
+          <div class="corridor-top"><span class="corridor-flag">🇲🇽</span><span class="corridor-eta">~1 min</span></div>
+          <div class="corridor-country">Mexico</div>
+          <div class="corridor-currency">MXN · SPEI / bank (Phase C)</div>
+          <div class="corridor-example">£50 <span class="arrow">→</span> <span class="receive">~1,254 MXN</span></div>
+          <div class="corridor-fee">Fee <strong>£0.75</strong> · Free tier: 3 sends / month</div>
+        </a>
+      </div>
+      <p style="text-align:center; color: var(--text-muted); font-size: 12px; margin-top: 40px; max-width: 780px; margin-left: auto; margin-right: auto;">
+        Amounts shown are live FX examples for a £50 send. Rates refresh every 6 hours from open exchange rate feeds. Fees shown are the Vaulted service fee at £50; Vault Pro cuts that by 50%. Phase C off-ramp partners (M-Pesa, MoMo, Wave, UPI) roll out through 2026 — during Phase B the recipient receives crypto to their own wallet.
+      </p>
     </div>
   </section>
 
@@ -519,39 +662,39 @@
     <div class="container">
       <div class="section-head">
         <div class="section-eyebrow">Features</div>
-        <h2 class="section-title">Built for sovereignty.</h2>
-        <p class="section-sub">Vaulted unifies the tools you actually need — wallet, chat, calls, and security — into one private app. No middlemen. No data harvesting.</p>
+        <h2 class="section-title">Remittance without the middlemen.</h2>
+        <p class="section-sub">Vaulted unifies remittance, self-custody, and encrypted communication in one app. No middlemen. No exit fees. No data harvesting.</p>
       </div>
       <div class="features-grid">
         <div class="feature-card">
+          <div class="feature-icon">🌍</div>
+          <div class="feature-title">Cross-border remittance</div>
+          <p class="feature-desc">Send GBP, USD, or EUR to 8 countries. Vaulted quotes live FX and auto-picks the cheapest chain (XLM · XRP · USDC L2). Fees from £0.50.</p>
+        </div>
+        <div class="feature-card">
           <div class="feature-icon">🔑</div>
-          <div class="feature-title">True Self-Custody</div>
-          <p class="feature-desc">Your private keys are generated on-device and never leave your control. We can't access your wallet — even if we wanted to.</p>
+          <div class="feature-title">True self-custody</div>
+          <p class="feature-desc">Private keys are generated on-device and never leave your control. Six chains: BTC, ETH, USDC (Ethereum + Polygon + Base + Arbitrum), SOL, XLM, XRP.</p>
         </div>
         <div class="feature-card">
           <div class="feature-icon">🔒</div>
-          <div class="feature-title">End-to-End Encrypted Chat</div>
-          <p class="feature-desc">Conversations are encrypted with TweetNaCl on your device. Even our servers see only ciphertext. Group chats included.</p>
+          <div class="feature-title">End-to-end encrypted chat</div>
+          <p class="feature-desc">Conversations are encrypted with TweetNaCl on your device. Even our servers see only ciphertext. Group chats included on Vault Pro.</p>
         </div>
         <div class="feature-card">
           <div class="feature-icon">🎥</div>
-          <div class="feature-title">Secure Video Calls</div>
-          <p class="feature-desc">WebRTC-powered calls with end-to-end media encryption. Talk freely, with no advertising business model behind your camera.</p>
+          <div class="feature-title">Secure video calls</div>
+          <p class="feature-desc">WebRTC-powered calls with end-to-end media encryption. Talk to family in the corridor country before you send.</p>
         </div>
         <div class="feature-card">
           <div class="feature-icon">✍</div>
-          <div class="feature-title">Multi-Signature Wallets</div>
+          <div class="feature-title">Multi-signature wallets</div>
           <p class="feature-desc">Require co-signer approval for large transactions. Add a trusted partner, accountant, or yourself on a second device.</p>
         </div>
         <div class="feature-card">
           <div class="feature-icon">👤</div>
-          <div class="feature-title">Biometric Authentication</div>
-          <p class="feature-desc">Face ID or fingerprint locks the app on every launch. Your keys stay encrypted at rest, unlocked only by you.</p>
-        </div>
-        <div class="feature-card">
-          <div class="feature-icon">📊</div>
-          <div class="feature-title">Tax-Ready Exports</div>
-          <p class="feature-desc">Download CSV transaction histories any time. Hand them to your accountant — no upselling, no extra fees.</p>
+          <div class="feature-title">Biometric authentication</div>
+          <p class="feature-desc">Face ID or fingerprint locks every send. Your keys stay encrypted at rest, unlocked only by you.</p>
         </div>
       </div>
     </div>
@@ -572,13 +715,13 @@
         </div>
         <div class="step">
           <div class="step-number">02</div>
-          <div class="step-title">Receive & send</div>
-          <p class="step-desc">Top up with Bitcoin, Ethereum, USDC, or Solana. Send to anyone, anywhere. Network fees only.</p>
+          <div class="step-title">Top up any chain</div>
+          <p class="step-desc">Receive BTC, ETH, USDC (Ethereum · Polygon · Base · Arbitrum), SOL, XLM, or XRP. One 0x address covers every EVM chain.</p>
         </div>
         <div class="step">
           <div class="step-number">03</div>
-          <div class="step-title">Chat & call privately</div>
-          <p class="step-desc">Invite friends, send crypto inside chat, hop on encrypted video calls. All from one app.</p>
+          <div class="step-title">Send money in seconds</div>
+          <p class="step-desc">Pick a country → enter pounds → confirm. Vaulted auto-picks the cheapest chain and settles in ~5-30 seconds. Fees from £0.50.</p>
         </div>
       </div>
     </div>
@@ -590,7 +733,7 @@
       <div class="section-head">
         <div class="section-eyebrow">Pricing</div>
         <h2 class="section-title">Simple. Honest.</h2>
-        <p class="section-sub">Use Vaulted free forever. Unlock Pro when you need multi-signature wallets, reduced fees, and group chat features.</p>
+        <p class="section-sub">Send money worldwide on the free tier. Upgrade to Vault Pro when you need unlimited sends, halved fees, multi-sig wallets, and group chat.</p>
       </div>
       <div class="pricing-grid">
         <div class="pricing-card">
@@ -600,7 +743,9 @@
             <span class="period"> / forever</span>
           </div>
           <ul class="pricing-features">
-            <li>Self-custody wallet (BTC, ETH, USDC, SOL)</li>
+            <li>Self-custody wallet (6 chains + 4 EVM L2s)</li>
+            <li>3 cross-border sends / month</li>
+            <li>Service fee: 1.5% (min £0.50, max £9.99)</li>
             <li>End-to-end encrypted 1:1 chat</li>
             <li>Video calls</li>
             <li>Biometric authentication</li>
@@ -609,7 +754,7 @@
           <a class="btn btn-ghost pricing-cta" href="https://app.phoenix-atlas.com">Start free</a>
         </div>
         <div class="pricing-card featured">
-          <div class="pricing-badge">⭐ Popular</div>
+          <div class="pricing-badge">⭐ Best value</div>
           <div class="pricing-tier">Vault Pro</div>
           <div class="pricing-price">
             <span class="amount">£9.99</span>
@@ -617,8 +762,9 @@
           </div>
           <ul class="pricing-features">
             <li>Everything in Free</li>
+            <li><strong style="color:var(--gold-cream)">Unlimited cross-border sends</strong></li>
+            <li><strong style="color:var(--gold-cream)">50% off every service fee</strong></li>
             <li>Multi-signature wallets (2-of-2)</li>
-            <li>50% lower network fees</li>
             <li>Group chats (up to 12 members)</li>
             <li>CSV tax exports</li>
             <li>Priority video call support</li>
@@ -627,6 +773,9 @@
           <a class="btn btn-primary pricing-cta" href="https://app.phoenix-atlas.com">Upgrade to Pro</a>
         </div>
       </div>
+      <p style="text-align:center; color: var(--text-muted); font-size: 12px; margin-top: 24px;">
+        Break-even in ~13 sends per month. Cancel anytime from your Stripe portal.
+      </p>
     </div>
   </section>
 
@@ -655,8 +804,8 @@
   <!-- CTA -->
   <section class="cta-section">
     <div class="container">
-      <h2>Take back your <span class="italic">sovereignty</span>.</h2>
-      <p>Open Vaulted, generate your keys, and start sending crypto + encrypted messages in less than 60 seconds. No credit card required.</p>
+      <h2>Send money the <span class="italic">smart</span> way.</h2>
+      <p>Open Vaulted, generate your keys, and send your first cross-border transfer in under 60 seconds. No credit card. No middlemen. Your money, your keys.</p>
       <a class="btn btn-primary btn-large" href="https://app.phoenix-atlas.com">Launch Vaulted →</a>
     </div>
   </section>
@@ -673,6 +822,7 @@
         <div class="footer-col">
           <h4>Product</h4>
           <ul>
+            <li><a href="#corridors">Send Money</a></li>
             <li><a href="#features">Features</a></li>
             <li><a href="#pricing">Pricing</a></li>
             <li><a href="#security">Security</a></li>
@@ -691,10 +841,12 @@
         <div class="footer-col">
           <h4>Networks</h4>
           <ul>
-            <li><a href="#">Bitcoin</a></li>
-            <li><a href="#">Ethereum</a></li>
-            <li><a href="#">USDC</a></li>
-            <li><a href="#">Solana</a></li>
+            <li>Bitcoin</li>
+            <li>Ethereum · Polygon · Base · Arbitrum</li>
+            <li>USDC (multi-chain)</li>
+            <li>Solana</li>
+            <li>Stellar (XLM)</li>
+            <li>XRP Ledger</li>
           </ul>
         </div>
       </div>
