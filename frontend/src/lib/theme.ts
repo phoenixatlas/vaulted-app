@@ -46,6 +46,8 @@ export const ASSET_ICON_COLORS: Record<string, string> = {
   ETH: "#C9A35B", // tint ETH with brand gold for consistency
   USDC: "#2775CA",
   SOL: "#14F195",
+  XLM: "#08B5E5", // Stellar electric blue (official brand)
+  XRP: "#23292F", // Ripple charcoal (official brand)
 };
 
 // Brand image paths (for <Image source={require(...)} />)

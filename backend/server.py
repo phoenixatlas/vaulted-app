@@ -26,13 +26,16 @@ from multichain import (
     fetch_sol_balance_lamports,
     fetch_usdc_balance_micro,
     fetch_xlm_balance_stroops,
+    fetch_xrp_balance_drops,
     encode_usdc_transfer,
     explorer_url_btc,
     explorer_url_sol,
     explorer_url_xlm,
+    explorer_url_xrp,
     btc_send,
     sol_send,
     xlm_send,
+    xrp_send,
     USDC_CONTRACT,
     BTC_TESTNET,
     USE_MAINNET,
@@ -252,9 +255,10 @@ DEFAULT_ASSETS = [
     {"symbol": "USDC", "name": "USD Coin", "price_usd": 1.00, "icon": "usdc"},
     {"symbol": "SOL", "name": "Solana", "price_usd": 158.22, "icon": "solana"},
     {"symbol": "XLM", "name": "Stellar Lumens", "price_usd": 0.12, "icon": "stellar"},
+    {"symbol": "XRP", "name": "XRP", "price_usd": 0.52, "icon": "ripple"},
 ]
 
-SEED_BALANCES = {"BTC": 0, "ETH": 0, "USDC": 0, "SOL": 0, "XLM": 0}
+SEED_BALANCES = {"BTC": 0, "ETH": 0, "USDC": 0, "SOL": 0, "XLM": 0, "XRP": 0}
 
 SEED_CONTACTS = [
     {"name": "Maya Chen", "email": "maya@vaulted.app", "priority": False,
@@ -454,17 +458,19 @@ async def wallet_assets(user=Depends(get_current_user)):
             logger.warning(f"eth balance fetch failed: {e}")
     eth_amount = eth_wei / 1e18
 
-    # Ensure BTC + SOL + XLM addresses exist (derived from the user's mnemonic).
+    # Ensure BTC + SOL + XLM + XRP addresses exist (derived from the user's mnemonic).
     multichain_addrs = await _ensure_multichain_addresses(user)
     btc_addr = multichain_addrs.get("btc")
     sol_addr = multichain_addrs.get("sol")
     xlm_addr = multichain_addrs.get("xlm")
+    xrp_addr = multichain_addrs.get("xrp")
 
     # Live balances on the real testnets
     btc_amount = 0.0
     sol_amount = 0.0
     usdc_amount = 0.0
     xlm_amount = 0.0
+    xrp_amount = 0.0
     try:
         if btc_addr:
             btc_amount = (await fetch_btc_balance_sats(btc_addr)) / 1e8
@@ -485,16 +491,22 @@ async def wallet_assets(user=Depends(get_current_user)):
             xlm_amount = (await fetch_xlm_balance_stroops(xlm_addr)) / 1e7
     except Exception as e:
         logger.warning(f"xlm balance fetch failed: {e}")
+    try:
+        if xrp_addr:
+            xrp_amount = (await fetch_xrp_balance_drops(xrp_addr)) / 1e6
+    except Exception as e:
+        logger.warning(f"xrp balance fetch failed: {e}")
 
-    on_chain_amount = {"ETH": eth_amount, "BTC": btc_amount, "USDC": usdc_amount, "SOL": sol_amount, "XLM": xlm_amount}
+    on_chain_amount = {"ETH": eth_amount, "BTC": btc_amount, "USDC": usdc_amount, "SOL": sol_amount, "XLM": xlm_amount, "XRP": xrp_amount}
     network_for = {
         "ETH": "Mainnet" if USE_MAINNET else "Sepolia",
         "USDC": "Mainnet" if USE_MAINNET else "Sepolia",
         "BTC": "Mainnet" if not BTC_TESTNET else "Testnet3",
         "SOL": "Mainnet" if USE_MAINNET else "Devnet",
         "XLM": "Mainnet" if USE_MAINNET else "Testnet",
+        "XRP": "Mainnet" if USE_MAINNET else "Testnet",
     }
-    address_for = {"ETH": addr, "USDC": addr, "BTC": btc_addr, "SOL": sol_addr, "XLM": xlm_addr}
+    address_for = {"ETH": addr, "USDC": addr, "BTC": btc_addr, "SOL": sol_addr, "XLM": xlm_addr, "XRP": xrp_addr}
 
     total_usd = 0.0
     out = []
@@ -531,6 +543,7 @@ async def wallet_assets(user=Depends(get_current_user)):
         "btc_address": btc_addr,
         "sol_address": sol_addr,
         "xlm_address": xlm_addr,
+        "xrp_address": xrp_addr,
         "assets": out,
         "prices_fetched_at": market.get("fetched_at"),
     }
@@ -560,17 +573,23 @@ async def eth_info(user=Depends(get_current_user)):
     }
 
 
-# ---------- Multichain (BTC + SOL + USDC) ------------------------------------
+# ---------- Multichain (BTC + SOL + XLM + XRP) ------------------------------
 async def _ensure_multichain_addresses(user: dict) -> dict:
-    """Derive BTC + SOL + XLM addresses from the user's mnemonic if not yet stored.
+    """Derive BTC + SOL + XLM + XRP addresses from the user's mnemonic if not yet stored.
     For legacy accounts created before BIP-39 onboarding, a fresh mnemonic is
-    generated transparently — the old ETH key is preserved untouched (BTC/SOL/XLM
+    generated transparently — the old ETH key is preserved untouched (multichain
     derivation just needs *a* mnemonic, not the one that birthed the ETH key)."""
-    if user.get("btc_address") and user.get("sol_address") and user.get("xlm_address"):
+    if (
+        user.get("btc_address")
+        and user.get("sol_address")
+        and user.get("xlm_address")
+        and user.get("xrp_address")
+    ):
         return {
             "btc": user["btc_address"],
             "sol": user["sol_address"],
             "xlm": user["xlm_address"],
+            "xrp": user["xrp_address"],
         }
     mnemonic = user.get("eth_mnemonic") or user.get("mnemonic")
     update: dict = {}
@@ -580,20 +599,26 @@ async def _ensure_multichain_addresses(user: dict) -> dict:
             _, mnemonic = Account.create_with_mnemonic()
         except Exception as e:
             logger.warning(f"legacy mnemonic backfill failed: {e}")
-            return {"btc": None, "sol": None, "xlm": None}
+            return {"btc": None, "sol": None, "xlm": None, "xrp": None}
         update["eth_mnemonic"] = mnemonic
         update["mnemonic_origin"] = "multichain_only"
     try:
         addrs = derive_addresses(mnemonic)
     except Exception as e:
         logger.warning(f"multichain derivation failed: {e}")
-        return {"btc": None, "sol": None, "xlm": None}
+        return {"btc": None, "sol": None, "xlm": None, "xrp": None}
     update["btc_address"] = addrs["btc"]
     update["sol_address"] = addrs["sol"]
     update["xlm_address"] = addrs["xlm"]
+    update["xrp_address"] = addrs["xrp"]
     await db.users.update_one({"id": user["id"]}, {"$set": update})
     user.update(update)
-    return {"btc": addrs["btc"], "sol": addrs["sol"], "xlm": addrs["xlm"]}
+    return {
+        "btc": addrs["btc"],
+        "sol": addrs["sol"],
+        "xlm": addrs["xlm"],
+        "xrp": addrs["xrp"],
+    }
 
 
 @api.get("/wallet/btc/info")
@@ -959,6 +984,105 @@ async def xlm_send_route(body: SendXlmIn, user=Depends(get_current_user)):
         "type": "send",
         "category": "Crypto · XLM",
         "asset": "XLM",
+        "amount": body.amount,
+        "fiat_value": fiat_value,
+        "counterparty": to,
+        "memo": body.memo,
+        "network": "Mainnet" if USE_MAINNET else "Testnet",
+        "tx_hash": result["tx_hash"],
+        "explorer_url": result["explorer_url"],
+        "status": "pending",
+        "service_fee_usd": 0.0,
+        "created_at": iso(now_utc()),
+    }
+    await db.transactions.insert_one(record)
+    record.pop("_id", None)
+    return record
+
+
+async def _xrp_to_usd(amount_xrp: float) -> float:
+    try:
+        market = await _refresh_market_prices()
+        price = next((a.get("price_usd", 0) for a in market.get("assets", []) if a.get("symbol") == "XRP"), 0)
+        return round(amount_xrp * price, 2)
+    except Exception:
+        return 0.0
+
+
+@api.get("/wallet/xrp/info")
+async def xrp_info(user=Depends(get_current_user)):
+    addrs = await _ensure_multichain_addresses(user)
+    a = addrs["xrp"]
+    if not a:
+        raise HTTPException(status_code=400, detail="No XRP address (mnemonic missing)")
+    try:
+        drops = await fetch_xrp_balance_drops(a)
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"XRPL RPC error: {e}")
+    return {
+        "address": a,
+        "balance_drops": drops,
+        "balance_xrp": drops / 1e6,
+        "network": "Mainnet" if USE_MAINNET else "Testnet",
+        "explorer": explorer_url_xrp(a),
+        # XRPL testnet faucet — POST endpoint that funds new accounts with 100 XRP
+        "faucet": "https://faucet.altnet.rippletest.net/accounts" if not USE_MAINNET else None,
+        "send_supported": True,
+        # 10 XRP base reserve on mainnet, 1 XRP on testnet (per validated ledger)
+        "min_reserve_xrp": 10.0 if USE_MAINNET else 1.0,
+    }
+
+
+class SendXrpIn(BaseModel):
+    to_address: str
+    amount: float = Field(gt=0)
+    memo: Optional[str] = None
+
+
+@api.post("/wallet/xrp/send")
+async def xrp_send_route(body: SendXrpIn, user=Depends(get_current_user)):
+    """Broadcast a native XRP payment via the XRPL JSON-RPC. Signs via xrpl-py (secp256k1)."""
+    await _ensure_multichain_addresses(user)
+    mnemonic = user.get("eth_mnemonic") or user.get("mnemonic")
+    if not mnemonic:
+        raise HTTPException(status_code=400, detail="No mnemonic on file")
+    to = body.to_address.strip()
+    if not to.startswith("r") or not (25 <= len(to) <= 40):
+        raise HTTPException(status_code=400, detail="Invalid XRP (r...) address")
+
+    # Pre-flight balance check — XRPL accounts must retain a base reserve
+    addr = user.get("xrp_address")
+    reserve_xrp = 10.0 if USE_MAINNET else 1.0
+    if addr:
+        try:
+            drops = await fetch_xrp_balance_drops(addr)
+        except Exception:
+            drops = None
+        if drops is not None:
+            have_xrp = drops / 1e6
+            if have_xrp < body.amount + reserve_xrp + 0.001:
+                raise HTTPException(
+                    status_code=400,
+                    detail=(
+                        f"Insufficient XRP (need {body.amount}+{reserve_xrp} reserve, have {have_xrp:.6f}). "
+                        f"XRPL requires a {reserve_xrp} XRP minimum reserve to keep accounts active."
+                    ),
+                )
+
+    try:
+        result = await xrp_send(mnemonic, to, body.amount, memo=body.memo)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"XRP submission failed: {str(e)[:200]}") from e
+
+    fiat_value = await _xrp_to_usd(body.amount)
+    record = {
+        "id": str(uuid.uuid4()),
+        "user_id": user["id"],
+        "type": "send",
+        "category": "Crypto · XRP",
+        "asset": "XRP",
         "amount": body.amount,
         "fiat_value": fiat_value,
         "counterparty": to,

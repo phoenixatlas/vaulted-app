@@ -41,13 +41,14 @@ export default function SendCrypto() {
   const isBtc = sel === "BTC";
   const isSol = sel === "SOL";
   const isXlm = sel === "XLM";
-  const isOnChain = isEth || isUsdc || isBtc || isSol || isXlm;
+  const isXrp = sel === "XRP";
+  const isOnChain = isEth || isUsdc || isBtc || isSol || isXlm || isXrp;
   const sendDisabled = !isOnChain;
   const isPro = !!user?.is_pro;
   const baseServiceFee = 0.10;
   const serviceFee = isPro ? baseServiceFee * 0.5 : baseServiceFee;
-  const networkLabel = isEth || isUsdc ? "Sepolia" : isBtc ? "Testnet3" : isSol ? "Devnet" : isXlm ? "Testnet" : "";
-  const addrPlaceholder = isEth || isUsdc ? "0x..." : isBtc ? "tb1q... / m... / n..." : isSol ? "Base58 address" : isXlm ? "G... (56 chars)" : "address";
+  const networkLabel = isEth || isUsdc ? "Sepolia" : isBtc ? "Testnet3" : isSol ? "Devnet" : isXlm ? "Testnet" : isXrp ? "Testnet" : "";
+  const addrPlaceholder = isEth || isUsdc ? "0x..." : isBtc ? "tb1q... / m... / n..." : isSol ? "Base58 address" : isXlm ? "G... (56 chars)" : isXrp ? "r... (25-35 chars)" : "address";
 
   const submit = async () => {
     setErr(null);
@@ -93,6 +94,11 @@ export default function SendCrypto() {
         });
       } else if (isXlm) {
         tx = await api("/wallet/xlm/send", {
+          method: "POST",
+          body: { to_address: addr.trim(), amount: amt, memo: memo.trim() || null },
+        });
+      } else if (isXrp) {
+        tx = await api("/wallet/xrp/send", {
           method: "POST",
           body: { to_address: addr.trim(), amount: amt, memo: memo.trim() || null },
         });
@@ -151,14 +157,20 @@ export default function SendCrypto() {
               <TextInput testID="send-memo" value={memo} onChangeText={setMemo} placeholder="optional" placeholderTextColor={colors.onSurfaceTertiary} style={s.input} />
             </>
           )}
+          {(isXlm || isXrp) && (
+            <>
+              <Text style={s.label}>Memo (optional)</Text>
+              <TextInput testID="send-memo" value={memo} onChangeText={setMemo} placeholder={isXlm ? "Text memo (max 28 chars)" : "Memo (attached to the tx)"} placeholderTextColor={colors.onSurfaceTertiary} style={s.input} />
+            </>
+          )}
 
           <View style={s.feeCard} testID="fee-summary">
             <View style={s.feeRow}>
               <Text style={s.feeLabel}>
-                Network fee{isEth && gasGwei ? ` (~${gasGwei.toFixed(2)} gwei)` : isBtc ? " (miner fee)" : isSol ? " (~0.000005 SOL)" : isXlm ? " (~100 stroops)" : ""}
+                Network fee{isEth && gasGwei ? ` (~${gasGwei.toFixed(2)} gwei)` : isBtc ? " (miner fee)" : isSol ? " (~0.000005 SOL)" : isXlm ? " (~100 stroops)" : isXrp ? " (~10 drops)" : ""}
               </Text>
               <Text style={s.feeValue}>
-                {isEth ? "~0.00002 ETH" : isBtc ? "auto" : isSol ? "~5000 lamports" : isXlm ? "~0.00001 XLM" : "$0.00"}
+                {isEth ? "~0.00002 ETH" : isBtc ? "auto" : isSol ? "~5000 lamports" : isXlm ? "~0.00001 XLM" : isXrp ? "~0.00001 XRP" : "$0.00"}
               </Text>
             </View>
             <View style={s.feeRow}>
@@ -191,7 +203,7 @@ export default function SendCrypto() {
               : <Text style={s.ctaText}>
                   {sendDisabled
                     ? `${sel} send coming soon`
-                    : `${t("confirm")} ${isEth ? "on Sepolia" : isUsdc ? "USDC on Sepolia" : isBtc ? "on BTC Testnet" : isSol ? "on SOL Devnet" : isXlm ? "on Stellar Testnet" : ""}`.trim()}
+                    : `${t("confirm")} ${isEth ? "on Sepolia" : isUsdc ? "USDC on Sepolia" : isBtc ? "on BTC Testnet" : isSol ? "on SOL Devnet" : isXlm ? "on Stellar Testnet" : isXrp ? "on XRPL Testnet" : ""}`.trim()}
                 </Text>}
           </Pressable>
 
@@ -217,6 +229,12 @@ export default function SendCrypto() {
             <Pressable testID="faucet-link-xlm" onPress={() => Linking.openURL(`https://friendbot.stellar.org/?addr=${encodeURIComponent(selected.wallet_address || "")}`)} style={s.faucet}>
               <Ionicons name="water-outline" size={16} color={colors.brand} />
               <Text style={s.faucetText}>Need test XLM? Tap here (Friendbot funds you 10,000 XLM)</Text>
+            </Pressable>
+          )}
+          {isXrp && selected && (
+            <Pressable testID="faucet-link-xrp" onPress={() => Linking.openURL(`https://xrpl.org/xrp-testnet-faucet.html`)} style={s.faucet}>
+              <Ionicons name="water-outline" size={16} color={colors.brand} />
+              <Text style={s.faucetText}>Need test XRP? Open XRPL testnet faucet (100 XRP)</Text>
             </Pressable>
           )}
         </ScrollView>

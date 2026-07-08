@@ -60,6 +60,13 @@ XLM_NETWORK_PASSPHRASE = (
 )
 XLM_EXPLORER_BASE = "https://stellar.expert/explorer/public" if USE_MAINNET else "https://stellar.expert/explorer/testnet"
 
+# Ripple / XRPL — JSON-RPC endpoints + explorer.
+XRP_RPC_URL = os.environ.get(
+    "XRP_RPC_URL",
+    "https://s1.ripple.com:51234/" if USE_MAINNET else "https://s.altnet.rippletest.net:51234/",
+)
+XRP_EXPLORER_BASE = "https://livenet.xrpl.org" if USE_MAINNET else "https://testnet.xrpl.org"
+
 
 # ---------- Address derivation ----------------------------------------------
 def derive_addresses(mnemonic: str) -> dict:
@@ -83,10 +90,16 @@ def derive_addresses(mnemonic: str) -> dict:
         .Purpose().Coin().Account(0).Change(Bip44Changes.CHAIN_EXT).AddressIndex(0)
     )
 
+    xrp = (
+        Bip44.FromSeed(seed, Bip44Coins.RIPPLE)
+        .Purpose().Coin().Account(0).Change(Bip44Changes.CHAIN_EXT).AddressIndex(0)
+    )
+
     return {
         "btc": btc.PublicKey().ToAddress(),
         "sol": sol.PublicKey().ToAddress(),
         "xlm": xlm.PublicKey().ToAddress(),
+        "xrp": xrp.PublicKey().ToAddress(),
     }
 
 
@@ -349,14 +362,112 @@ async def xlm_send(mnemonic: str, to_address: str, amount_xlm: float, memo: Opti
     return {"tx_hash": tx_hash, "explorer_url": explorer_url_xlm(tx_hash, is_tx=True)}
 
 
+def explorer_url_xrp(address_or_tx: str, is_tx: bool = False) -> str:
+    kind = "transactions" if is_tx else "accounts"
+    return f"{XRP_EXPLORER_BASE}/{kind}/{address_or_tx}"
+
+
+# ---------- Ripple (XRP) ----------------------------------------------------
+def _xrp_wallet_from_mnemonic(mnemonic: str):
+    """Build an xrpl-py Wallet from the user's BIP-39 mnemonic (path m/44'/144'/0'/0/0)."""
+    from xrpl.wallet import Wallet
+    seed = Bip39SeedGenerator(mnemonic).Generate()
+    node = (
+        Bip44.FromSeed(seed, Bip44Coins.RIPPLE)
+        .Purpose().Coin().Account(0).Change(Bip44Changes.CHAIN_EXT).AddressIndex(0)
+    )
+    pub_hex = node.PublicKey().RawCompressed().ToBytes().hex().upper()
+    # xrpl-py requires secp256k1 private keys to be prefixed with a "00" type byte.
+    priv_hex = "00" + node.PrivateKey().Raw().ToBytes().hex().upper()
+    return Wallet(public_key=pub_hex, private_key=priv_hex)
+
+
+async def fetch_xrp_balance_drops(address: str) -> int:
+    """Return XRP balance in drops (1 XRP = 1_000_000 drops).
+    Returns 0 if the account isn't funded yet (XRP accounts need a 10 XRP
+    minimum reserve on mainnet, 1 XRP on testnet to activate)."""
+    if not (address and address.startswith("r") and 25 <= len(address) <= 40):
+        return 0
+    async with httpx.AsyncClient(timeout=10) as c:
+        r = await c.post(
+            XRP_RPC_URL,
+            json={
+                "method": "account_info",
+                "params": [{"account": address, "ledger_index": "validated", "strict": True}],
+            },
+        )
+        if r.status_code != 200:
+            return 0
+        data = (r.json() or {}).get("result") or {}
+        if data.get("status") == "error":
+            # Unfunded / not found
+            return 0
+        acct = data.get("account_data") or {}
+        try:
+            return int(acct.get("Balance", "0"))
+        except (TypeError, ValueError):
+            return 0
+
+
+async def xrp_send(mnemonic: str, to_address: str, amount_xrp: float, memo: Optional[str] = None) -> dict:
+    """Build, sign & submit a native XRP payment via the XRPL JSON-RPC (async)."""
+    from xrpl.asyncio.clients import AsyncJsonRpcClient
+    from xrpl.asyncio.transaction import autofill_and_sign, submit_and_wait
+    from xrpl.models.transactions import Payment, Memo as XrpMemo
+    from xrpl.utils import xrp_to_drops
+
+    if not to_address or not to_address.startswith("r") or not (25 <= len(to_address) <= 40):
+        raise ValueError("Invalid XRP (r...) address")
+    if amount_xrp <= 0:
+        raise ValueError("Amount must be positive")
+
+    wallet = _xrp_wallet_from_mnemonic(mnemonic)
+    client = AsyncJsonRpcClient(XRP_RPC_URL)
+
+    memos = None
+    if memo:
+        # XRPL memos are hex-encoded UTF-8
+        memo_hex = memo.encode("utf-8").hex().upper()
+        memos = [XrpMemo(memo_data=memo_hex)]
+
+    payment = Payment(
+        account=wallet.address,
+        destination=to_address,
+        amount=xrp_to_drops(amount_xrp),
+        memos=memos,
+    )
+
+    try:
+        signed_tx = await autofill_and_sign(payment, client, wallet)
+    except Exception as e:
+        raise RuntimeError(f"XRP tx build/sign failed: {str(e)[:200]}") from e
+
+    try:
+        response = await submit_and_wait(signed_tx, client, wallet)
+    except Exception as e:
+        raise RuntimeError(f"XRP submission failed: {str(e)[:200]}") from e
+
+    result = response.result if hasattr(response, "result") else response
+    tx_hash = result.get("hash") or (result.get("tx_json") or {}).get("hash")
+    engine_result = result.get("engine_result") or (result.get("meta") or {}).get("TransactionResult")
+    if engine_result and engine_result not in ("tesSUCCESS",):
+        raise RuntimeError(f"XRP tx not successful (engine_result={engine_result})")
+    if not tx_hash:
+        raise RuntimeError(f"XRP submission returned no hash: {result}")
+    return {"tx_hash": tx_hash, "explorer_url": explorer_url_xrp(tx_hash, is_tx=True)}
+
+
 __all__ = [
     "USE_MAINNET", "BTC_TESTNET", "USDC_CONTRACT",
     "ETH_RPC_URL", "SOL_RPC_URL", "BTC_API",
     "XLM_HORIZON_URL", "XLM_NETWORK_PASSPHRASE",
+    "XRP_RPC_URL",
     "derive_addresses",
     "fetch_btc_balance_sats", "fetch_sol_balance_lamports",
     "fetch_usdc_balance_micro", "fetch_xlm_balance_stroops",
+    "fetch_xrp_balance_drops",
     "encode_usdc_transfer",
     "explorer_url_btc", "explorer_url_sol", "explorer_url_xlm",
-    "btc_send", "sol_send", "xlm_send",
+    "explorer_url_xrp",
+    "btc_send", "sol_send", "xlm_send", "xrp_send",
 ]

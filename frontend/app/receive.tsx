@@ -11,7 +11,7 @@ import { api } from "@/src/lib/api";
 import { useI18n } from "@/src/lib/i18n";
 import { colors, spacing, radius, ASSET_ICON_COLORS } from "@/src/lib/theme";
 
-type Asset = "ETH" | "USDC" | "BTC" | "SOL" | "XLM";
+type Asset = "ETH" | "USDC" | "BTC" | "SOL" | "XLM" | "XRP";
 
 type WalletInfo = {
   address: string;
@@ -26,6 +26,7 @@ const CHAIN_LABEL: Record<Asset, string> = {
   BTC: "Bitcoin",
   SOL: "Solana",
   XLM: "Stellar",
+  XRP: "XRP Ledger",
 };
 const CHAIN_PATH: Record<Asset, string> = {
   ETH: "/wallet/eth/info",
@@ -33,6 +34,7 @@ const CHAIN_PATH: Record<Asset, string> = {
   BTC: "/wallet/btc/info",
   SOL: "/wallet/sol/info",
   XLM: "/wallet/xlm/info",
+  XRP: "/wallet/xrp/info",
 };
 const CHAIN_BADGE: Record<Asset, string> = {
   ETH: "ERC-20",
@@ -40,6 +42,7 @@ const CHAIN_BADGE: Record<Asset, string> = {
   BTC: "P2PKH",
   SOL: "ED25519",
   XLM: "ED25519",
+  XRP: "SECP256K1",
 };
 
 export default function Receive() {
@@ -99,8 +102,8 @@ export default function Receive() {
         <View style={{ width: 26 }} />
       </View>
 
-      <View style={s.chipRow}>
-        {(["ETH", "USDC", "BTC", "SOL"] as Asset[]).map((a) => (
+      <ScrollView horizontal showsHorizontalScrollIndicator={false} style={s.chipRow} contentContainerStyle={{ gap: spacing.sm, paddingHorizontal: spacing.xl }}>
+        {(["ETH", "USDC", "BTC", "SOL", "XLM", "XRP"] as Asset[]).map((a) => (
           <Pressable
             key={a}
             testID={`receive-asset-${a}`}
@@ -111,7 +114,7 @@ export default function Receive() {
             <Text style={[s.chipText, asset === a && { color: "#0F0B08" }]}>{a}</Text>
           </Pressable>
         ))}
-      </View>
+      </ScrollView>
 
       <ScrollView contentContainerStyle={s.body} keyboardShouldPersistTaps="handled">
         <View style={[s.chainBadge, { borderColor: accent }]}>
@@ -179,7 +182,7 @@ const s = StyleSheet.create({
   root: { flex: 1, backgroundColor: colors.surface },
   header: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", paddingHorizontal: spacing.xl, paddingTop: spacing.sm, paddingBottom: spacing.md },
   title: { fontSize: 17, fontWeight: "700", color: colors.onSurface, letterSpacing: -0.3 },
-  chipRow: { flexDirection: "row", gap: spacing.sm, paddingHorizontal: spacing.xl, paddingBottom: spacing.lg },
+  chipRow: { paddingBottom: spacing.lg, flexGrow: 0 },
   chip: { flexDirection: "row", alignItems: "center", gap: 6, paddingHorizontal: spacing.md, paddingVertical: 8, borderRadius: radius.pill, backgroundColor: colors.brandTertiary, borderWidth: 1, borderColor: "rgba(201,163,91,0.40)" },
   chipDot: { width: 7, height: 7, borderRadius: 4 },
   chipText: { fontSize: 12, fontWeight: "700", color: colors.brandDeep, letterSpacing: 0.5 },
