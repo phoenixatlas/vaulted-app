@@ -48,6 +48,18 @@ SOL_RPC_URL = os.environ.get(
 SOL_EXPLORER_BASE = "https://explorer.solana.com" if USE_MAINNET else "https://explorer.solana.com/?cluster=devnet"
 BTC_EXPLORER_BASE = "https://mempool.space" if USE_MAINNET else "https://mempool.space/testnet"
 
+# Stellar Horizon RPC (public server) + explorer.
+XLM_HORIZON_URL = os.environ.get(
+    "XLM_HORIZON_URL",
+    "https://horizon.stellar.org" if USE_MAINNET else "https://horizon-testnet.stellar.org",
+)
+XLM_NETWORK_PASSPHRASE = (
+    "Public Global Stellar Network ; September 2015"
+    if USE_MAINNET
+    else "Test SDF Network ; September 2015"
+)
+XLM_EXPLORER_BASE = "https://stellar.expert/explorer/public" if USE_MAINNET else "https://stellar.expert/explorer/testnet"
+
 
 # ---------- Address derivation ----------------------------------------------
 def derive_addresses(mnemonic: str) -> dict:
@@ -66,9 +78,15 @@ def derive_addresses(mnemonic: str) -> dict:
         .Purpose().Coin().Account(0).Change(Bip44Changes.CHAIN_EXT).AddressIndex(0)
     )
 
+    xlm = (
+        Bip44.FromSeed(seed, Bip44Coins.STELLAR)
+        .Purpose().Coin().Account(0).Change(Bip44Changes.CHAIN_EXT).AddressIndex(0)
+    )
+
     return {
         "btc": btc.PublicKey().ToAddress(),
         "sol": sol.PublicKey().ToAddress(),
+        "xlm": xlm.PublicKey().ToAddress(),
     }
 
 
@@ -238,11 +256,107 @@ def explorer_url_sol(address_or_tx: str, is_tx: bool = False) -> str:
     return f"https://explorer.solana.com/{kind}/{address_or_tx}?cluster=devnet"
 
 
+def explorer_url_xlm(address_or_tx: str, is_tx: bool = False) -> str:
+    kind = "tx" if is_tx else "account"
+    return f"{XLM_EXPLORER_BASE}/{kind}/{address_or_tx}"
+
+
+# ---------- Stellar (XLM) ---------------------------------------------------
+def _xlm_keypair_from_mnemonic(mnemonic: str):
+    """Derive a Stellar Keypair from the user's BIP-39 mnemonic (path m/44'/148'/0')."""
+    from stellar_sdk import Keypair
+    seed = Bip39SeedGenerator(mnemonic).Generate()
+    xlm = (
+        Bip44.FromSeed(seed, Bip44Coins.STELLAR)
+        .Purpose().Coin().Account(0).Change(Bip44Changes.CHAIN_EXT).AddressIndex(0)
+    )
+    # bip_utils gives us the raw ed25519 private key; feed it to stellar-sdk.
+    raw_priv = xlm.PrivateKey().Raw().ToBytes()
+    return Keypair.from_raw_ed25519_seed(raw_priv)
+
+
+async def fetch_xlm_balance_stroops(address: str) -> int:
+    """Return XLM balance in stroops (1 XLM = 10_000_000 stroops).
+    Returns 0 if account isn't funded yet (Stellar accounts need a ~1 XLM
+    minimum reserve to exist on-chain)."""
+    if not (address and address.startswith("G") and len(address) == 56):
+        return 0
+    async with httpx.AsyncClient(timeout=10) as c:
+        r = await c.get(f"{XLM_HORIZON_URL}/accounts/{address}")
+        if r.status_code == 404:
+            return 0  # Unfunded account
+        if r.status_code != 200:
+            return 0
+        data = r.json() or {}
+        for bal in data.get("balances", []) or []:
+            if bal.get("asset_type") == "native":
+                try:
+                    # Horizon returns e.g. "9.9999900" — convert XLM → stroops.
+                    return int(round(float(bal.get("balance", "0")) * 10_000_000))
+                except (TypeError, ValueError):
+                    return 0
+        return 0
+
+
+async def xlm_send(mnemonic: str, to_address: str, amount_xlm: float, memo: Optional[str] = None) -> dict:
+    """Build, sign & submit a native XLM payment via Stellar Horizon."""
+    from stellar_sdk import (
+        Server, TransactionBuilder, Asset, Network, Keypair, Memo,
+    )
+
+    if not to_address or not to_address.startswith("G") or len(to_address) != 56:
+        raise ValueError("Invalid Stellar (G...) address")
+    if amount_xlm <= 0:
+        raise ValueError("Amount must be positive")
+
+    kp = _xlm_keypair_from_mnemonic(mnemonic)
+    server = Server(horizon_url=XLM_HORIZON_URL)
+    try:
+        source_account = server.load_account(account_id=kp.public_key)
+    except Exception as e:
+        # Unfunded source account — Horizon returns 404
+        raise RuntimeError(
+            f"XLM account not funded yet. Send at least 1 XLM to {kp.public_key} first "
+            f"(Stellar requires a minimum reserve to activate the account)."
+        ) from e
+
+    builder = (
+        TransactionBuilder(
+            source_account=source_account,
+            network_passphrase=XLM_NETWORK_PASSPHRASE,
+            base_fee=100,  # 100 stroops (~0.00001 XLM) — well below any real fee cost
+        )
+        .add_time_bounds(0, 0)  # no time bounds
+        .append_payment_op(
+            destination=to_address,
+            asset=Asset.native(),
+            amount=f"{amount_xlm:.7f}",  # Stellar amounts have 7 decimals
+        )
+    )
+    if memo:
+        builder = builder.add_text_memo(memo[:28])  # Stellar text memo max 28 bytes
+    tx = builder.build()
+    tx.sign(kp)
+
+    try:
+        response = server.submit_transaction(tx)
+    except Exception as e:
+        raise RuntimeError(f"XLM submission failed: {str(e)[:200]}") from e
+
+    tx_hash = response.get("hash") if isinstance(response, dict) else getattr(response, "hash", None)
+    if not tx_hash:
+        raise RuntimeError(f"XLM submission returned no hash: {response}")
+    return {"tx_hash": tx_hash, "explorer_url": explorer_url_xlm(tx_hash, is_tx=True)}
+
+
 __all__ = [
     "USE_MAINNET", "BTC_TESTNET", "USDC_CONTRACT",
+    "ETH_RPC_URL", "SOL_RPC_URL", "BTC_API",
+    "XLM_HORIZON_URL", "XLM_NETWORK_PASSPHRASE",
     "derive_addresses",
-    "fetch_btc_balance_sats", "fetch_sol_balance_lamports", "fetch_usdc_balance_micro",
+    "fetch_btc_balance_sats", "fetch_sol_balance_lamports",
+    "fetch_usdc_balance_micro", "fetch_xlm_balance_stroops",
     "encode_usdc_transfer",
-    "explorer_url_btc", "explorer_url_sol",
-    "btc_send", "sol_send",
+    "explorer_url_btc", "explorer_url_sol", "explorer_url_xlm",
+    "btc_send", "sol_send", "xlm_send",
 ]

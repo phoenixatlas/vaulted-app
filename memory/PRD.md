@@ -20,8 +20,9 @@
 
 ## ✅ End-to-End Verified
 - [x] Account registration + JWT login on custom domain
-- [x] Multi-chain wallet (BTC Testnet3, ETH Sepolia, USDC Sepolia, SOL Devnet)
+- [x] Multi-chain wallet (BTC Testnet3, ETH Sepolia, USDC Sepolia, SOL Devnet, **XLM Testnet**)
 - [x] BTC + SOL Send wired & tested
+- [x] **XLM Send + Receive + Balance** (Stellar Testnet via Horizon; Mainnet-ready via env flag)
 - [x] CORS locked to custom + Vercel origins
 - [x] Always-on backend (Render Starter)
 - [x] **Stripe Live mode — real £9.99 subscription confirmed** (Customer → checkout → webhook → DB update → "Pro activated" success page)

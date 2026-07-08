@@ -40,13 +40,14 @@ export default function SendCrypto() {
   const isUsdc = sel === "USDC";
   const isBtc = sel === "BTC";
   const isSol = sel === "SOL";
-  const isOnChain = isEth || isUsdc || isBtc || isSol;
+  const isXlm = sel === "XLM";
+  const isOnChain = isEth || isUsdc || isBtc || isSol || isXlm;
   const sendDisabled = !isOnChain;
   const isPro = !!user?.is_pro;
   const baseServiceFee = 0.10;
   const serviceFee = isPro ? baseServiceFee * 0.5 : baseServiceFee;
-  const networkLabel = isEth || isUsdc ? "Sepolia" : isBtc ? "Testnet3" : isSol ? "Devnet" : "";
-  const addrPlaceholder = isEth || isUsdc ? "0x..." : isBtc ? "tb1q... / m... / n..." : isSol ? "Base58 address" : "address";
+  const networkLabel = isEth || isUsdc ? "Sepolia" : isBtc ? "Testnet3" : isSol ? "Devnet" : isXlm ? "Testnet" : "";
+  const addrPlaceholder = isEth || isUsdc ? "0x..." : isBtc ? "tb1q... / m... / n..." : isSol ? "Base58 address" : isXlm ? "G... (56 chars)" : "address";
 
   const submit = async () => {
     setErr(null);
@@ -89,6 +90,11 @@ export default function SendCrypto() {
         tx = await api("/wallet/sol/send", {
           method: "POST",
           body: { to_address: addr.trim(), amount: amt },
+        });
+      } else if (isXlm) {
+        tx = await api("/wallet/xlm/send", {
+          method: "POST",
+          body: { to_address: addr.trim(), amount: amt, memo: memo.trim() || null },
         });
       } else {
         tx = await api("/wallet/send", {
@@ -149,10 +155,10 @@ export default function SendCrypto() {
           <View style={s.feeCard} testID="fee-summary">
             <View style={s.feeRow}>
               <Text style={s.feeLabel}>
-                Network fee{isEth && gasGwei ? ` (~${gasGwei.toFixed(2)} gwei)` : isBtc ? " (miner fee)" : isSol ? " (~0.000005 SOL)" : ""}
+                Network fee{isEth && gasGwei ? ` (~${gasGwei.toFixed(2)} gwei)` : isBtc ? " (miner fee)" : isSol ? " (~0.000005 SOL)" : isXlm ? " (~100 stroops)" : ""}
               </Text>
               <Text style={s.feeValue}>
-                {isEth ? "~0.00002 ETH" : isBtc ? "auto" : isSol ? "~5000 lamports" : "$0.00"}
+                {isEth ? "~0.00002 ETH" : isBtc ? "auto" : isSol ? "~5000 lamports" : isXlm ? "~0.00001 XLM" : "$0.00"}
               </Text>
             </View>
             <View style={s.feeRow}>
@@ -185,7 +191,7 @@ export default function SendCrypto() {
               : <Text style={s.ctaText}>
                   {sendDisabled
                     ? `${sel} send coming soon`
-                    : `${t("confirm")} ${isEth ? "on Sepolia" : isUsdc ? "USDC on Sepolia" : isBtc ? "on BTC Testnet" : isSol ? "on SOL Devnet" : ""}`.trim()}
+                    : `${t("confirm")} ${isEth ? "on Sepolia" : isUsdc ? "USDC on Sepolia" : isBtc ? "on BTC Testnet" : isSol ? "on SOL Devnet" : isXlm ? "on Stellar Testnet" : ""}`.trim()}
                 </Text>}
           </Pressable>
 
@@ -205,6 +211,12 @@ export default function SendCrypto() {
             <Pressable testID="faucet-link-sol" onPress={() => Linking.openURL("https://faucet.solana.com/")} style={s.faucet}>
               <Ionicons name="water-outline" size={16} color={colors.brand} />
               <Text style={s.faucetText}>Need devnet SOL? Open Solana faucet</Text>
+            </Pressable>
+          )}
+          {isXlm && selected && (
+            <Pressable testID="faucet-link-xlm" onPress={() => Linking.openURL(`https://friendbot.stellar.org/?addr=${encodeURIComponent(selected.address || "")}`)} style={s.faucet}>
+              <Ionicons name="water-outline" size={16} color={colors.brand} />
+              <Text style={s.faucetText}>Need test XLM? Tap here (Friendbot funds you 10,000 XLM)</Text>
             </Pressable>
           )}
         </ScrollView>

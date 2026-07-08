@@ -25,11 +25,14 @@ from multichain import (
     fetch_btc_balance_sats,
     fetch_sol_balance_lamports,
     fetch_usdc_balance_micro,
+    fetch_xlm_balance_stroops,
     encode_usdc_transfer,
     explorer_url_btc,
     explorer_url_sol,
+    explorer_url_xlm,
     btc_send,
     sol_send,
+    xlm_send,
     USDC_CONTRACT,
     BTC_TESTNET,
     USE_MAINNET,
@@ -248,9 +251,10 @@ DEFAULT_ASSETS = [
     {"symbol": "ETH", "name": "Ethereum", "price_usd": 3582.40, "icon": "ethereum"},
     {"symbol": "USDC", "name": "USD Coin", "price_usd": 1.00, "icon": "usdc"},
     {"symbol": "SOL", "name": "Solana", "price_usd": 158.22, "icon": "solana"},
+    {"symbol": "XLM", "name": "Stellar Lumens", "price_usd": 0.12, "icon": "stellar"},
 ]
 
-SEED_BALANCES = {"BTC": 0, "ETH": 0, "USDC": 0, "SOL": 0}
+SEED_BALANCES = {"BTC": 0, "ETH": 0, "USDC": 0, "SOL": 0, "XLM": 0}
 
 SEED_CONTACTS = [
     {"name": "Maya Chen", "email": "maya@vaulted.app", "priority": False,
@@ -426,15 +430,17 @@ async def wallet_assets(user=Depends(get_current_user)):
             logger.warning(f"eth balance fetch failed: {e}")
     eth_amount = eth_wei / 1e18
 
-    # Ensure BTC + SOL addresses exist (derived from the user's mnemonic).
+    # Ensure BTC + SOL + XLM addresses exist (derived from the user's mnemonic).
     multichain_addrs = await _ensure_multichain_addresses(user)
     btc_addr = multichain_addrs.get("btc")
     sol_addr = multichain_addrs.get("sol")
+    xlm_addr = multichain_addrs.get("xlm")
 
     # Live balances on the real testnets
     btc_amount = 0.0
     sol_amount = 0.0
     usdc_amount = 0.0
+    xlm_amount = 0.0
     try:
         if btc_addr:
             btc_amount = (await fetch_btc_balance_sats(btc_addr)) / 1e8
@@ -450,15 +456,21 @@ async def wallet_assets(user=Depends(get_current_user)):
             usdc_amount = (await fetch_usdc_balance_micro(addr)) / 1e6
     except Exception as e:
         logger.warning(f"usdc balance fetch failed: {e}")
+    try:
+        if xlm_addr:
+            xlm_amount = (await fetch_xlm_balance_stroops(xlm_addr)) / 1e7
+    except Exception as e:
+        logger.warning(f"xlm balance fetch failed: {e}")
 
-    on_chain_amount = {"ETH": eth_amount, "BTC": btc_amount, "USDC": usdc_amount, "SOL": sol_amount}
+    on_chain_amount = {"ETH": eth_amount, "BTC": btc_amount, "USDC": usdc_amount, "SOL": sol_amount, "XLM": xlm_amount}
     network_for = {
         "ETH": "Mainnet" if USE_MAINNET else "Sepolia",
         "USDC": "Mainnet" if USE_MAINNET else "Sepolia",
         "BTC": "Mainnet" if not BTC_TESTNET else "Testnet3",
         "SOL": "Mainnet" if USE_MAINNET else "Devnet",
+        "XLM": "Mainnet" if USE_MAINNET else "Testnet",
     }
-    address_for = {"ETH": addr, "USDC": addr, "BTC": btc_addr, "SOL": sol_addr}
+    address_for = {"ETH": addr, "USDC": addr, "BTC": btc_addr, "SOL": sol_addr, "XLM": xlm_addr}
 
     total_usd = 0.0
     out = []
@@ -494,6 +506,7 @@ async def wallet_assets(user=Depends(get_current_user)):
         "wallet_address": addr,
         "btc_address": btc_addr,
         "sol_address": sol_addr,
+        "xlm_address": xlm_addr,
         "assets": out,
         "prices_fetched_at": market.get("fetched_at"),
     }
@@ -525,12 +538,16 @@ async def eth_info(user=Depends(get_current_user)):
 
 # ---------- Multichain (BTC + SOL + USDC) ------------------------------------
 async def _ensure_multichain_addresses(user: dict) -> dict:
-    """Derive BTC + SOL addresses from the user's mnemonic if not yet stored.
+    """Derive BTC + SOL + XLM addresses from the user's mnemonic if not yet stored.
     For legacy accounts created before BIP-39 onboarding, a fresh mnemonic is
-    generated transparently — the old ETH key is preserved untouched (BTC/SOL
+    generated transparently — the old ETH key is preserved untouched (BTC/SOL/XLM
     derivation just needs *a* mnemonic, not the one that birthed the ETH key)."""
-    if user.get("btc_address") and user.get("sol_address"):
-        return {"btc": user["btc_address"], "sol": user["sol_address"]}
+    if user.get("btc_address") and user.get("sol_address") and user.get("xlm_address"):
+        return {
+            "btc": user["btc_address"],
+            "sol": user["sol_address"],
+            "xlm": user["xlm_address"],
+        }
     mnemonic = user.get("eth_mnemonic") or user.get("mnemonic")
     update: dict = {}
     if not mnemonic:
@@ -539,21 +556,20 @@ async def _ensure_multichain_addresses(user: dict) -> dict:
             _, mnemonic = Account.create_with_mnemonic()
         except Exception as e:
             logger.warning(f"legacy mnemonic backfill failed: {e}")
-            return {"btc": None, "sol": None}
+            return {"btc": None, "sol": None, "xlm": None}
         update["eth_mnemonic"] = mnemonic
-        # Tag the origin so /wallet/eth/mnemonic can refuse to "restore ETH"
-        # with a phrase that doesn't actually derive the user's ETH key.
         update["mnemonic_origin"] = "multichain_only"
     try:
         addrs = derive_addresses(mnemonic)
     except Exception as e:
         logger.warning(f"multichain derivation failed: {e}")
-        return {"btc": None, "sol": None}
+        return {"btc": None, "sol": None, "xlm": None}
     update["btc_address"] = addrs["btc"]
     update["sol_address"] = addrs["sol"]
+    update["xlm_address"] = addrs["xlm"]
     await db.users.update_one({"id": user["id"]}, {"$set": update})
     user.update(update)
-    return {"btc": addrs["btc"], "sol": addrs["sol"]}
+    return {"btc": addrs["btc"], "sol": addrs["sol"], "xlm": addrs["xlm"]}
 
 
 @api.get("/wallet/btc/info")
@@ -836,6 +852,103 @@ async def _sol_to_usd(amount_sol: float) -> float:
         return round(amount_sol * price, 2)
     except Exception:
         return 0.0
+
+
+async def _xlm_to_usd(amount_xlm: float) -> float:
+    try:
+        market = await _refresh_market_prices()
+        price = next((a.get("price_usd", 0) for a in market.get("assets", []) if a.get("symbol") == "XLM"), 0)
+        return round(amount_xlm * price, 2)
+    except Exception:
+        return 0.0
+
+
+@api.get("/wallet/xlm/info")
+async def xlm_info(user=Depends(get_current_user)):
+    addrs = await _ensure_multichain_addresses(user)
+    a = addrs["xlm"]
+    if not a:
+        raise HTTPException(status_code=400, detail="No XLM address (mnemonic missing)")
+    try:
+        stroops = await fetch_xlm_balance_stroops(a)
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"XLM Horizon error: {e}")
+    return {
+        "address": a,
+        "balance_stroops": stroops,
+        "balance_xlm": stroops / 1e7,
+        "network": "Mainnet" if USE_MAINNET else "Testnet",
+        "explorer": explorer_url_xlm(a),
+        "faucet": "https://friendbot.stellar.org/?addr=" + a if not USE_MAINNET else None,
+        "send_supported": True,
+        "min_reserve_xlm": 1.0,  # Stellar's activation reserve (1 XLM = 0.5 base + 0.5 per subentry)
+    }
+
+
+class SendXlmIn(BaseModel):
+    to_address: str
+    amount: float = Field(gt=0)
+    memo: Optional[str] = None
+
+
+@api.post("/wallet/xlm/send")
+async def xlm_send_route(body: SendXlmIn, user=Depends(get_current_user)):
+    """Broadcast a native XLM payment via Stellar Horizon. Signs via stellar-sdk (ed25519)."""
+    await _ensure_multichain_addresses(user)
+    mnemonic = user.get("eth_mnemonic") or user.get("mnemonic")
+    if not mnemonic:
+        raise HTTPException(status_code=400, detail="No mnemonic on file")
+    to = body.to_address.strip()
+    if not to.startswith("G") or len(to) != 56:
+        raise HTTPException(status_code=400, detail="Invalid Stellar (G...) address")
+
+    # Pre-flight balance check — Stellar accounts must retain a 1 XLM base reserve
+    addr = user.get("xlm_address")
+    if addr:
+        try:
+            stroops = await fetch_xlm_balance_stroops(addr)
+        except Exception:
+            stroops = None
+        if stroops is not None:
+            have_xlm = stroops / 1e7
+            # Reserve 1.0001 XLM (1 base reserve + tiny fee headroom)
+            if have_xlm < body.amount + 1.0001:
+                raise HTTPException(
+                    status_code=400,
+                    detail=(
+                        f"Insufficient XLM (need {body.amount}+1 reserve, have {have_xlm:.4f}). "
+                        f"Stellar requires a 1 XLM minimum reserve to keep accounts active."
+                    ),
+                )
+
+    try:
+        result = await xlm_send(mnemonic, to, body.amount, memo=body.memo)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"XLM submission failed: {str(e)[:200]}") from e
+
+    fiat_value = await _xlm_to_usd(body.amount)
+    record = {
+        "id": str(uuid.uuid4()),
+        "user_id": user["id"],
+        "type": "send",
+        "category": "Crypto · XLM",
+        "asset": "XLM",
+        "amount": body.amount,
+        "fiat_value": fiat_value,
+        "counterparty": to,
+        "memo": body.memo,
+        "network": "Mainnet" if USE_MAINNET else "Testnet",
+        "tx_hash": result["tx_hash"],
+        "explorer_url": result["explorer_url"],
+        "status": "pending",
+        "service_fee_usd": 0.0,
+        "created_at": iso(now_utc()),
+    }
+    await db.transactions.insert_one(record)
+    record.pop("_id", None)
+    return record
 
 
 class SendEthIn(BaseModel):
@@ -1209,6 +1322,7 @@ COINGECKO_IDS = {
     "ETH": "ethereum",
     "USDC": "usd-coin",
     "SOL": "solana",
+    "XLM": "stellar",
 }
 PRICE_CACHE_TTL_SECONDS = 300
 

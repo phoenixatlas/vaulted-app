@@ -11,7 +11,7 @@ import { api } from "@/src/lib/api";
 import { useI18n } from "@/src/lib/i18n";
 import { colors, spacing, radius, ASSET_ICON_COLORS } from "@/src/lib/theme";
 
-type Asset = "ETH" | "USDC" | "BTC" | "SOL";
+type Asset = "ETH" | "USDC" | "BTC" | "SOL" | "XLM";
 
 type WalletInfo = {
   address: string;
@@ -25,18 +25,21 @@ const CHAIN_LABEL: Record<Asset, string> = {
   USDC: "USD Coin",
   BTC: "Bitcoin",
   SOL: "Solana",
+  XLM: "Stellar",
 };
 const CHAIN_PATH: Record<Asset, string> = {
   ETH: "/wallet/eth/info",
   USDC: "/wallet/usdc/info",
   BTC: "/wallet/btc/info",
   SOL: "/wallet/sol/info",
+  XLM: "/wallet/xlm/info",
 };
 const CHAIN_BADGE: Record<Asset, string> = {
   ETH: "ERC-20",
   USDC: "ERC-20",
   BTC: "P2PKH",
   SOL: "ED25519",
+  XLM: "ED25519",
 };
 
 export default function Receive() {

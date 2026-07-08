@@ -12,7 +12,8 @@
       "supportsTablet": true,
       "infoPlist": {
         "NSFaceIDUsageDescription": "Unlock your Vaulted wallet with Face ID"
-      }
+      },
+      "bundleIdentifier": "com.emergent.multisigvault.v1vcpy"
     },
     "android": {
       "adaptiveIcon": {
@@ -20,8 +21,12 @@
         "backgroundColor": "#0F0B08"
       },
       "edgeToEdgeEnabled": true,
-      "permissions": ["USE_BIOMETRIC", "USE_FINGERPRINT"],
-      "googleServicesFile": "./google-services.json"
+      "permissions": [
+        "USE_BIOMETRIC",
+        "USE_FINGERPRINT"
+      ],
+      "googleServicesFile": "./google-services.json",
+      "package": "com.emergent.multisigvault.v1vcpy"
     },
     "web": {
       "bundler": "metro",
