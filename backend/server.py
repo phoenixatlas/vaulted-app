@@ -1665,6 +1665,18 @@ async def kyc_session(user=Depends(get_current_user)):
             idempotency_key=f"vaulted-kyc-lite-{user['id']}",
         )
     except stripe.error.StripeError as e:  # type: ignore[attr-defined]
+        # Detect the "Identity product not enabled" state and surface it as a
+        # friendly configuration error rather than a scary raw Stripe message.
+        msg = str(e)
+        if "not set up to use Identity" in msg or "identity/application" in msg:
+            raise HTTPException(status_code=503, detail={
+                "error": "stripe_identity_not_activated",
+                "message": (
+                    "Identity verification is temporarily unavailable — we're finalising "
+                    "our Stripe Identity onboarding. Please try again shortly, or "
+                    "contact support@phoenix-atlas.com for immediate help."
+                ),
+            }) from e
         raise HTTPException(status_code=502, detail=f"Stripe Identity error: {e}") from e
 
     await db.users.update_one(

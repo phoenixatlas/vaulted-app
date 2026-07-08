@@ -41,6 +41,7 @@ export default function Kyc() {
   const [status, setStatus] = useState<KycStatus | null>(null);
   const [loading, setLoading] = useState(false);
   const [err, setErr] = useState<string | null>(null);
+  const [errKind, setErrKind] = useState<"config" | "generic" | null>(null);
   const [starting, setStarting] = useState(false);
 
   const load = async () => {
@@ -60,6 +61,7 @@ export default function Kyc() {
   const startVerification = async () => {
     setStarting(true);
     setErr(null);
+    setErrKind(null);
     try {
       const { url } = await api<{ url: string; session_id: string }>("/kyc/session", { method: "POST" });
       // Stripe Identity is a hosted flow — redirect the user to Stripe's page,
@@ -71,7 +73,14 @@ export default function Kyc() {
         await Linking.openURL(url);
       }
     } catch (e: any) {
-      setErr(e?.message || "Could not start verification");
+      const msg = e?.message || "";
+      if (e?.status === 503 || msg.includes("stripe_identity_not_activated") || msg.includes("not set up to use Identity")) {
+        setErrKind("config");
+        setErr("Identity verification is temporarily unavailable — we're finalising our Stripe Identity onboarding. Please try again shortly, or email support@phoenix-atlas.com for immediate help.");
+      } else {
+        setErrKind("generic");
+        setErr(msg || "Could not start verification");
+      }
     } finally {
       setStarting(false);
     }
@@ -220,7 +229,16 @@ export default function Kyc() {
               </View>
             )}
 
-            {err && <Text style={s.err}>{err}</Text>}
+            {err && errKind === "config" && (
+              <View style={s.configCard} testID="kyc-config-error">
+                <Ionicons name="construct-outline" size={20} color={colors.brandDeep} />
+                <View style={{ flex: 1 }}>
+                  <Text style={s.configTitle}>Identity verification temporarily unavailable</Text>
+                  <Text style={s.configBody}>{err}</Text>
+                </View>
+              </View>
+            )}
+            {err && errKind !== "config" && <Text style={s.err}>{err}</Text>}
 
             {/* Compliance footer — user education */}
             <View style={s.legal}>
@@ -288,6 +306,10 @@ const s = StyleSheet.create({
   flaggedSub: { fontSize: 12, color: colors.onSurfaceSecondary, textAlign: "center", marginTop: 6, lineHeight: 17 },
 
   err: { color: colors.error, fontSize: 13, textAlign: "center", marginTop: spacing.md },
+
+  configCard: { flexDirection: "row", gap: 12, alignItems: "flex-start", padding: spacing.md, marginTop: spacing.md, borderRadius: radius.md, backgroundColor: colors.brandTertiary, borderWidth: 1, borderColor: "rgba(201,163,91,0.40)" },
+  configTitle: { color: colors.brandDeep, fontSize: 13, fontWeight: "700", marginBottom: 4 },
+  configBody: { color: colors.onSurfaceSecondary, fontSize: 12, lineHeight: 16 },
 
   legal: { marginTop: spacing.xl, padding: spacing.md, borderRadius: radius.md, borderWidth: 1, borderColor: colors.border },
   legalTitle: { fontSize: 12, fontWeight: "700", color: colors.onSurface, marginBottom: 4 },
