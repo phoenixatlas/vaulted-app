@@ -412,6 +412,30 @@ async def wallet_assets(user=Depends(get_current_user)):
     cursor = db.balances.find({"user_id": user["id"]}, {"_id": 0})
     items = await cursor.to_list(100)
 
+    # Backfill: ensure every DEFAULT_ASSET has a balance row for this user.
+    # This is critical for existing users who registered BEFORE a new chain
+    # (e.g. XLM) was added — otherwise the asset never appears in their wallet.
+    existing_syms = {b.get("symbol") for b in items}
+    for a in DEFAULT_ASSETS:
+        if a["symbol"] not in existing_syms:
+            row = {
+                "id": str(uuid.uuid4()),
+                "user_id": user["id"],
+                "symbol": a["symbol"],
+                "name": a["name"],
+                "amount": SEED_BALANCES.get(a["symbol"], 0),
+                "icon": a["icon"],
+                "updated_at": iso(now_utc()),
+            }
+            try:
+                await db.balances.insert_one(row)
+            except Exception as e:
+                logger.warning(f"balance backfill failed for {a['symbol']}: {e}")
+            # `insert_one` mutates `row` by injecting a Mongo `_id` (ObjectId),
+            # which breaks FastAPI's JSON encoder. Strip it before appending.
+            row.pop("_id", None)
+            items.append(row)
+
     # Fetch live prices + sparklines (cached server-side)
     market = await _refresh_market_prices()
     market_assets = market.get("assets") or {}
