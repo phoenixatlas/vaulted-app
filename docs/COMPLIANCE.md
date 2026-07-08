@@ -151,15 +151,73 @@ Pings OpenSanctions with a canary query ("Vladimir Putin") and returns:
 ### `POST /api/admin/compliance/screen`
 
 Manually screen a name against sanctions + PEP lists (bypasses KYC flow).
-Useful for ad-hoc SAR investigations.
+Useful for ad-hoc SAR investigations. Every call writes an `admin.manual_screen`
+audit event.
 ```json
 POST /api/admin/compliance/screen
 { "name": "John Doe", "dob": "1980-01-15", "country": "GB" }
 ```
 
+### `GET /api/admin/audit-log`
+
+Cursor-paginated feed of every audit event across the system. Newest first.
+
+Query params:
+- `event_type` — filter by canonical event constant (e.g. `remit.send_blocked`)
+- `user_id` — filter to a single user's activity
+- `from_iso` / `to_iso` — ISO 8601 timestamp range
+- `limit` — 1-200 (default 50)
+- `cursor` — opaque; pass `next_cursor` from the previous response
+
+Response:
+```json
+{
+  "events": [ { "id": "...", "event_type": "...", "user_id": "...",
+                "user_email_hash": "3f7c...", "timestamp": "...",
+                "data": { ... } } ],
+  "count": 50,
+  "has_more": true,
+  "next_cursor": "2026-07-08T19:14:22Z"
+}
+```
+
+### `GET /api/admin/audit-log/user/{user_id}`
+
+Compliance-file summary for one user — every recorded event ordered
+chronologically, plus counts by event type. This is the endpoint to hit
+when filing a Suspicious Activity Report (SAR) or responding to an FCA
+ad-hoc data request.
+
+### `GET /api/admin/audit-log/event-types`
+
+Enumerate all known event-type constants. Useful for populating filter
+dropdowns in an ops UI.
+
 ---
 
-## 5. Audit Logging
+## 5. Audit Event Types
+
+Every event has the shape `{ id, event_type, user_id, user_email_hash,
+timestamp, data }`. Persisted to the `audit_events` MongoDB collection with
+indexes on `timestamp`, `(user_id, timestamp)`, and `(event_type, timestamp)`.
+
+| Event type | When written | Key `data` fields |
+|---|---|---|
+| `kyc.session_created` | POST /kyc/session (fresh session) | session_id, attempt_num |
+| `kyc.session_force_new` | POST /kyc/session with force_new=true | session_id, previous_session_id |
+| `kyc.verified` | Stripe webhook: identity.verified | session_id, verified_name_hash, verified_country, sanctions |
+| `kyc.flagged` | Verified but sanctions match | session_id, sanctions.matched=true |
+| `kyc.requires_input` | Stripe webhook: requires_input | session_id, error_code, error_reason |
+| `kyc.canceled` | Stripe webhook: canceled | session_id |
+| `sanctions.screened` | Every screen_sanctions() call | context, matched, degraded, degraded_reason |
+| `remit.send_success` | Successful cross-border send | tx_id, tx_hash, chain, source/dest amounts, recipient_hash, sanctions_state_at_send |
+| `remit.send_blocked` | Send blocked at any gate | block_type ∈ {corridor_blocked, free_tier_exhausted, sanctions_screening_unavailable, insufficient_balance, kyc_required} |
+| `corridor.blocked` | Blocked destination attempt | destination_code, reason, attempted_amount |
+| `admin.manual_screen` | POST /admin/compliance/screen | screened_name_hash, matched, highest_score |
+
+---
+
+## 6. Structured Audit Logging (log lines)
 
 Every call to `screen_sanctions()` emits a structured log line via the
 `vaulted.compliance.audit` logger:
@@ -186,7 +244,7 @@ Configure your log aggregator (Datadog, Logtail, etc.) to filter on
 
 ---
 
-## 6. Enabling Strict Mode
+## 7. Enabling Strict Mode
 
 Once you have a live OpenSanctions key AND monitoring in place to alert on
 degraded-mode logs, flip strict mode on:

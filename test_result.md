@@ -456,3 +456,39 @@ agent_communication:
 
       Credentials: smoketest@vaulted.app / test1234.
       Report to /app/test_reports/iteration_19.json.
+
+
+  - agent: "main"
+    message: |
+      ITERATION 20 — FCA-compliant audit-log endpoint. Backend-only feature.
+
+      Ships an immutable event trail for every KYC decision, sanctions screen,
+      and remit attempt, powering the FCA money-transmission authorisation
+      application.
+
+      NEW MODULE /app/backend/audit.py:
+       - EventType constants (12 canonical events)
+       - write_event() fire-and-forget, never raises
+       - query_events() cursor pagination + filters
+       - summarize_user() per-user compliance file
+       - PII pseudonymisation: user_email_hash = sha256[:12]
+
+      HOOKS: all KYC state transitions, all remit send outcomes (success +
+      5 block types), corridor blocks, admin manual screens.
+
+      NEW ADMIN ENDPOINTS:
+       - GET /api/admin/audit-log (paginated + filtered)
+       - GET /api/admin/audit-log/event-types
+       - GET /api/admin/audit-log/user/{user_id}
+
+      Backend tests (14 new, 34 total across iter17-20): all passing.
+      Live smoke verified: blocked-corridor attempt writes 2 events;
+      /admin/audit-log locked (403) without ADMIN_EMAILS set.
+
+      Please verify:
+        1. Re-run iter17+18+19+20 (34 tests). No regression.
+        2. Confirm /api/wallet/assets and /api/auth/login still 200 (no
+           accidental breakage of unrelated flows).
+
+      Credentials: smoketest@vaulted.app / test1234.
+      Report to /app/test_reports/iteration_20.json.

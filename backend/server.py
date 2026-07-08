@@ -9,6 +9,7 @@ import asyncio
 import uuid
 import secrets
 import json
+import hashlib
 import httpx
 import stripe
 from eth_account import Account
@@ -70,6 +71,13 @@ from compliance import (
     opensanctions_health,
     opensanctions_config_status,
     COMPLIANCE_STRICT_MODE,
+)
+from audit import (
+    EventType,
+    ALL_EVENT_TYPES,
+    write_event as audit_write,
+    query_events as audit_query,
+    summarize_user as audit_summarize_user,
 )
 
 
@@ -1484,6 +1492,15 @@ async def remit_send(body: RemitSendIn, user=Depends(get_current_user)):
     #    shifted between quote and send).
     block_reason = is_country_blocked(body.destination_code)
     if block_reason:
+        await audit_write(db, EventType.CORRIDOR_BLOCKED, user=user, data={
+            "destination_code": body.destination_code, "reason": block_reason,
+            "attempted_amount": body.amount, "source_fiat": body.source_fiat,
+        })
+        await audit_write(db, EventType.REMIT_SEND_BLOCKED, user=user, data={
+            "block_type": "corridor_blocked",
+            "destination_code": body.destination_code,
+            "attempted_amount": body.amount, "source_fiat": body.source_fiat,
+        })
         raise HTTPException(status_code=403, detail={
             "error": "corridor_blocked",
             "message": f"We cannot send to that destination. {block_reason}",
@@ -1491,6 +1508,11 @@ async def remit_send(body: RemitSendIn, user=Depends(get_current_user)):
 
     remit_used = await _remit_send_count_this_month(user["id"])
     if (not is_pro) and remit_used >= FREE_TIER_REMIT_LIMIT:
+        await audit_write(db, EventType.REMIT_SEND_BLOCKED, user=user, data={
+            "block_type": "free_tier_exhausted",
+            "monthly_count": remit_used, "limit": FREE_TIER_REMIT_LIMIT,
+            "destination_code": body.destination_code, "attempted_amount": body.amount,
+        })
         raise HTTPException(
             status_code=402,
             detail={
@@ -1512,6 +1534,12 @@ async def remit_send(body: RemitSendIn, user=Depends(get_current_user)):
         user_kyc = user.get("kyc") or {}
         sanctions = user_kyc.get("sanctions") or {}
         if sanctions.get("degraded", True):
+            await audit_write(db, EventType.REMIT_SEND_BLOCKED, user=user, data={
+                "block_type": "sanctions_screening_unavailable",
+                "degraded_reason": sanctions.get("degraded_reason"),
+                "destination_code": body.destination_code,
+                "attempted_amount": body.amount,
+            })
             raise HTTPException(status_code=503, detail={
                 "error": "sanctions_screening_unavailable",
                 "message": (
@@ -1532,12 +1560,25 @@ async def remit_send(body: RemitSendIn, user=Depends(get_current_user)):
         user=user,
     )
     if not quote["sufficient_balance"] or not quote.get("chain"):
+        await audit_write(db, EventType.REMIT_SEND_BLOCKED, user=user, data={
+            "block_type": "insufficient_balance",
+            "destination_code": body.destination_code,
+            "attempted_amount": body.amount, "source_fiat": body.source_fiat,
+            "reason": quote.get("reason_if_no_chain"),
+        })
         raise HTTPException(status_code=400, detail=quote.get("reason_if_no_chain") or "Insufficient balance")
 
     # KYC/AML tier gate — HARD block. Cannot be bypassed by Pro subscription;
     # regulatory limits apply regardless of Vaulted product tier.
     kyc = quote.get("kyc") or {}
     if not kyc.get("allowed"):
+        await audit_write(db, EventType.REMIT_SEND_BLOCKED, user=user, data={
+            "block_type": "kyc_required",
+            "reason": kyc.get("reason"),
+            "current_tier": kyc.get("current_tier"),
+            "destination_code": body.destination_code,
+            "attempted_amount": body.amount, "source_fiat": body.source_fiat,
+        })
         raise HTTPException(status_code=403, detail={
             "error": "kyc_required",
             "reason": kyc.get("reason"),
@@ -1627,6 +1668,30 @@ async def remit_send(body: RemitSendIn, user=Depends(get_current_user)):
     }
     await db.transactions.insert_one(record)
     record.pop("_id", None)
+
+    # Success audit — the golden path event, one row per completed send
+    user_kyc = user.get("kyc") or {}
+    user_sanctions = user_kyc.get("sanctions") or {}
+    await audit_write(db, EventType.REMIT_SEND_SUCCESS, user=user, data={
+        "tx_id": record["id"],
+        "tx_hash": record["tx_hash"],
+        "chain": chain,
+        "source_currency": record["remit"]["source_currency"],
+        "source_amount": record["remit"]["source_amount"],
+        "destination_country": record["remit"]["destination_country"],
+        "destination_currency": record["remit"]["destination_currency"],
+        "destination_amount": record["remit"]["destination_amount"],
+        "recipient_address_hash": hashlib.sha256(to.lower().encode()).hexdigest()[:12],
+        "recipient_name_hash": hashlib.sha256((body.recipient_name or "").strip().lower().encode()).hexdigest()[:12] if body.recipient_name else None,
+        "service_fee_usd": record["service_fee_usd"],
+        "fiat_value_usd": record["fiat_value"],
+        "tier_at_send": user_kyc.get("tier"),
+        "sanctions_state_at_send": {
+            "matched": user_sanctions.get("matched", False),
+            "degraded": user_sanctions.get("degraded", True),
+            "degraded_reason": user_sanctions.get("degraded_reason"),
+        },
+    })
     return record
 
 
@@ -1768,6 +1833,17 @@ async def kyc_session(body: KycSessionIn | None = None, user=Depends(get_current
             "kyc.identity_last_error": None,
         }},
     )
+    await audit_write(
+        db,
+        EventType.KYC_SESSION_FORCE_NEW if force_new else EventType.KYC_SESSION_CREATED,
+        user=user,
+        data={
+            "session_id": session["id"],
+            "attempt_num": attempt_num,
+            "force_new": force_new,
+            "previous_session_id": existing_id if force_new else None,
+        },
+    )
     return {"session_id": session["id"], "url": session["url"], "reused": False}
 
 
@@ -1842,6 +1918,46 @@ async def _apply_identity_verified(session_obj: dict):
     await db.users.update_one({"id": user_id}, {"$set": update})
     logger.info(f"KYC-lite {'FLAGGED' if is_flagged else 'GRANTED'} for user={user_id}")
 
+    # Audit trail — separate events for verified vs flagged so log filters
+    # can trivially count each outcome.
+    await audit_write(
+        db,
+        EventType.KYC_FLAGGED if is_flagged else EventType.KYC_VERIFIED,
+        user_id=user_id,
+        user_email=(await db.users.find_one({"id": user_id}, {"email": 1}) or {}).get("email"),
+        data={
+            "session_id": session_obj.get("id"),
+            "verified_name_hash": hashlib.sha256((verified_name or "").strip().lower().encode()).hexdigest()[:12] if verified_name else None,
+            "verified_country": verified_country,
+            "has_dob": bool(verified_dob),
+            "tier_before": "unverified",
+            "tier_after": "flagged" if is_flagged else "kyc_lite",
+            "sanctions": {
+                "matched": sanctions_result.get("matched"),
+                "highest_score": sanctions_result.get("highest_score"),
+                "scope": sanctions_result.get("scope"),
+                "degraded": sanctions_result.get("degraded", False),
+                "degraded_reason": sanctions_result.get("degraded_reason"),
+            },
+        },
+    )
+    # Also record the sanctions screen as its own event so
+    # /audit-log?event_type=sanctions.screened counts include the KYC-time
+    # screen (not just admin manual ones).
+    await audit_write(
+        db,
+        EventType.SANCTIONS_SCREENED,
+        user_id=user_id,
+        data={
+            "context": "kyc_verified",
+            "matched": sanctions_result.get("matched"),
+            "highest_score": sanctions_result.get("highest_score"),
+            "scope": sanctions_result.get("scope"),
+            "degraded": sanctions_result.get("degraded", False),
+            "degraded_reason": sanctions_result.get("degraded_reason"),
+        },
+    )
+
 
 async def _apply_identity_requires_input(session_obj: dict):
     """Webhook handler for identity.verification_session.requires_input —
@@ -1860,6 +1976,16 @@ async def _apply_identity_requires_input(session_obj: dict):
                 "at": iso(now_utc()),
             },
         }},
+    )
+    await audit_write(
+        db,
+        EventType.KYC_REQUIRES_INPUT,
+        user_id=user_id,
+        data={
+            "session_id": session_obj.get("id"),
+            "error_code": last_error.get("code"),
+            "error_reason": last_error.get("reason"),
+        },
     )
 
 
@@ -1892,12 +2018,71 @@ class AdminScreenIn(BaseModel):
 
 
 @api.post("/admin/compliance/screen")
-async def admin_compliance_screen(body: AdminScreenIn, _admin=Depends(require_admin)):
+async def admin_compliance_screen(body: AdminScreenIn, admin=Depends(require_admin)):
     """Manually screen a name/DOB/country against OpenSanctions. Useful for
     testing after enabling a new API key, and for ad-hoc SAR investigations.
     Returns the full raw screen result (including degraded/reason flags)."""
     result = await screen_sanctions(body.name, dob=body.dob, country=body.country)
+    await audit_write(db, EventType.ADMIN_MANUAL_SCREEN, user=admin, data={
+        "screened_name_hash": hashlib.sha256((body.name or "").strip().lower().encode()).hexdigest()[:12],
+        "screened_country": body.country,
+        "has_dob": bool(body.dob),
+        "matched": result.get("matched"),
+        "degraded": result.get("degraded", False),
+        "highest_score": result.get("highest_score"),
+    })
     return {"input": body.model_dump(), "result": result}
+
+
+# ============================================================================
+# ADMIN — Audit-log endpoint (FCA / MLR 2017 record-keeping)
+# ============================================================================
+@api.get("/admin/audit-log")
+async def admin_audit_log(
+    _admin=Depends(require_admin),
+    event_type: Optional[str] = None,
+    user_id: Optional[str] = None,
+    from_iso: Optional[str] = None,
+    to_iso: Optional[str] = None,
+    limit: int = 50,
+    cursor: Optional[str] = None,
+):
+    """Cursor-paginated audit event feed. Supports filtering by event_type,
+    user_id, and timestamp range (ISO 8601). Newest first. Meant to be
+    consumed by ops dashboards, compliance officers, and (eventually) a
+    scheduled export job that ships events to a WORM (write-once-read-many)
+    archival store for the 5-year MLR 2017 retention requirement."""
+    if event_type and event_type not in ALL_EVENT_TYPES:
+        raise HTTPException(status_code=400, detail={
+            "error": "unknown_event_type",
+            "provided": event_type,
+            "allowed": sorted(ALL_EVENT_TYPES),
+        })
+    return await audit_query(
+        db,
+        event_type=event_type,
+        user_id=user_id,
+        from_iso=from_iso,
+        to_iso=to_iso,
+        limit=limit,
+        cursor=cursor,
+    )
+
+
+@api.get("/admin/audit-log/event-types")
+async def admin_audit_event_types(_admin=Depends(require_admin)):
+    """Enumerate every event_type the audit system knows how to write. Useful
+    for populating filter dropdowns in an ops UI without hardcoding."""
+    return {"event_types": sorted(ALL_EVENT_TYPES)}
+
+
+@api.get("/admin/audit-log/user/{user_id}")
+async def admin_audit_log_for_user(user_id: str, _admin=Depends(require_admin)):
+    """Compliance-file view for a single user. Returns every event we've
+    recorded for that user, ordered chronologically, plus counts by
+    event_type. Consumed by SAR (Suspicious Activity Report) filings and
+    ad-hoc regulator requests."""
+    return await audit_summarize_user(db, user_id)
 
 
 class SendEthIn(BaseModel):
@@ -3010,6 +3195,12 @@ async def stripe_webhook(request: Request, stripe_signature: Optional[str] = Hea
                 {"id": user_id},
                 {"$set": {"kyc.identity_verification_status": "canceled"}},
             )
+            await audit_write(
+                db,
+                EventType.KYC_CANCELED,
+                user_id=user_id,
+                data={"session_id": event["data"]["object"].get("id")},
+            )
     return {"status": "ok"}
 
 
@@ -3177,6 +3368,19 @@ async def _resend_domain_poller():
 async def _start_resend_poller():
     # Fire-and-forget; FastAPI will keep this task alive for the process lifetime.
     asyncio.create_task(_resend_domain_poller())
+
+
+@app.on_event("startup")
+async def _ensure_audit_indexes():
+    """Ensure the query patterns on the audit-log endpoint stay fast even as
+    the collection grows to 100k+ events. Idempotent — safe to run on every
+    startup."""
+    try:
+        await db.audit_events.create_index([("timestamp", -1)])
+        await db.audit_events.create_index([("user_id", 1), ("timestamp", -1)])
+        await db.audit_events.create_index([("event_type", 1), ("timestamp", -1)])
+    except Exception as e:
+        logger.warning(f"audit_events index creation failed: {e}")
 
 
 # ---------- Emergent push notifications --------------------------------------
