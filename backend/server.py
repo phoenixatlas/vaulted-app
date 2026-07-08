@@ -79,6 +79,16 @@ from audit import (
     query_events as audit_query,
     summarize_user as audit_summarize_user,
 )
+from referrals import (
+    REFERRAL_REWARD_GBP,
+    REFERRAL_SIGNUP_BONUS_GBP,
+    ensure_referral_code,
+    register_referral_at_signup,
+    credit_referral_on_kyc,
+    get_balance_gbp,
+    spend_credit_for_fee,
+    referral_summary,
+)
 
 
 ROOT_DIR = Path(__file__).parent
@@ -154,6 +164,8 @@ class RegisterIn(BaseModel):
     email: EmailStr
     password: str = Field(min_length=6)
     name: str = Field(min_length=1, max_length=80)
+    # Optional 8-char alphanumeric invite code. Case-insensitive.
+    referred_by_code: Optional[str] = Field(default=None, max_length=16)
 
 
 class LoginIn(BaseModel):
@@ -293,6 +305,7 @@ def public_user(u: dict) -> dict:
         "multisig_enabled": u.get("multisig_enabled", False),
         "public_key": u.get("public_key"),
         "onboarding_seed_acknowledged": u.get("onboarding_seed_acknowledged", False),
+        "referral_code": u.get("referral_code"),
         "subscription": {
             "tier": sub.get("tier", "free"),
             "status": sub.get("status", "inactive"),
@@ -437,6 +450,11 @@ async def register(body: RegisterIn):
     uid = str(uuid.uuid4())
     # Generate a real Ethereum keypair + BIP-39 mnemonic for Sepolia testnet
     acct, mnemonic_phrase = Account.create_with_mnemonic()
+    # Assign a fresh referral code up-front. ensure_referral_code() will
+    # regenerate on the very unlikely 8-char collision, but a direct
+    # generate_code() at signup is faster and lands in the doc atomically.
+    from referrals import generate_code as _gen_ref_code
+    referral_code = _gen_ref_code()
     user_doc = {
         "id": uid,
         "email": body.email.lower(),
@@ -450,10 +468,26 @@ async def register(body: RegisterIn):
         "onboarding_seed_acknowledged": False,
         "biometric_enabled": False,
         "multisig_enabled": False,
+        "referral_code": referral_code,
         "created_at": iso(now_utc()),
     }
     await db.users.insert_one(user_doc)
     await seed_user_data(uid)
+
+    # If they signed up via an invite code, record the pending referral now
+    # (credit is granted later, on KYC completion).
+    if body.referred_by_code:
+        row = await register_referral_at_signup(
+            db,
+            referred_user=user_doc,
+            referred_by_code=body.referred_by_code,
+        )
+        if row:
+            await audit_write(db, EventType.REFERRAL_SIGNUP, user=user_doc, data={
+                "referral_id": row["id"],
+                "referrer_user_id": row["referrer_user_id"],
+                "referred_by_code": row["referred_by_code"],
+            })
     return TokenOut(access_token=make_token(uid), user=public_user(user_doc))
 
 
@@ -1636,8 +1670,41 @@ async def remit_send(body: RemitSendIn, user=Depends(get_current_user)):
         raise HTTPException(status_code=400, detail=f"{chain} submission failed: {str(e)[:200]}") from e
 
     dst = quote["destination"]
+    tx_id = str(uuid.uuid4())
+
+    # Referral credit — apply to the service fee. Credit is GBP-denominated,
+    # so we convert the USD fee via a conservative 0.80 rate (matches the
+    # compliance module's FX approximation). If credit fully covers the
+    # fee, the user pays nothing on top; otherwise the residual USD fee
+    # still applies. Credit spending is fire-and-forget — a ledger failure
+    # must NOT block a paid-for send.
+    service_fee_usd = float(quote["fees"]["vaulted_service_usd"])
+    service_fee_gbp = round(service_fee_usd * 0.80, 4)
+    credit_applied_gbp = 0.0
+    credit_balance_after_gbp = 0.0
+    try:
+        offset = await spend_credit_for_fee(
+            db, user_id=user["id"], fee_gbp=service_fee_gbp, reference_id=tx_id,
+        )
+        credit_applied_gbp = offset["applied_gbp"]
+        credit_balance_after_gbp = offset["balance_after_gbp"]
+        if credit_applied_gbp > 0:
+            await audit_write(db, EventType.CREDIT_SPENT, user=user, data={
+                "amount_gbp": credit_applied_gbp,
+                "reference_id": tx_id,
+                "source": "remit_fee_offset",
+                "balance_after_gbp": credit_balance_after_gbp,
+            })
+    except Exception as e:  # noqa: BLE001
+        logger.warning(f"credit offset failed for remit {tx_id}: {e}")
+
+    # Effective fee paid by the user after credit offset (still USD-denominated
+    # on the tx record for continuity with existing history/analytics).
+    remaining_fee_gbp = max(0.0, round(service_fee_gbp - credit_applied_gbp, 4))
+    effective_fee_usd = round(remaining_fee_gbp / 0.80, 4) if remaining_fee_gbp else 0.0
+
     record = {
-        "id": str(uuid.uuid4()),
+        "id": tx_id,
         "user_id": user["id"],
         "type": "send",
         "category": f"Remit · {dst['country']}",
@@ -1651,7 +1718,10 @@ async def remit_send(body: RemitSendIn, user=Depends(get_current_user)):
         "tx_hash": result["tx_hash"],
         "explorer_url": result["explorer_url"],
         "status": "pending",
-        "service_fee_usd": quote["fees"]["vaulted_service_usd"],
+        "service_fee_usd": effective_fee_usd,
+        "gross_service_fee_usd": service_fee_usd,   # for accounting / rev metrics
+        "credit_applied_gbp": credit_applied_gbp,
+        "credit_balance_after_gbp": credit_balance_after_gbp,
         "created_at": iso(now_utc()),
         # Remit-specific context — used by the receipt screen + activity feed
         "remit": {
@@ -1684,6 +1754,8 @@ async def remit_send(body: RemitSendIn, user=Depends(get_current_user)):
         "recipient_address_hash": hashlib.sha256(to.lower().encode()).hexdigest()[:12],
         "recipient_name_hash": hashlib.sha256((body.recipient_name or "").strip().lower().encode()).hexdigest()[:12] if body.recipient_name else None,
         "service_fee_usd": record["service_fee_usd"],
+        "gross_service_fee_usd": service_fee_usd,
+        "credit_applied_gbp": credit_applied_gbp,
         "fiat_value_usd": record["fiat_value"],
         "tier_at_send": user_kyc.get("tier"),
         "sanctions_state_at_send": {
@@ -1958,6 +2030,41 @@ async def _apply_identity_verified(session_obj: dict):
         },
     )
 
+    # Referral credit — only if the user was NOT flagged. Flagged users
+    # (sanctions match) are under manual review; we don't want to hand out
+    # credit for a potentially fraudulent signup.
+    if not is_flagged:
+        try:
+            credit_result = await credit_referral_on_kyc(db, user_id)
+        except Exception as e:  # noqa: BLE001 — never break the KYC flow
+            logger.warning(f"referral: credit_referral_on_kyc failed for {user_id}: {e}")
+            credit_result = None
+        if credit_result:
+            await audit_write(db, EventType.REFERRAL_CREDITED, user_id=user_id, data={
+                "referral_id": credit_result["referral_id"],
+                "referrer_user_id": credit_result["referrer_user_id"],
+                "referred_credit_gbp": REFERRAL_SIGNUP_BONUS_GBP,
+                "referrer_credit_gbp": REFERRAL_REWARD_GBP,
+            })
+            # Emit credit.granted events for both sides so the ledger has
+            # a searchable trail per user
+            await audit_write(db, EventType.CREDIT_GRANTED,
+                              user_id=credit_result["referrer_user_id"],
+                              data={
+                                  "amount_gbp": REFERRAL_REWARD_GBP,
+                                  "source": "referral_reward",
+                                  "ledger_id": credit_result["referrer_credit_row"]["id"],
+                                  "balance_after_gbp": credit_result["referrer_credit_row"]["balance_after_gbp"],
+                              })
+            await audit_write(db, EventType.CREDIT_GRANTED,
+                              user_id=user_id,
+                              data={
+                                  "amount_gbp": REFERRAL_SIGNUP_BONUS_GBP,
+                                  "source": "referral_signup_bonus",
+                                  "ledger_id": credit_result["referred_credit_row"]["id"],
+                                  "balance_after_gbp": credit_result["referred_credit_row"]["balance_after_gbp"],
+                              })
+
 
 async def _apply_identity_requires_input(session_obj: dict):
     """Webhook handler for identity.verification_session.requires_input —
@@ -2083,6 +2190,76 @@ async def admin_audit_log_for_user(user_id: str, _admin=Depends(require_admin)):
     event_type. Consumed by SAR (Suspicious Activity Report) filings and
     ad-hoc regulator requests."""
     return await audit_summarize_user(db, user_id)
+
+
+# ============================================================================
+# REFERRAL LOOP — invite-link viral growth + £5 GBP credit
+# ============================================================================
+REFERRAL_LINK_BASE = os.environ.get("REFERRAL_LINK_BASE") or (
+    APP_PUBLIC_URL.rstrip("/") if APP_PUBLIC_URL else "https://app.phoenix-atlas.com"
+)
+
+
+@api.get("/referrals/me")
+async def referrals_me(user=Depends(get_current_user)):
+    """Everything the /referral screen needs in one call: my code, my
+    shareable link, my credit balance, and my referral history."""
+    code = await ensure_referral_code(db, user)
+    balance = await get_balance_gbp(db, user["id"])
+    summary = await referral_summary(db, user["id"])
+    share_link = f"{REFERRAL_LINK_BASE}/?ref={code}"
+    return {
+        "referral_code": code,
+        "share_link": share_link,
+        "share_message": (
+            f"Send money home for less on Vaulted. Sign up with my code {code} "
+            f"and we both get £{REFERRAL_REWARD_GBP:.0f} credit."
+        ),
+        "credit_balance_gbp": balance,
+        "reward_per_side_gbp": REFERRAL_REWARD_GBP,
+        "signup_bonus_gbp": REFERRAL_SIGNUP_BONUS_GBP,
+        **summary,
+    }
+
+
+@api.get("/referrals/validate/{code}")
+async def referrals_validate(code: str):
+    """Public endpoint used by the signup form to preview who invited them —
+    returns just enough to build trust without leaking full PII."""
+    from referrals import user_by_referral_code
+    referrer = await user_by_referral_code(db, code)
+    if not referrer:
+        return {"valid": False}
+    name = (referrer.get("name") or "").strip()
+    # Show first name + last initial (Sarah B.) at most
+    parts = name.split()
+    display = (parts[0] if parts else "A friend") + (
+        f" {parts[1][:1]}." if len(parts) > 1 and parts[1] else ""
+    )
+    return {
+        "valid": True,
+        "referrer_name_masked": display,
+        "reward_per_side_gbp": REFERRAL_REWARD_GBP,
+    }
+
+
+@api.get("/credit/balance")
+async def credit_balance(user=Depends(get_current_user)):
+    """Current GBP credit balance for the caller."""
+    balance = await get_balance_gbp(db, user["id"])
+    return {"balance_gbp": balance}
+
+
+@api.get("/credit/ledger")
+async def credit_ledger(user=Depends(get_current_user), limit: int = 50):
+    """Paginated credit ledger — newest first. Includes source labels the
+    frontend can render (referral_reward, referral_signup_bonus,
+    remit_fee_offset, admin_grant)."""
+    limit = max(1, min(200, int(limit)))
+    rows = await db.credit_ledger.find(
+        {"user_id": user["id"]}, {"_id": 0},
+    ).sort("created_at", -1).limit(limit).to_list(length=limit)
+    return {"entries": rows, "count": len(rows)}
 
 
 class SendEthIn(BaseModel):
@@ -3379,6 +3556,11 @@ async def _ensure_audit_indexes():
         await db.audit_events.create_index([("timestamp", -1)])
         await db.audit_events.create_index([("user_id", 1), ("timestamp", -1)])
         await db.audit_events.create_index([("event_type", 1), ("timestamp", -1)])
+        # Referrals + credit-ledger indexes
+        await db.users.create_index("referral_code", unique=True, sparse=True)
+        await db.referrals.create_index("referrer_user_id")
+        await db.referrals.create_index("referred_user_id", unique=True, sparse=True)
+        await db.credit_ledger.create_index([("user_id", 1), ("created_at", -1)])
     except Exception as e:
         logger.warning(f"audit_events index creation failed: {e}")
 

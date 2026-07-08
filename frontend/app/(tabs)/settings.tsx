@@ -173,6 +173,13 @@ export default function Settings() {
           />
           <View style={s.sep} />
           <Row
+            icon="gift"
+            label="Invite friends · Earn £5 each"
+            testID="open-referral"
+            onPress={() => router.push("/referral")}
+          />
+          <View style={s.sep} />
+          <Row
             icon="reader"
             label="Show recovery phrase"
             testID="open-seed-phrase"

@@ -492,3 +492,49 @@ agent_communication:
 
       Credentials: smoketest@vaulted.app / test1234.
       Report to /app/test_reports/iteration_20.json.
+
+
+  - agent: "main"
+    message: |
+      ITERATION 21 — Referral loop: invite links + £5 GBP credit ledger.
+
+      Backend NEW module /app/backend/referrals.py:
+       - generate_code() 8-char [A-Z0-9] secure random
+       - register_referral_at_signup() creates pending referrals row
+       - credit_referral_on_kyc() grants both sides £5 (idempotent). Skips flagged users.
+       - spend_credit_for_fee() applies GBP credit to remit service fee
+       - referral_summary() dashboard aggregate (masked emails)
+
+      server.py hooks:
+       - Register accepts referred_by_code; auto-assigns referral_code
+       - _apply_identity_verified triggers credit_referral_on_kyc (post sanctions)
+       - /remit/send: USD fee → GBP, applies credit, stores credit_applied_gbp on tx
+       - public_user + /auth/me expose referral_code
+
+      New endpoints: /referrals/me, /referrals/validate/{code} (public),
+      /credit/balance, /credit/ledger.
+
+      Audit: 4 new EventType constants (REFERRAL_SIGNUP, REFERRAL_CREDITED,
+      CREDIT_GRANTED, CREDIT_SPENT).
+
+      Frontend:
+       - src/lib/refCode.ts (capture ?ref=CODE from URL, persist, apply at signup)
+       - _layout.tsx calls captureRefCodeFromUrl() at mount
+       - (auth)/register.tsx renders "Invited by …" banner, passes referred_by_code
+       - app/referral.tsx: hero, balance, share link (native Share API), 3-step
+         explainer, friends list with masked emails, pull-to-refresh
+       - Settings row: "Invite friends · Earn £5 each"
+
+      Backend tests: 19 new + 34 regression → 53 passing.
+
+      Please verify:
+        1. Re-run iter17-21 (53 tests). No regression.
+        2. Confirm /auth/register still works without referred_by_code
+           (backward compat).
+        3. Confirm /referrals/me returns share_link + code for smoke user.
+        4. Optional frontend: navigate to
+           http://localhost:3000/(auth)/register?ref=<smoke_code> and confirm
+           testID='reg-invite-banner' renders with masked referrer name.
+
+      Credentials: smoketest@vaulted.app / test1234.
+      Report to /app/test_reports/iteration_21.json.

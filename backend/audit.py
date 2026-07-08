@@ -49,6 +49,12 @@ class EventType:
     # For manual admin actions (support ticket handling, etc.)
     ADMIN_MANUAL_SCREEN = "admin.manual_screen"
 
+    # Referral / credit lifecycle
+    REFERRAL_SIGNUP = "referral.signup"     # someone registered with a code
+    REFERRAL_CREDITED = "referral.credited"  # KYC completed → both sides paid
+    CREDIT_GRANTED = "credit.granted"        # any credit added to ledger
+    CREDIT_SPENT = "credit.spent"            # credit consumed on a fee
+
 
 ALL_EVENT_TYPES = {
     v for k, v in vars(EventType).items() if not k.startswith("_") and isinstance(v, str)

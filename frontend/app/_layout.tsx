@@ -11,6 +11,7 @@ import { useIconFonts } from "@/src/hooks/use-icon-fonts";
 import { AuthProvider } from "@/src/lib/auth";
 import { I18nProvider } from "@/src/lib/i18n";
 import { BiometricGate } from "@/src/components/BiometricGate";
+import { captureRefCodeFromUrl } from "@/src/lib/refCode";
 
 LogBox.ignoreAllLogs(true);
 SplashScreen.preventAutoHideAsync();
@@ -51,6 +52,12 @@ export default function RootLayout() {
       SplashScreen.hideAsync();
     }
   }, [loaded, error]);
+
+  // Capture ?ref=CODE from the initial URL (web) or deep-link (native) and
+  // stash it in AsyncStorage so the register screen can pick it up.
+  useEffect(() => {
+    captureRefCodeFromUrl().catch(() => undefined);
+  }, []);
 
   // Notification tap handlers — web-guarded
   useEffect(() => {

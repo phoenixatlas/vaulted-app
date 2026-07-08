@@ -1,0 +1,34 @@
+{
+  "summary": "Iteration 21 (referral system) tested end-to-end. Full pytest suite (iterations 17-21) passes 53/53. Additional smoke suite (9 tests) covering login, backward-compat register, wallet/remit unchanged, and all referral endpoints (referrals/me, validate valid+invalid, credit/balance, credit/ledger) all pass. Frontend E2E: register?ref=<CODE> shows 'reg-invite-banner' with 'Invited by Smoke T.' masked name; login->settings->open-referral navigates to /referral; referral-code (KD1YU5BM), referral-share-link, referral-copy, referral-share, referral-balance (£0.00) all render correctly with 0 React console errors.",
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [],
+    "react_native_issues": []
+  },
+  "test_report_links": [
+    "/app/test_reports/pytest/iter21_results.xml",
+    "/app/backend/tests/test_iteration21_referrals.py",
+    "/app/backend/tests/test_iter21_smoke.py"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "Non-blocking: several console warnings (shadow* deprecated, props.pointerEvents deprecated) exist across the app; pre-existing, not introduced by iter 21."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_iter21_smoke.py (new smoke suite created)"
+  ],
+  "success_rate": {
+    "backend": "100% (53/53 pytest suite + 9/9 iter21 smoke)",
+    "frontend": "100% (register banner, settings entry, referral dashboard all pass with 0 console errors)"
+  },
+  "seed_data_creation": "None. Used existing smoketest@vaulted.app account (referral_code=KD1YU5BM). BC registration test creates disposable TEST_* users per run.",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "Login response uses 'access_token' key (not 'token'). Smoke user referral_code is currently KD1YU5BM. Register screen banner test uses masked format like 'Smoke T.' Expo web strips route groups so /(tabs)/wallet resolves to /wallet — use partial URL match instead of glob on '(tabs)'.",
+  "rca_of_issue": "N/A — no bugs found in iter 21 scope."
+}

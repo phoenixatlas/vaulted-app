@@ -1,30 +1,64 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import {
   View, Text, TextInput, Pressable, StyleSheet, KeyboardAvoidingView,
   Platform, ScrollView, ActivityIndicator,
 } from "react-native";
-import { Link, useRouter } from "expo-router";
+import { Link, useRouter, useLocalSearchParams } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { useAuth } from "@/src/lib/auth";
 import { useI18n } from "@/src/lib/i18n";
 import { colors, spacing, radius } from "@/src/lib/theme";
+import { api } from "@/src/lib/api";
+import { getPendingRefCode, clearPendingRefCode } from "@/src/lib/refCode";
+
+type ValidateResp = {
+  valid: boolean;
+  referrer_name_masked?: string;
+  reward_per_side_gbp?: number;
+};
 
 export default function Register() {
   const { register } = useAuth();
   const { t } = useI18n();
   const router = useRouter();
+  const params = useLocalSearchParams<{ ref?: string }>();
+
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [loading, setLoading] = useState(false);
   const [err, setErr] = useState<string | null>(null);
 
+  // Referral code — checked in this order: URL param, then persisted storage.
+  const [refCode, setRefCode] = useState<string | null>(null);
+  const [refInfo, setRefInfo] = useState<ValidateResp | null>(null);
+
+  // Bootstrap the code + validate it against backend so we can render a
+  // trust-building "Invited by Sarah B." banner before signup.
+  useEffect(() => {
+    let alive = true;
+    (async () => {
+      const fromUrl = (params?.ref || "").toString().trim().toUpperCase();
+      const persisted = fromUrl || (await getPendingRefCode()) || null;
+      if (!persisted || !alive) return;
+      setRefCode(persisted);
+      try {
+        const info = await api<ValidateResp>(`/referrals/validate/${persisted}`, { auth: false });
+        if (alive) setRefInfo(info);
+      } catch {
+        // Silent — invalid codes shouldn't block signup
+      }
+    })();
+    return () => { alive = false; };
+  }, [params?.ref]);
+
   const submit = async () => {
     setErr(null);
     setLoading(true);
     try {
-      await register(email.trim(), password, name.trim());
+      await register(email.trim(), password, name.trim(), refCode);
+      await clearPendingRefCode();
       router.replace("/onboarding/seed");
     } catch (e: any) {
       setErr(e.message);
@@ -42,6 +76,21 @@ export default function Register() {
           </Pressable>
           <Text style={s.title}>{t("sign_up")}</Text>
           <Text style={s.subtitle}>Your keys, your coins. Get started in seconds.</Text>
+
+          {refCode && refInfo?.valid && (
+            <View style={s.inviteBanner} testID="reg-invite-banner">
+              <Ionicons name="gift" size={18} color={colors.brandDeep} />
+              <View style={{ flex: 1 }}>
+                <Text style={s.inviteTitle}>
+                  Invited by {refInfo.referrer_name_masked}
+                </Text>
+                <Text style={s.inviteBody}>
+                  Verify your identity after signup and you&apos;ll get £
+                  {(refInfo.reward_per_side_gbp ?? 5).toFixed(0)} credit toward transfer fees.
+                </Text>
+              </View>
+            </View>
+          )}
 
           <View style={s.field}>
             <Text style={s.label}>{t("name")}</Text>
@@ -77,6 +126,11 @@ const s = StyleSheet.create({
   back: { marginBottom: spacing.lg, alignSelf: "flex-start" },
   title: { fontSize: 30, fontWeight: "700", color: colors.onSurface, letterSpacing: -0.8 },
   subtitle: { fontSize: 15, color: colors.onSurfaceSecondary, marginTop: spacing.sm, marginBottom: spacing.xl },
+
+  inviteBanner: { flexDirection: "row", gap: 10, alignItems: "flex-start", padding: spacing.md, backgroundColor: colors.brandTertiary, borderRadius: radius.md, borderWidth: 1, borderColor: "rgba(201,163,91,0.40)", marginBottom: spacing.xl },
+  inviteTitle: { fontSize: 13, fontWeight: "700", color: colors.brandDeep, marginBottom: 2 },
+  inviteBody: { fontSize: 12, color: colors.onSurfaceSecondary, lineHeight: 16 },
+
   field: { marginBottom: spacing.lg },
   label: { fontSize: 13, color: colors.onSurfaceSecondary, marginBottom: spacing.xs, fontWeight: "500" },
   input: { borderWidth: 1, borderColor: colors.border, borderRadius: radius.md, paddingHorizontal: spacing.lg, paddingVertical: 14, fontSize: 16, color: colors.onSurface, backgroundColor: colors.surface },
