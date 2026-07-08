@@ -1,0 +1,46 @@
+{
+  "summary": "Iteration 14 — XLM (Stellar Testnet) integration, backend-only per review. 15/15 pytest PASS. New /api/wallet/xlm/info + /api/wallet/xlm/send routes behave per spec: (a) fresh /api/auth/register auto-derives an XLM address (starts 'G', exactly 56 chars) exposed via /wallet/assets `xlm_address` + XLM asset entry with on_chain:true, network='Testnet', wallet_address matching top-level. (b) /wallet/xlm/info returns all required keys: address, balance_stroops, balance_xlm, network=Testnet, explorer (stellar.expert), faucet=https://friendbot.stellar.org/?addr=<addr>, send_supported:true, min_reserve_xlm:1.0. (c) POST /wallet/xlm/send with a valid 56-char G... recipient but an unfunded source correctly returns HTTP 400 with detail 'Insufficient XLM (need ...+1 reserve, have 0.0000). Stellar requires a 1 XLM minimum reserve to keep accounts active.' — clean JSON, no 500, no traceback. (d) Invalid recipient 'foo' → 400 'Invalid Stellar (G...) address'. (e) Negative + zero amount → 422 (Pydantic Field(gt=0)). (f) Missing token → 401. (g) Regressions green: /wallet/eth/send + /wallet/usdc/send + /wallet/btc/send + /wallet/sol/send all still 400 on invalid addresses; smoketest@vaulted.app login works; /api/ health = ok. (h) Confirmed via backend logs: no ERROR / traceback lines during test run. Note on review brief: the provided sample recipient `GCEAKB44V4S7YE4CTPZKVTZFYCRYJHVL7O53J7RUWRMTGSAOCD3AYN` is only 54 chars (truncated) — backend correctly rejects it as 'Invalid Stellar (G...) address' at server.py:902 before pre-flight balance check. Substituted a real 56-char G... address in the test to actually exercise the unfunded-source path. Frontend code-read: /app/frontend/app/send.tsx correctly routes asset==='XLM' → POST /wallet/xlm/send with body {to_address, amount, memo}; /app/frontend/app/receive.tsx has XLM in Asset union type + CHAIN_LABEL/CHAIN_PATH/CHAIN_BADGE maps — wiring matches backend schema exactly.",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {"endpoint": "/api/wallet/xlm/send", "issue": "Pre-flight insufficient-XLM check swallows Horizon read errors (`except Exception: stroops = None`) — if Horizon is down we skip the friendly 400 and reach stellar_sdk which then raises RuntimeError('XLM account not funded yet…') caught by the generic `except Exception` at server.py:928 returning 400 'XLM submission failed: XLM account not funded yet…'. Behaviour is still correct (400, no traceback), just worth noting the error text is slightly different in that failure mode."},
+      {"endpoint": "carry-over", "issue": "server.py now well past 2000 lines; XLM routes cleanly fit alongside BTC/SOL/USDC — a routers/wallet_multichain.py extract is overdue. Also carry-over from iter13: 28-byte JWT_SECRET, bcrypt __about__ AttributeError, expo doctor package drift."}
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [
+      {"component": "send.tsx (Friendbot faucet link for XLM)", "issue": "Line 217 uses `selected.address` but the backend /wallet/assets payload returns the field as `wallet_address` (see server.py:499) and the local `Asset` type (send.tsx:15-18) declares neither. Result: `encodeURIComponent(selected.address || '')` produces `https://friendbot.stellar.org/?addr=` (empty addr param), so Friendbot rejects the funding request. Fix: `selected.wallet_address` and extend the Asset type with `wallet_address?: string`.", "testID": "faucet-link-xlm", "priority": "MEDIUM"}
+    ],
+    "integration_issues": [],
+    "design_issues": [],
+    "react_native_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_iteration14_xlm.py",
+    "/app/test_reports/pytest/iter14_results.xml"
+  ],
+  "action_items": [
+    "(Frontend, MEDIUM) In send.tsx line 217, change `selected.address` → `selected.wallet_address` and extend the local `Asset` type with `wallet_address?: string;` so the XLM Friendbot faucet button actually funds the correct account (`?addr=<G...>`).",
+    "(Info only) The recipient address in the review brief (`GCEAKB44V4S7YE4CTPZKVTZFYCRYJHVL7O53J7RUWRMTGSAOCD3AYN`) is 54 chars — the backend's length gate at server.py:902 correctly rejects it. If E1 wants to hand-test with curl, use a real 56-char address (e.g. `GDQP2KPQGKIHYJGXNUIYOMHARUARCA7DJT5FO2FFOOKY3B2WSQHG4W37`).",
+    "(Carry-over from iter13) Split server.py into routers/; upgrade JWT_SECRET to 32+ bytes; pin bcrypt==4.0.1; run `npx expo install --fix` to align expo/expo-font/expo-router with SDK 54."
+  ],
+  "critical_code_review_comments": [
+    "xlm_send_route (server.py:894-951) is symmetric with sol_send_route: auto-derive addresses first, syntactic G... validation, pre-flight balance check via fetch_xlm_balance_stroops (with 1.0001 XLM reserve buffer covering both base reserve + fee headroom), typed ValueError vs generic Exception split so the 400 detail carries stellar_sdk's readable message, tx record persisted only after successful submit — solid.",
+    "multichain.xlm_send (multichain.py:301-349) uses stellar_sdk.Server.load_account to detect unfunded source (Horizon 404 → RuntimeError with actionable message), builds via TransactionBuilder with add_time_bounds(0,0), amount formatted to 7 decimals (Stellar canonical), memo truncated to 28 bytes — all per SEP-005/006. Base fee 100 stroops is well below current network minimum.",
+    "derive_addresses (multichain.py:65-90) now returns btc + sol + xlm using bip_utils Bip44Coins.STELLAR (SLIP-10 ed25519, m/44'/148'/0'). Signing uses stellar_sdk.Keypair.from_raw_ed25519_seed(bip_utils raw private) — matches the SEP-005 test vectors.",
+    "explorer_url_xlm (multichain.py:259-261) uses stellar.expert /explorer/testnet/account/... which is correct for testnet. For mainnet it switches to /explorer/public — good.",
+    "SendXlmIn model (server.py:888-891) has amount: float = Field(gt=0) giving free 422 on zero/negative; memo: Optional[str] is stripped to 28 bytes downstream in xlm_send.",
+    "One-line polish opportunity: server.py:882 concatenates the faucet URL with `+ a`; using an f-string would be more consistent with the rest of the file. Non-blocking.",
+    "(Carry-over) server.py at ~2050 lines; wallet_*_send + wallet_*_info routes are the natural sub-module."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_iteration14_xlm.py (new — 15 tests)",
+    "/app/test_reports/pytest/iter14_results.xml (new — 15 passed)"
+  ],
+  "success_rate": {"backend": "100% (15/15)", "frontend": "not tested (backend-only per review_request); code-read confirms wiring is correct except for one MEDIUM bug on the Friendbot faucet link"},
+  "seed_data_creation": "Two fresh TEST_iter14_<uuid>@vaulted.app users per pytest session via /api/auth/register (one module-scoped for auth headers, one for the register→assets flow). smoketest@vaulted.app reused read-only. Zero on-chain funds moved — fresh Stellar accounts are unfunded by design (hits the intended pre-flight 400).",
+  "retest_needed": false,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "XLM backend is production-ready modulo the frontend Friendbot faucet URL bug (send.tsx:217 — uses `selected.address` instead of `selected.wallet_address`, so the ?addr= param ends up empty and Friendbot can't fund the account). Sample 56-char testnet G-address for hand-testing curl: `GDQP2KPQGKIHYJGXNUIYOMHARUARCA7DJT5FO2FFOOKY3B2WSQHG4W37`. Note the review-brief address is 54 chars and is (correctly) rejected by the length gate.",
+  "rca_of_issue": "No backend bug found. The initial pytest fail was self-inflicted — the sample recipient copied from the review brief is 54 chars, so it hit the 'Invalid Stellar (G...) address' 400 at server.py:902 before the pre-flight balance check. Swapping to a real 56-char G-address exercises the intended unfunded-source path and returns the expected 'Insufficient XLM (need 1.0+1 reserve, have 0.0000). Stellar requires a 1 XLM minimum reserve...' 400."
+}
