@@ -57,6 +57,17 @@ from evm import (
     usdc_send_on_chain,
     explorer_url_evm,
 )
+from compliance import (
+    TIER_LIMITS,
+    DEFAULT_TIER,
+    COUNTRY_BLOCKLIST,
+    is_country_blocked,
+    get_user_tier,
+    tier_limits,
+    sum_this_month_gbp,
+    check_send_limits,
+    screen_sanctions,
+)
 
 
 ROOT_DIR = Path(__file__).parent
@@ -1316,6 +1327,15 @@ async def remit_quote(body: RemitQuoteIn, user=Depends(get_current_user)):
     if not corridor:
         raise HTTPException(status_code=400, detail="Unsupported destination corridor")
 
+    # Hard-block OFAC/UK/EU comprehensive-sanctions countries at quote time
+    # so users never see a "send" CTA to a jurisdiction we can't legally serve.
+    block_reason = is_country_blocked(body.destination_code)
+    if block_reason:
+        raise HTTPException(status_code=403, detail={
+            "error": "corridor_blocked",
+            "message": f"We cannot send money to {corridor['country']}. {block_reason}",
+        })
+
     # 1) FX rates
     fx = await refresh_fx_rates(db)
     rates = fx.get("rates") or {}
@@ -1378,9 +1398,13 @@ async def remit_quote(body: RemitQuoteIn, user=Depends(get_current_user)):
     remit_remaining = max(0, FREE_TIER_REMIT_LIMIT - remit_used) if not is_pro else None
     paywall_required = (not is_pro) and (remit_used >= FREE_TIER_REMIT_LIMIT)
 
+    # 7) KYC/AML tier limits — hard regulatory gate independent of Pro status
+    send_gbp = convert_fiat(body.amount, src, "GBP", rates)
+    kyc_check = await check_send_limits(db, user, send_gbp)
+
     quote = {
         "quote_id": str(uuid.uuid4()),
-        "source": {"currency": src, "amount": body.amount, "amount_usd": round(amount_usd, 2)},
+        "source": {"currency": src, "amount": body.amount, "amount_usd": round(amount_usd, 2), "amount_gbp": round(send_gbp, 2)},
         "destination": {
             "code": body.destination_code.upper(),
             "country": corridor["country"],
@@ -1405,6 +1429,7 @@ async def remit_quote(body: RemitQuoteIn, user=Depends(get_current_user)):
             "paywall_required": paywall_required,
             "is_pro": is_pro,
         },
+        "kyc": kyc_check,
         "sufficient_balance": pick is not None,
         "reason_if_no_chain": (
             "Not enough XLM, XRP, or USDC to cover this send + chain fee. "
@@ -1427,6 +1452,17 @@ class RemitSendIn(BaseModel):
 async def remit_send(body: RemitSendIn, user=Depends(get_current_user)):
     """Fiat-first send: re-quotes, enforces free-tier gate, then broadcasts on the picked chain."""
     is_pro = is_user_pro(user)
+
+    # 0) Hard-block sanctioned destination corridors (defense-in-depth — /quote
+    #    already 403s, but we re-check on /send in case the corridor list
+    #    shifted between quote and send).
+    block_reason = is_country_blocked(body.destination_code)
+    if block_reason:
+        raise HTTPException(status_code=403, detail={
+            "error": "corridor_blocked",
+            "message": f"We cannot send to that destination. {block_reason}",
+        })
+
     remit_used = await _remit_send_count_this_month(user["id"])
     if (not is_pro) and remit_used >= FREE_TIER_REMIT_LIMIT:
         raise HTTPException(
@@ -1452,6 +1488,24 @@ async def remit_send(body: RemitSendIn, user=Depends(get_current_user)):
     )
     if not quote["sufficient_balance"] or not quote.get("chain"):
         raise HTTPException(status_code=400, detail=quote.get("reason_if_no_chain") or "Insufficient balance")
+
+    # KYC/AML tier gate — HARD block. Cannot be bypassed by Pro subscription;
+    # regulatory limits apply regardless of Vaulted product tier.
+    kyc = quote.get("kyc") or {}
+    if not kyc.get("allowed"):
+        raise HTTPException(status_code=403, detail={
+            "error": "kyc_required",
+            "reason": kyc.get("reason"),
+            "current_tier": kyc.get("current_tier"),
+            "current_tier_label": kyc.get("current_tier_label"),
+            "limit": kyc.get("limit"),
+            "usage": kyc.get("usage"),
+            "upgrade": kyc.get("upgrade"),
+            "message": (
+                f"This send exceeds your {kyc.get('current_tier_label')} tier limit. "
+                f"Verify your identity to unlock up to £{(kyc.get('upgrade') or {}).get('target_per_send_gbp', 0):,.0f} per send."
+            ),
+        })
 
     chain = quote["chain"]["chain"]
     crypto_amount = float(quote["chain"]["crypto_amount"])
@@ -1529,6 +1583,180 @@ async def remit_send(body: RemitSendIn, user=Depends(get_current_user)):
     await db.transactions.insert_one(record)
     record.pop("_id", None)
     return record
+
+
+# ============================================================================
+# KYC / IDENTITY — Stripe Identity + OpenSanctions integration
+# ============================================================================
+KYC_RETURN_URL = os.environ.get("KYC_RETURN_URL") or (
+    (APP_PUBLIC_URL.rstrip("/") + "/kyc-return") if APP_PUBLIC_URL else "https://app.phoenix-atlas.com/kyc-return"
+)
+
+
+@api.get("/kyc/status")
+async def kyc_status(user=Depends(get_current_user)):
+    """Snapshot of the caller's current tier, limits, and month-to-date usage.
+    The frontend polls this to render the KYC banner and after Stripe Identity
+    submissions to show a 'Processing' state until the webhook flips the tier."""
+    tier = get_user_tier(user)
+    limits = tier_limits(tier)
+    used = await sum_this_month_gbp(db, user["id"])
+    kyc = user.get("kyc") or {}
+    return {
+        "tier": tier,
+        "tier_label": limits["label"],
+        "limits": {
+            "per_send_gbp": limits["per_send_gbp"],
+            "monthly_gbp": limits["monthly_gbp"],
+        },
+        "usage": {
+            "this_month_gbp": used,
+            "monthly_remaining_gbp": max(0.0, limits["monthly_gbp"] - used),
+            "monthly_used_pct": round((used / limits["monthly_gbp"]) * 100, 1) if limits["monthly_gbp"] else 0,
+        },
+        "next_tier": limits.get("next_tier"),
+        "next_tier_details": TIER_LIMITS[limits["next_tier"]] if limits.get("next_tier") else None,
+        # Stripe Identity + sanctions state
+        "identity_verification_status": kyc.get("identity_verification_status") or "not_started",
+        "identity_last_error": kyc.get("identity_last_error"),
+        "sanctions_check": {
+            "matched": (kyc.get("sanctions") or {}).get("matched", False),
+            "checked_at": (kyc.get("sanctions") or {}).get("checked_at"),
+        },
+    }
+
+
+@api.post("/kyc/session")
+async def kyc_session(user=Depends(get_current_user)):
+    """Create a Stripe Identity VerificationSession and return the hosted URL
+    that the frontend redirects the user to. Idempotent per user — if there's
+    already an active session that hasn't been canceled, we reuse its URL."""
+    if not STRIPE_API_KEY:
+        raise HTTPException(status_code=503, detail="Stripe not configured")
+
+    # Reuse an active session if one exists (prevents Dashboard clutter + costs).
+    kyc = user.get("kyc") or {}
+    existing_id = kyc.get("identity_verification_session_id")
+    existing_status = kyc.get("identity_verification_status")
+    if existing_id and existing_status in ("requires_input", "processing"):
+        try:
+            existing = stripe.identity.VerificationSession.retrieve(existing_id)
+            if existing.get("status") in ("requires_input",) and existing.get("url"):
+                return {"session_id": existing_id, "url": existing["url"], "reused": True}
+        except Exception as e:
+            logger.warning(f"kyc: existing session retrieve failed ({existing_id}): {e}")
+
+    try:
+        session = stripe.identity.VerificationSession.create(
+            type="document",
+            return_url=KYC_RETURN_URL,
+            options={
+                "document": {
+                    "allowed_types": ["driving_license", "passport", "id_card"],
+                    "require_matching_selfie": True,
+                    "require_live_capture": True,
+                },
+            },
+            metadata={
+                "user_id": user["id"],
+                "target_tier": "kyc_lite",
+                "email": user.get("email") or "",
+            },
+            idempotency_key=f"vaulted-kyc-lite-{user['id']}",
+        )
+    except stripe.error.StripeError as e:  # type: ignore[attr-defined]
+        raise HTTPException(status_code=502, detail=f"Stripe Identity error: {e}") from e
+
+    await db.users.update_one(
+        {"id": user["id"]},
+        {"$set": {
+            "kyc.identity_verification_session_id": session["id"],
+            "kyc.identity_verification_status": "requires_input",
+            "kyc.identity_started_at": iso(now_utc()),
+        }},
+    )
+    return {"session_id": session["id"], "url": session["url"], "reused": False}
+
+
+async def _apply_identity_verified(session_obj: dict):
+    """Webhook handler for identity.verification_session.verified — bumps the
+    user to kyc_lite tier and enqueues an OpenSanctions screen against the
+    verified name from the session."""
+    user_id = (session_obj.get("metadata") or {}).get("user_id")
+    if not user_id:
+        logger.warning(f"identity webhook missing user_id metadata: {session_obj.get('id')}")
+        return
+
+    # Pull the verified outputs (name + address; DOB requires a restricted key
+    # which we can add later). Falls back gracefully if expansion fails.
+    verified_name = None
+    verified_country = None
+    verified_dob = None
+    try:
+        full = stripe.identity.VerificationSession.retrieve(
+            session_obj["id"],
+            expand=["verified_outputs"],
+        )
+        vo = full.get("verified_outputs") or {}
+        first = (vo.get("first_name") or "").strip()
+        last = (vo.get("last_name") or "").strip()
+        verified_name = f"{first} {last}".strip() or None
+        addr = vo.get("address") or {}
+        verified_country = addr.get("country")
+        dob = vo.get("dob") or {}
+        if dob.get("year") and dob.get("month") and dob.get("day"):
+            verified_dob = f"{dob['year']:04d}-{dob['month']:02d}-{dob['day']:02d}"
+    except Exception as e:
+        logger.warning(f"identity verified_outputs fetch failed: {e}")
+
+    # Sanctions screening against the verified identity
+    sanctions_result = {"matched": False, "checked_at": iso(now_utc()), "reason": "no_name"}
+    if verified_name:
+        try:
+            sanctions_result = await screen_sanctions(verified_name, dob=verified_dob, country=verified_country)
+        except Exception as e:
+            logger.warning(f"sanctions screen failed for user {user_id}: {e}")
+
+    # If the sanctions check produced a HIGH-confidence match on a sanctions
+    # dataset, we do NOT auto-tier the user up — we flag for manual review.
+    is_flagged = bool(sanctions_result.get("matched")) and sanctions_result.get("scope") == "sanctions"
+
+    update = {
+        "kyc.identity_verification_status": "verified",
+        "kyc.identity_verified_at": iso(now_utc()),
+        "kyc.verified_name": verified_name,
+        "kyc.verified_country": verified_country,
+        "kyc.verified_dob": verified_dob,
+        "kyc.sanctions": sanctions_result,
+    }
+    if is_flagged:
+        update["kyc.tier"] = "flagged"
+        update["kyc.flagged_at"] = iso(now_utc())
+    else:
+        update["kyc.tier"] = "kyc_lite"
+
+    await db.users.update_one({"id": user_id}, {"$set": update})
+    logger.info(f"KYC-lite {'FLAGGED' if is_flagged else 'GRANTED'} for user={user_id}")
+
+
+async def _apply_identity_requires_input(session_obj: dict):
+    """Webhook handler for identity.verification_session.requires_input —
+    a check failed and the user needs to retry with a better photo/document."""
+    user_id = (session_obj.get("metadata") or {}).get("user_id")
+    if not user_id:
+        return
+    last_error = session_obj.get("last_error") or {}
+    await db.users.update_one(
+        {"id": user_id},
+        {"$set": {
+            "kyc.identity_verification_status": "requires_input",
+            "kyc.identity_last_error": {
+                "code": last_error.get("code"),
+                "reason": last_error.get("reason"),
+                "at": iso(now_utc()),
+            },
+        }},
+    )
 
 
 class SendEthIn(BaseModel):
@@ -2629,6 +2857,18 @@ async def stripe_webhook(request: Request, stripe_signature: Optional[str] = Hea
             {"subscription.stripe_subscription_id": sub.get("id")},
             {"$set": {"subscription.status": sub.get("status"), "subscription.current_period_end": sub.get("current_period_end")}},
         )
+    elif event["type"] == "identity.verification_session.verified":
+        await _apply_identity_verified(event["data"]["object"])
+    elif event["type"] == "identity.verification_session.requires_input":
+        await _apply_identity_requires_input(event["data"]["object"])
+    elif event["type"] == "identity.verification_session.canceled":
+        # User canceled mid-flow — leave the tier alone, just clear the pending state
+        user_id = ((event["data"]["object"].get("metadata") or {}).get("user_id"))
+        if user_id:
+            await db.users.update_one(
+                {"id": user_id},
+                {"$set": {"kyc.identity_verification_status": "canceled"}},
+            )
     return {"status": "ok"}
 
 

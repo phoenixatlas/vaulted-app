@@ -22,7 +22,7 @@ type Corridor = {
 
 type Quote = {
   quote_id: string;
-  source: { currency: string; amount: number; amount_usd: number };
+  source: { currency: string; amount: number; amount_usd: number; amount_gbp?: number };
   destination: {
     code: string; country: string; currency: string; flag: string;
     receive_via: string; eta: string; amount: number;
@@ -37,6 +37,22 @@ type Quote = {
     remaining_this_month: number | null;
     paywall_required: boolean;
     is_pro: boolean;
+  };
+  kyc?: {
+    allowed: boolean;
+    current_tier: string;
+    current_tier_label: string;
+    limit: { per_send_gbp: number; monthly_gbp: number };
+    usage: { this_month_gbp: number; monthly_remaining_gbp: number; monthly_used_pct: number };
+    reason: "over_per_send" | "over_monthly" | null;
+    upgrade?: {
+      target_tier: string;
+      target_tier_label: string;
+      target_per_send_gbp: number;
+      target_monthly_gbp: number;
+      requires: string;
+      why: string;
+    } | null;
   };
   sufficient_balance: boolean;
   reason_if_no_chain?: string | null;
@@ -93,6 +109,7 @@ export default function Remit() {
   const selectedCorridor = useMemo(() => corridors.find((c) => c.code === dest), [corridors, dest]);
   const isPro = !!user?.is_pro;
   const paywall = quote?.free_tier?.paywall_required;
+  const kycRequired = quote?.kyc && !quote.kyc.allowed;
   const addrPlaceholder = quote?.chain?.chain === "XRP"
     ? "r... recipient XRP address"
     : quote?.chain?.chain === "XLM"
@@ -104,6 +121,7 @@ export default function Remit() {
     if (!quote?.sufficient_balance) { setErr("Not enough crypto — top up XLM or XRP on the Wallet tab (use the Receive faucet links)."); return; }
     if (!addr.trim()) { setErr("Enter the recipient's wallet address"); return; }
     if (paywall) { router.push("/vault-pro"); return; }
+    if (kycRequired) { router.push({ pathname: "/kyc", params: { reason: "over_limit" } }); return; }
 
     if (user?.biometric_enabled) {
       const caps = await getCapabilities();
@@ -130,6 +148,11 @@ export default function Remit() {
       // 402 → paywall
       if (e?.status === 402 || (e?.message || "").includes("free_tier_exhausted")) {
         router.push("/vault-pro");
+        return;
+      }
+      // 403 → KYC required (over limit) or corridor blocked
+      if (e?.status === 403 || (e?.message || "").includes("kyc_required")) {
+        router.push({ pathname: "/kyc", params: { reason: "over_limit" } });
         return;
       }
       setErr(e?.message || "Send failed");
@@ -270,6 +293,46 @@ export default function Remit() {
             </View>
           )}
 
+          {quote?.kyc && (
+            <View
+              style={[s.kycBanner, kycRequired && s.kycBannerRequired, quote.kyc.current_tier === "kyc_lite" && s.kycBannerVerified]}
+              testID="remit-kyc-banner"
+            >
+              <Ionicons
+                name={quote.kyc.current_tier === "kyc_lite" ? "shield-checkmark" : kycRequired ? "lock-closed" : "person-circle-outline"}
+                size={16}
+                color={quote.kyc.current_tier === "kyc_lite" ? colors.success : kycRequired ? colors.error : colors.brand}
+              />
+              <View style={{ flex: 1 }}>
+                {kycRequired ? (
+                  <>
+                    <Text style={[s.kycBannerTitle, { color: colors.error }]}>Verification needed to send this amount</Text>
+                    <Text style={s.kycBannerSub}>
+                      Your {quote.kyc.current_tier_label} tier caps sends at £{quote.kyc.limit.per_send_gbp.toLocaleString()}. Verify to unlock £{quote.kyc.upgrade?.target_per_send_gbp?.toLocaleString() ?? "1,000"} per send.
+                    </Text>
+                  </>
+                ) : quote.kyc.current_tier === "kyc_lite" ? (
+                  <Text style={s.kycBannerSub}>
+                    <Text style={{ fontWeight: "700", color: colors.onSurface }}>{quote.kyc.current_tier_label}</Text> · £{quote.kyc.usage.monthly_remaining_gbp.toLocaleString()} of £{quote.kyc.limit.monthly_gbp.toLocaleString()} remaining this month
+                  </Text>
+                ) : (
+                  <Text style={s.kycBannerSub}>
+                    {quote.kyc.current_tier_label} tier · up to £{quote.kyc.limit.per_send_gbp.toLocaleString()}/send. Verify to unlock higher limits.
+                  </Text>
+                )}
+              </View>
+              {(kycRequired || quote.kyc.current_tier === "unverified") && (
+                <Pressable
+                  testID="remit-kyc-cta"
+                  onPress={() => router.push({ pathname: "/kyc", params: kycRequired ? { reason: "over_limit" } : {} })}
+                  style={s.kycCta}
+                >
+                  <Text style={s.kycCtaText}>Verify</Text>
+                </Pressable>
+              )}
+            </View>
+          )}
+
           {/* Recipient wallet address */}
           <Text style={s.label}>Recipient wallet address</Text>
           <TextInput
@@ -364,6 +427,13 @@ const s = StyleSheet.create({
 
   proBanner: { flexDirection: "row", alignItems: "center", gap: 8, marginTop: spacing.md, padding: spacing.md, borderRadius: radius.md, backgroundColor: colors.surfaceInverse, borderWidth: 1, borderColor: "rgba(201,163,91,0.40)" },
   proBannerText: { flex: 1, fontSize: 12, color: colors.onSurfaceInverse, lineHeight: 16, fontWeight: "500" },
+  kycBanner: { flexDirection: "row", alignItems: "center", gap: 10, marginTop: spacing.md, padding: spacing.md, borderRadius: radius.md, backgroundColor: colors.surfaceSecondary, borderWidth: 1, borderColor: colors.border },
+  kycBannerRequired: { backgroundColor: "rgba(200,60,60,0.08)", borderColor: "rgba(200,60,60,0.40)" },
+  kycBannerVerified: { backgroundColor: "rgba(60,180,90,0.06)", borderColor: "rgba(60,180,90,0.30)" },
+  kycBannerTitle: { fontSize: 12, fontWeight: "700", marginBottom: 2 },
+  kycBannerSub: { fontSize: 11, color: colors.onSurfaceSecondary, lineHeight: 15 },
+  kycCta: { backgroundColor: colors.brand, paddingHorizontal: 12, paddingVertical: 6, borderRadius: radius.pill },
+  kycCtaText: { color: "#0F0B08", fontSize: 12, fontWeight: "800" },
 
   helperText: { fontSize: 11, color: colors.onSurfaceTertiary, lineHeight: 15, marginTop: 4 },
   errorInline: { color: colors.error, fontSize: 13, marginTop: spacing.sm },

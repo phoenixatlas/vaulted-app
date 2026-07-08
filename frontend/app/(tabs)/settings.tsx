@@ -166,6 +166,13 @@ export default function Settings() {
           />
           <View style={s.sep} />
           <Row
+            icon="shield-checkmark"
+            label="Identity verification (KYC)"
+            testID="open-kyc"
+            onPress={() => router.push("/kyc")}
+          />
+          <View style={s.sep} />
+          <Row
             icon="reader"
             label="Show recovery phrase"
             testID="open-seed-phrase"
