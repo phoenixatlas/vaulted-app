@@ -183,14 +183,75 @@ frontend:
 
 metadata:
   created_by: "main_agent"
-  version: "1.1"
-  test_sequence: 15
+  version: "1.3"
+  test_sequence: 16
   run_ui: false
+
+backend_new_endpoints_this_iteration:
+  - task: "Remit — cross-border remittance quote + send (Phase B)"
+    implemented: true
+    working: true
+    file: "/app/backend/remit.py + /app/backend/server.py"
+    priority: "high"
+    needs_retesting: true
+    endpoints:
+      - "GET /api/remit/corridors (public — no auth)"
+      - "POST /api/remit/quote (auth) — {source_fiat, amount, destination_code}"
+      - "POST /api/remit/send (auth) — {source_fiat, amount, destination_code, recipient_address, recipient_name?, memo?}"
+    key_behaviours:
+      - "Free tier gate: 3 remit sends/month/user, 4th → HTTP 402 with paywall CTA"
+      - "Server-side re-quote on /send to prevent client-side rate/fee cheating"
+      - "Chain selector picks cheapest chain user has liquidity on"
+      - "Fresh users have 0 balance so quotes should show sufficient_balance=false with reason_if_no_chain populated"
+      - "Persists a 'remit' object on the transactions record (source/dest ccy, amounts, fx_rate, receive_via, chain)"
+
+  - task: "XRP (Ripple) chain — full-stack"
+    implemented: true
+    working: true
+    file: "/app/backend/multichain.py + /app/backend/server.py"
+    priority: "high"
+    needs_retesting: true
+    endpoints:
+      - "GET /api/wallet/xrp/info (auth)"
+      - "POST /api/wallet/xrp/send (auth) — {to_address (r...), amount, memo?}"
+    key_behaviours:
+      - "Address derivation: BIP-44 m/44'/144'/0'/0/0 → xrpl-py Wallet"
+      - "Balance fetch via XRPL account_info JSON-RPC"
+      - "Reserve pre-flight (1 XRP testnet / 10 XRP mainnet)"
+      - "Verified end-to-end on live XRPL testnet: tx 9867119F...86D9 mined (main agent)"
+
+  - task: "EVM L2 chains — Polygon / Base / Arbitrum for cheap USDC"
+    implemented: true
+    working: true
+    file: "/app/backend/evm.py + /app/backend/server.py"
+    priority: "high"
+    needs_retesting: true
+    endpoints:
+      - "GET /api/wallet/evm/chains (auth) — returns all 4 L2s with usdc_balance + native_balance per chain"
+      - "POST /api/wallet/evm/usdc/send (auth) — {chain: 'polygon'|'base'|'arbitrum'|'sepolia', to_address, amount_usdc}"
+    key_behaviours:
+      - "GET /wallet/assets now aggregates USDC across all EVM chains and exposes usdc_by_chain breakdown"
+      - "Same 0x address holds USDC on every EVM chain (no new key derivation)"
+      - "USDC contract per chain uses Circle's official Sepolia/Amoy/Base-Sep/Arb-Sep deployments"
+      - "Remit chain selector considers USDC_POLYGON/USDC_BASE/USDC_ARBITRUM as first-class ~$0.01-gas routes"
+
+  - task: "XLM backfill for existing (pre-XLM) users"
+    implemented: true
+    working: true
+    file: "/app/backend/server.py"
+    priority: "high"
+    needs_retesting: true
+    key_behaviours:
+      - "Any missing symbol from DEFAULT_ASSETS is auto-inserted into db.balances on next /wallet/assets fetch"
+      - "Injected Mongo _id is stripped before response (prevents ObjectId serialization bug)"
+      - "Now applies to XLM AND XRP for legacy accounts registered before those chains shipped"
 
 test_plan:
   current_focus:
-    - "XRP send/receive end-to-end on production Render (post-push)"
-    - "Verify XLM finally shows up for the pre-XLM user (after backfill deploy)"
+    - "Backend sweep — validate all new remit + XRP + EVM L2 endpoints end-to-end"
+    - "Free-tier gate enforcement — verify 4th cross-border send returns 402 for non-Pro users"
+    - "Legacy user backfill — simulate an old user (delete their XLM+XRP balance rows) and confirm /wallet/assets re-inserts them"
+    - "USDC on L2 send happy path — Polygon Amoy funded via Circle faucet (or MOCKED if faucet is slow/unavailable)"
   stuck_tasks: []
   test_all: false
   test_priority: "high_first"
@@ -198,11 +259,23 @@ test_plan:
 agent_communication:
   - agent: "main"
     message: |
-      Ready to push these backend + frontend changes to GitHub → Render + Vercel
-      will auto-deploy. Once live:
-        1. The user's original account should immediately start showing XLM
-           (backfill triggers on next /wallet/assets fetch).
-        2. XRP will appear as the 6th asset — sends work on testnet;
-           funded via the XRPL faucet link inside Send screen.
-      Both flows verified locally; no need to burn an extra testing_agent call
-      before user validates in production.
+      Please run a full backend sweep targeting the endpoints added in the
+      last three iterations (Remit / XRP / EVM L2). Details in
+      backend_new_endpoints_this_iteration above.
+
+      Environment: local backend at http://localhost:8001 (Render production
+      hasn't received the L2 commit yet — user still needs to click Push).
+
+      Test creds (from /app/memory/test_credentials.md):
+        smoketest@vaulted.app / test1234  (this account IS Pro — good for
+        testing paywall bypass and 50% service-fee discount)
+
+      To test the free-tier paywall you'll need to register a FRESH non-Pro
+      account and do 4 remit sends in a row (the 4th must return 402).
+
+      XRP + XLM real broadcasts are cheap on testnets — feel free to hit the
+      faucets. USDC on L2 broadcasts likely need MOCKING (Circle's faucet
+      requires manual clicks); it's fine to test /wallet/evm/usdc/send with
+      "insufficient balance" 400s and validate the address / chain
+      validation + error paths instead.
+

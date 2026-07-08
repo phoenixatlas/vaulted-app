@@ -1,0 +1,55 @@
+{
+  "summary": "Backend sweep of Remit + XRP + EVM L2 + XLM/XRP backfill endpoints (last 3 iterations). 21/23 tests passed (91.3%). Both failures pin down a single real backend bug: `/remit/quote` and `/remit/send` read `user.get('is_pro')` from the raw Mongo user dict, but `is_pro` is only computed inside `public_user()` for API responses — it's never persisted or added by `get_current_user`. So real Pro subscribers (e.g. smoketest) are incorrectly gated as free-tier by the remit endpoints (3/mo cap + full-price service fee). All other new endpoints (XRP info/send + reserve check, EVM L2 chain listing + USDC send validation, corridor list, quote calculations, free-tier gate for non-Pro, legacy XLM/XRP backfill, regression BTC/SOL/XLM info) are working. Real live XRP testnet broadcast succeeded (funded via XRPL faucet, sent 5 XRP to rHb9CJ...tyTh). Free-tier gate correctly returns HTTP 402 with detail.error='free_tier_exhausted' on the 4th non-Pro send.",
+  "backend_issues": {
+    "critical": [
+      {
+        "endpoint": "POST /api/remit/quote and POST /api/remit/send",
+        "issue": "Pro-user bypass is broken. Both endpoints read `bool(user.get('is_pro'))` at server.py:1336 and server.py:1396 — but `get_current_user` (server.py:252-265) returns the raw Mongo doc which never contains an `is_pro` field (only `subscription.status`). Consequence: (a) Pro subscribers pay the FULL Vaulted service fee instead of the 50% discount, (b) Pro subscribers get 402-gated after 3 remit sends/month just like free users. Repro: log in as smoketest@vaulted.app (subscription.status='active'), POST /api/remit/quote {source_fiat:'GBP',amount:20,destination_code:'KE'} → response.free_tier.is_pro=false and remaining_this_month=3 instead of null. Fix (one-liner): in `get_current_user`, before returning, do `user['is_pro'] = (user.get('subscription') or {}).get('status') in ('active','trialing')`. Or change the two `user.get('is_pro')` reads in remit to the same pattern used elsewhere in the file (server.py lines 1592, 2121).",
+        "priority": "HIGH"
+      }
+    ],
+    "minor": [
+      {
+        "endpoint": "POST /api/wallet/evm/usdc/send",
+        "issue": "Endpoint validation order + smoketest seed gap. The endpoint rejects with 'No ETH key on file' at server.py:844 BEFORE validating chain/recipient. Combined with the fact that the smoketest seed script stores `eth_mnemonic` but NOT `eth_private_key` (fresh /auth/register users DO get both — server.py:371), it means the smoketest account cannot use /wallet/evm/usdc/send at all. Fix options: (a) reorder the validation so bad chain/recipient short-circuits with 400 before the key check, (b) if `eth_private_key` is missing but `eth_mnemonic` is present, derive the key on the fly (same BIP44 path already used elsewhere), or (c) backfill `eth_private_key` for the seeded smoketest user."
+      },
+      {
+        "endpoint": "GET /api/wallet/evm/chains",
+        "issue": "Import statement `from evm import fetch_native_balance_on_chain` is done INSIDE the loop at server.py:816 on every request/chain. Cosmetic — should be a top-of-file import."
+      }
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [],
+    "react_native_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_iteration16.py",
+    "/app/test_reports/pytest/iter16_results.xml"
+  ],
+  "action_items": [
+    "Fix Pro bypass in remit: either populate `is_pro` on the user dict inside `get_current_user` (server.py:252-265) OR replace `user.get('is_pro')` at server.py:1336 and 1396 with `(user.get('subscription') or {}).get('status') in ('active','trialing')`. This is a P1 revenue bug — Pro users are currently over-charged on service fees AND wrongly rate-limited.",
+    "Backfill or derive `eth_private_key` for the seeded smoketest@vaulted.app user (currently only has `eth_mnemonic`). Otherwise /wallet/evm/usdc/send is unusable for the smoke account. Long-term fix: derive from mnemonic on demand inside the EVM send handler.",
+    "Consider reordering /wallet/evm/usdc/send validation to fail bad chain/recipient with a helpful 400 before requiring an ETH key (nice-to-have UX polish).",
+    "Move `from evm import fetch_native_balance_on_chain` out of the `/wallet/evm/chains` request loop to top-of-file (server.py:816)."
+  ],
+  "critical_code_review_comments": [
+    "server.py is now 2828 lines — well past the 700-line guideline. Should be split into routers per domain (auth.py already extracted; remit/xrp/evm handlers could similarly move out).",
+    "Pro-tier gating logic is duplicated in at least 4 places (server.py:248, 1336, 1592, 2121) with three DIFFERENT idioms. Extract a single `is_user_pro(user)` helper to eliminate the divergence that caused this iteration's bug."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_iteration16.py (new)",
+    "/app/test_reports/pytest/iter16_results.xml (new)"
+  ],
+  "success_rate": {
+    "backend": "91.3% (21/23)",
+    "frontend": "N/A (backend-only sweep per request)"
+  },
+  "seed_data_creation": "Registered ~6 ephemeral TEST_iter16_* users via /api/auth/register during the run (backfill, quote, free-tier gate, EVM validation). Also inserted 5 seed transactions with `_iter16_seed:true` marker for the Pro-bypass test, all cleaned up in the finally block. No permanent data left in DB apart from the temporary test users (their entries in db.users / db.balances / db.contacts / db.transactions can be dropped with the filter `email: /^TEST_iter16_/i`).",
+  "retest_needed": true,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "After main agent fixes the `is_pro` reads in remit_quote / remit_send, re-run test_iteration16.py — specifically TestRemitQuote::test_quote_smoketest_is_pro and TestRemitProBypass::test_pro_bypass. Also verify TestEVML2 tests continue to pass since they now use fresh_user (which has eth_private_key). The XRP live-broadcast test hits the public XRPL testnet faucet — if that faucet is rate-limited or down, the free-tier-gate test will pytest.skip cleanly rather than false-fail.",
+  "rca_of_issue": "ROOT CAUSE (P1 Pro bypass bug): `is_pro` is a *derived* field. It's computed in `public_user(u)` at server.py:248 as `(sub.get('status') in ('active','trialing'))` and returned to the API client — but it is NEVER written back to Mongo, and `get_current_user` (server.py:252-265) simply returns the raw Mongo doc via `db.users.find_one(...)` without computing it. When `remit_quote`/`remit_send` (server.py:1336, 1396) then do `bool(user.get('is_pro'))`, they always get False. REPRO: (1) POST /api/auth/login {email:'smoketest@vaulted.app',password:'test1234'} → 200. (2) POST /api/remit/quote {source_fiat:'GBP',amount:20,destination_code:'KE'} with Bearer token → 200 with response.free_tier.is_pro=false, remaining_this_month=3, paywall_required=false. Expected: is_pro=true, remaining_this_month=null. MITIGATION: two-line fix inside get_current_user — after fetching the user, compute is_pro from subscription.status and stamp it on the dict before returning. This will also automatically fix the Vaulted service-fee 50%-off calculation (vaulted_fee_usd receives the wrong is_pro today)."
+}
