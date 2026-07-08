@@ -14,7 +14,7 @@ import { authenticate, getCapabilities } from "@/src/lib/biometric";
 
 type Asset = {
   id: string; symbol: string; name: string; amount: number; fiat_value: number;
-  on_chain?: boolean; network?: string | null;
+  on_chain?: boolean; network?: string | null; wallet_address?: string | null;
 };
 
 export default function SendCrypto() {
@@ -214,7 +214,7 @@ export default function SendCrypto() {
             </Pressable>
           )}
           {isXlm && selected && (
-            <Pressable testID="faucet-link-xlm" onPress={() => Linking.openURL(`https://friendbot.stellar.org/?addr=${encodeURIComponent(selected.address || "")}`)} style={s.faucet}>
+            <Pressable testID="faucet-link-xlm" onPress={() => Linking.openURL(`https://friendbot.stellar.org/?addr=${encodeURIComponent(selected.wallet_address || "")}`)} style={s.faucet}>
               <Ionicons name="water-outline" size={16} color={colors.brand} />
               <Text style={s.faucetText}>Need test XLM? Tap here (Friendbot funds you 10,000 XLM)</Text>
             </Pressable>
