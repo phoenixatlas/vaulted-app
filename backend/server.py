@@ -53,6 +53,7 @@ from evm import (
     list_evm_chains,
     evm_chain_config,
     fetch_usdc_balance_on_chain,
+    fetch_native_balance_on_chain,
     usdc_send_on_chain,
     explorer_url_evm,
 )
@@ -227,6 +228,36 @@ def make_token(user_id: str) -> str:
     return jwt.encode(payload, JWT_SECRET, algorithm=JWT_ALG)
 
 
+def is_user_pro(u: dict) -> bool:
+    """Single source of truth: a user is 'Pro' if their Stripe subscription is
+    active or trialing. Used by every fee/paywall check across the app to
+    avoid the previous bug where /remit read a `u["is_pro"]` field that
+    only existed on the public_user() response, never on the raw DB doc."""
+    return ((u.get("subscription") or {}).get("status") in ("active", "trialing"))
+
+
+async def _ensure_eth_private_key(user: dict) -> Optional[str]:
+    """Derive + persist eth_private_key on-the-fly for legacy users who signed
+    up before the field was added to the schema. Returns the key or None if
+    even the mnemonic is missing (unrecoverable)."""
+    if user.get("eth_private_key"):
+        return user["eth_private_key"]
+    mnemonic = user.get("eth_mnemonic") or user.get("mnemonic")
+    if not mnemonic:
+        return None
+    try:
+        Account.enable_unaudited_hdwallet_features()
+        acct = Account.from_mnemonic(mnemonic)
+    except Exception as e:
+        logger.warning(f"eth_private_key backfill from mnemonic failed: {e}")
+        return None
+    pk_hex = "0x" + acct.key.hex()
+    # Persist so we only pay the KDF cost once
+    await db.users.update_one({"id": user["id"]}, {"$set": {"eth_private_key": pk_hex}})
+    user["eth_private_key"] = pk_hex
+    return pk_hex
+
+
 def public_user(u: dict) -> dict:
     sub = u.get("subscription") or {}
     return {
@@ -245,7 +276,7 @@ def public_user(u: dict) -> dict:
             "status": sub.get("status", "inactive"),
             "current_period_end": sub.get("current_period_end"),
         },
-        "is_pro": (sub.get("status") in ("active", "trialing")),
+        "is_pro": is_user_pro(u),
     }
 
 
@@ -813,7 +844,6 @@ async def evm_chains(user=Depends(get_current_user)):
                 logger.warning(f"USDC balance failed on {cfg['chain']}: {e}")
             # Best-effort native balance — never block the response on this
             try:
-                from evm import fetch_native_balance_on_chain
                 native_bal_wei = await fetch_native_balance_on_chain(cfg["chain"], addr)
             except Exception:
                 native_bal_wei = 0
@@ -838,22 +868,25 @@ async def evm_usdc_send(body: SendEvmUsdcIn, user=Depends(get_current_user)):
     Arbitrum / Sepolia). Reuses the user's existing ETH private key — the
     same 0x address holds USDC on every EVM chain, so no new key derivation
     is needed."""
-    pk = user.get("eth_private_key")
-    addr = user.get("wallet_address")
-    if not pk or not addr:
-        raise HTTPException(status_code=400, detail="No ETH key on file")
-
-    to = body.to_address.strip()
-    if not (to.startswith("0x") and len(to) == 42):
-        raise HTTPException(status_code=400, detail="Invalid recipient (0x-prefixed 42 chars required)")
-
+    # 1) Validate chain first — cheap fail
     chain = body.chain.lower().strip()
     try:
         cfg = evm_chain_config(chain)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e)) from e
 
-    # Pre-flight USDC balance on the specified chain
+    # 2) Validate recipient address
+    to = body.to_address.strip()
+    if not (to.startswith("0x") and len(to) == 42):
+        raise HTTPException(status_code=400, detail="Invalid recipient (0x-prefixed 42 chars required)")
+
+    # 3) Require signing material — auto-backfill from mnemonic if legacy user
+    pk = await _ensure_eth_private_key(user)
+    addr = user.get("wallet_address")
+    if not pk or not addr:
+        raise HTTPException(status_code=400, detail="No ETH key on file")
+
+    # 4) Pre-flight USDC balance on the specified chain
     try:
         bal_micro = await fetch_usdc_balance_on_chain(chain, addr)
     except Exception as e:
@@ -1333,7 +1366,7 @@ async def remit_quote(body: RemitQuoteIn, user=Depends(get_current_user)):
     pick = choose_chain(amount_usd, holdings, crypto_prices_usd)
 
     # 4) Vaulted service fee (Pro discount applies)
-    is_pro = bool(user.get("is_pro"))
+    is_pro = is_user_pro(user)
     svc_fee_usd = vaulted_fee_usd(amount_usd, is_pro)
 
     # 5) Recipient amount in destination fiat
@@ -1393,7 +1426,7 @@ class RemitSendIn(BaseModel):
 @api.post("/remit/send")
 async def remit_send(body: RemitSendIn, user=Depends(get_current_user)):
     """Fiat-first send: re-quotes, enforces free-tier gate, then broadcasts on the picked chain."""
-    is_pro = bool(user.get("is_pro"))
+    is_pro = is_user_pro(user)
     remit_used = await _remit_send_count_this_month(user["id"])
     if (not is_pro) and remit_used >= FREE_TIER_REMIT_LIMIT:
         raise HTTPException(
@@ -1589,7 +1622,7 @@ async def _broadcast_eth_send(user: dict, addr: str, pk: str, to: str, amount_et
     except Exception as e:
         raise HTTPException(status_code=502, detail=f"Sepolia send failed: {e}")
 
-    is_pro = (user.get("subscription") or {}).get("status") in ("active", "trialing")
+    is_pro = is_user_pro(user)
     service_fee_usd = 0.05 if is_pro else 0.10
 
     price = next((a["price_usd"] for a in DEFAULT_ASSETS if a["symbol"] == "ETH"), 0)
@@ -2118,7 +2151,7 @@ async def contacts(user=Depends(get_current_user)):
 
 @api.get("/chat/conversations")
 async def conversations(user=Depends(get_current_user)):
-    is_pro = (user.get("subscription") or {}).get("status") in ("active", "trialing")
+    is_pro = is_user_pro(user)
     cur = db.conversations.find({"user_id": user["id"]}, {"_id": 0}).sort("last_message_at", -1)
     items = await cur.to_list(200)
     if is_pro:
