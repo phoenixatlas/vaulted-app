@@ -123,6 +123,15 @@ export default function Receive() {
           <Text style={s.chainKind}>{CHAIN_BADGE[asset]}</Text>
         </View>
 
+        {asset === "USDC" && (
+          <View style={s.multiChainNote}>
+            <Ionicons name="link-outline" size={14} color={colors.brand} />
+            <Text style={s.multiChainNoteText}>
+              This address receives USDC on Ethereum, Polygon, Base and Arbitrum. Ask the sender to pick a cheap L2 (Polygon/Base) for near-free gas.
+            </Text>
+          </View>
+        )}
+
         <View style={s.qrCard}>
           {assetErr ? (
             <View style={s.qrPlaceholder}>
@@ -191,6 +200,8 @@ const s = StyleSheet.create({
   dot: { width: 8, height: 8, borderRadius: 4 },
   chainLabel: { fontSize: 12, fontWeight: "700", color: colors.onSurface, letterSpacing: 0.2 },
   chainKind: { fontSize: 10, fontWeight: "700", color: colors.brandDeep, backgroundColor: "rgba(201,163,91,0.18)", paddingHorizontal: 6, paddingVertical: 2, borderRadius: 4, marginLeft: 4 },
+  multiChainNote: { flexDirection: "row", gap: 8, alignItems: "flex-start", padding: spacing.md, marginTop: spacing.md, backgroundColor: colors.brandTertiary, borderRadius: radius.md, borderWidth: 1, borderColor: "rgba(201,163,91,0.30)" },
+  multiChainNoteText: { flex: 1, color: colors.brandDeep, fontSize: 12, lineHeight: 16 },
   qrCard: { width: 240, height: 240, borderRadius: radius.lg, backgroundColor: colors.surfaceSecondary, alignItems: "center", justifyContent: "center", marginTop: spacing.sm, borderWidth: 1, borderColor: "rgba(201,163,91,0.30)" },
   qrPlaceholder: { width: 208, height: 208, alignItems: "center", justifyContent: "center", paddingHorizontal: 12, gap: 10 },
   qrErrText: { color: colors.brandDeep, fontSize: 12, textAlign: "center", lineHeight: 16, fontWeight: "500" },

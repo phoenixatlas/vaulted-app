@@ -49,6 +49,13 @@ from remit import (
     choose_chain,
     vaulted_fee_usd,
 )
+from evm import (
+    list_evm_chains,
+    evm_chain_config,
+    fetch_usdc_balance_on_chain,
+    usdc_send_on_chain,
+    explorer_url_evm,
+)
 
 
 ROOT_DIR = Path(__file__).parent
@@ -495,6 +502,19 @@ async def wallet_assets(user=Depends(get_current_user)):
             usdc_amount = (await fetch_usdc_balance_micro(addr)) / 1e6
     except Exception as e:
         logger.warning(f"usdc balance fetch failed: {e}")
+    # L2 USDC aggregation — fetch USDC across Polygon, Base, Arbitrum and sum
+    # into the wallet's headline USDC number. Per-chain breakdown is exposed
+    # via /api/wallet/evm/chains for the Send screen's L2 picker.
+    usdc_by_chain = {"sepolia": usdc_amount}
+    if addr and addr.startswith("0x"):
+        for l2 in ("polygon", "base", "arbitrum"):
+            try:
+                bal = (await fetch_usdc_balance_on_chain(l2, addr)) / 1e6
+                usdc_by_chain[l2] = bal
+                usdc_amount += bal
+            except Exception as e:
+                logger.warning(f"USDC balance fetch failed on {l2}: {e}")
+                usdc_by_chain[l2] = 0.0
     try:
         if xlm_addr:
             xlm_amount = (await fetch_xlm_balance_stroops(xlm_addr)) / 1e7
@@ -553,6 +573,7 @@ async def wallet_assets(user=Depends(get_current_user)):
         "sol_address": sol_addr,
         "xlm_address": xlm_addr,
         "xrp_address": xrp_addr,
+        "usdc_by_chain": usdc_by_chain,
         "assets": out,
         "prices_fetched_at": market.get("fetched_at"),
     }
@@ -763,6 +784,113 @@ async def usdc_send(body: SendUsdcIn, user=Depends(get_current_user)):
         "network": "Mainnet" if USE_MAINNET else "Sepolia",
         "tx_hash": tx_hash,
         "explorer_url": f"https://sepolia.etherscan.io/tx/{tx_hash}",
+        "status": "pending",
+        "service_fee_usd": 0.0,
+        "created_at": iso(now_utc()),
+    }
+    await db.transactions.insert_one(record)
+    record.pop("_id", None)
+    return record
+
+
+# ============================================================================
+# EVM L2 CHAINS — Polygon, Base, Arbitrum (cheap USDC route for remittances)
+# ============================================================================
+@api.get("/wallet/evm/chains")
+async def evm_chains(user=Depends(get_current_user)):
+    """List every supported EVM chain with the current user's USDC balance and
+    a live native-token balance (for gas). Powers the Send screen's L2 picker
+    and the Remit chain selection UI."""
+    addr = user.get("wallet_address")
+    out = []
+    for cfg in list_evm_chains(include_sepolia=True):
+        usdc_bal = 0.0
+        native_bal_wei = 0
+        if addr and addr.startswith("0x"):
+            try:
+                usdc_bal = (await fetch_usdc_balance_on_chain(cfg["chain"], addr)) / 1e6
+            except Exception as e:
+                logger.warning(f"USDC balance failed on {cfg['chain']}: {e}")
+            # Best-effort native balance — never block the response on this
+            try:
+                from evm import fetch_native_balance_on_chain
+                native_bal_wei = await fetch_native_balance_on_chain(cfg["chain"], addr)
+            except Exception:
+                native_bal_wei = 0
+        out.append({
+            **cfg,
+            "usdc_balance": round(usdc_bal, 6),
+            "native_balance": native_bal_wei / 1e18,
+            "wallet_address": addr,
+        })
+    return {"chains": out}
+
+
+class SendEvmUsdcIn(BaseModel):
+    chain: str  # "polygon" | "base" | "arbitrum" | "sepolia"
+    to_address: str
+    amount_usdc: float = Field(gt=0)
+
+
+@api.post("/wallet/evm/usdc/send")
+async def evm_usdc_send(body: SendEvmUsdcIn, user=Depends(get_current_user)):
+    """Broadcast a USDC transfer on the specified EVM chain (Polygon / Base /
+    Arbitrum / Sepolia). Reuses the user's existing ETH private key — the
+    same 0x address holds USDC on every EVM chain, so no new key derivation
+    is needed."""
+    pk = user.get("eth_private_key")
+    addr = user.get("wallet_address")
+    if not pk or not addr:
+        raise HTTPException(status_code=400, detail="No ETH key on file")
+
+    to = body.to_address.strip()
+    if not (to.startswith("0x") and len(to) == 42):
+        raise HTTPException(status_code=400, detail="Invalid recipient (0x-prefixed 42 chars required)")
+
+    chain = body.chain.lower().strip()
+    try:
+        cfg = evm_chain_config(chain)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+
+    # Pre-flight USDC balance on the specified chain
+    try:
+        bal_micro = await fetch_usdc_balance_on_chain(chain, addr)
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"USDC balance error on {chain}: {e}") from e
+    need_micro = int(round(body.amount_usdc * 1_000_000))
+    if bal_micro < need_micro:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"Insufficient USDC on {cfg['display_name']} "
+                f"(need {body.amount_usdc}, have {bal_micro/1e6}). "
+                f"Top up via {cfg.get('faucet_usdc') or 'the Circle faucet'}."
+            ),
+        )
+
+    try:
+        result = await usdc_send_on_chain(chain, pk, addr, to, body.amount_usdc)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"USDC send failed on {chain}: {str(e)[:200]}") from e
+
+    fiat = round(body.amount_usdc * 1.0, 2)  # USDC ≈ $1
+    record = {
+        "id": str(uuid.uuid4()),
+        "user_id": user["id"],
+        "type": "send",
+        "category": f"Crypto · USDC ({cfg['short']})",
+        "asset": "USDC",
+        "amount": body.amount_usdc,
+        "fiat_value": fiat,
+        "counterparty": to,
+        "network": cfg["network"],
+        "chain": chain,
+        "chain_id": cfg["chain_id"],
+        "tx_hash": result["tx_hash"],
+        "explorer_url": result["explorer_url"],
         "status": "pending",
         "service_fee_usd": 0.0,
         "created_at": iso(now_utc()),
@@ -1190,6 +1318,13 @@ async def remit_quote(body: RemitQuoteIn, user=Depends(get_current_user)):
         eth_addr = user.get("wallet_address")
         if eth_addr and eth_addr.startswith("0x"):
             holdings["USDC"] = (await fetch_usdc_balance_micro(eth_addr)) / 1e6
+            # Also probe every L2 for cheap USDC routes
+            for l2, key in (("polygon", "USDC_POLYGON"), ("base", "USDC_BASE"), ("arbitrum", "USDC_ARBITRUM")):
+                try:
+                    holdings[key] = (await fetch_usdc_balance_on_chain(l2, eth_addr)) / 1e6
+                except Exception as e:
+                    logger.warning(f"remit: USDC {l2} balance fetch failed: {e}")
+                    holdings[key] = 0.0
     except Exception as e:
         logger.warning(f"remit: USDC balance fetch failed: {e}")
         holdings["USDC"] = 0.0
@@ -1294,7 +1429,7 @@ async def remit_send(body: RemitSendIn, user=Depends(get_current_user)):
         raise HTTPException(status_code=400, detail="Recipient must be a valid Stellar (G...) address")
     if chain == "XRP" and not (to.startswith("r") and 25 <= len(to) <= 40):
         raise HTTPException(status_code=400, detail="Recipient must be a valid XRP (r...) address")
-    if chain == "USDC" and not (to.startswith("0x") and len(to) == 42):
+    if chain.startswith("USDC") and not (to.startswith("0x") and len(to) == 42):
         raise HTTPException(status_code=400, detail="Recipient must be a valid Ethereum (0x...) address")
 
     mnemonic = user.get("eth_mnemonic") or user.get("mnemonic")
@@ -1303,16 +1438,23 @@ async def remit_send(body: RemitSendIn, user=Depends(get_current_user)):
 
     memo_short = (body.memo or f"Vaulted-{body.destination_code.upper()}")[:28]
 
+    # Map remit chain identifier → concrete on-chain send function
+    _L2_MAP = {"USDC_POLYGON": "polygon", "USDC_BASE": "base", "USDC_ARBITRUM": "arbitrum", "USDC": "sepolia"}
+
     try:
         if chain == "XLM":
             result = await xlm_send(mnemonic, to, crypto_amount, memo=memo_short)
         elif chain == "XRP":
             result = await xrp_send(mnemonic, to, crypto_amount, memo=memo_short)
-        else:  # USDC path
-            raise HTTPException(
-                status_code=400,
-                detail="USDC remittance route is temporarily disabled while we integrate the L2 gasless flow. Please use XLM or XRP.",
-            )
+        elif chain in _L2_MAP:
+            evm_chain = _L2_MAP[chain]
+            pk = user.get("eth_private_key")
+            eth_addr = user.get("wallet_address")
+            if not pk or not eth_addr:
+                raise HTTPException(status_code=400, detail="No ETH key on file")
+            result = await usdc_send_on_chain(evm_chain, pk, eth_addr, to, crypto_amount)
+        else:
+            raise HTTPException(status_code=400, detail=f"Unsupported chain: {chain}")
     except HTTPException:
         raise
     except ValueError as e:
@@ -1326,7 +1468,7 @@ async def remit_send(body: RemitSendIn, user=Depends(get_current_user)):
         "user_id": user["id"],
         "type": "send",
         "category": f"Remit · {dst['country']}",
-        "asset": chain,
+        "asset": "USDC" if chain.startswith("USDC") else chain,
         "amount": crypto_amount,
         "fiat_value": quote["source"]["amount_usd"],  # USD-normalised
         "counterparty": to,

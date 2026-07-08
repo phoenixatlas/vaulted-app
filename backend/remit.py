@@ -50,17 +50,31 @@ SOURCE_FIATS = ["GBP", "USD", "EUR"]
 # XLM first (5s finality, near-zero fee), XRP second (3-5s, ~10 drops),
 # USDC on ETH last (slow + expensive gas on mainnet — used only as fallback
 # and mostly for corridors where stablecoin liquidity matters most, e.g. NGN).
-REMIT_CHAINS = ["XLM", "XRP", "USDC"]
+# Chains that are viable for remittances (fast + cheap). Ordered by preference:
+# XLM first (5s finality, near-zero fee), XRP second (3-5s, ~10 drops),
+# then L2 USDC (Polygon/Base/Arbitrum — cents in gas, ~5s finality).
+# Sepolia (L1) USDC is intentionally deprioritised because L1 gas destroys
+# remittance margins (~$2-5 per transfer); it's reached only as a fallback.
+REMIT_CHAINS = ["XLM", "XRP", "USDC_POLYGON", "USDC_BASE", "USDC_ARBITRUM", "USDC"]
 
 # Per-chain per-tx fee in the chain's native token, converted to USD at quote time.
 CHAIN_FIXED_FEE_NATIVE = {
     "XLM": 0.00001,   # 100 stroops
     "XRP": 0.00001,   # ~10 drops of headroom
     "USDC": 0.0,      # gas paid in ETH, we absorb this in "protocol_fee_usd"
+    "USDC_POLYGON": 0.0,
+    "USDC_BASE": 0.0,
+    "USDC_ARBITRUM": 0.0,
 }
-# When the chain is USDC on Ethereum, gas dominates — we quote a flat estimate
-# rather than probing gas price per quote (would slow down every quote request).
-USDC_GAS_ESTIMATE_USD = 2.50  # Sepolia we pay $0; keeping conservative estimate for UX honesty
+# Gas estimates in USD for the EVM chains (used at quote time — much cheaper
+# than an eth_gasPrice probe per quote, and stable enough on L2s).
+EVM_GAS_ESTIMATE_USD = {
+    "USDC": 2.50,             # Sepolia / ETH mainnet: high
+    "USDC_POLYGON": 0.01,     # Polygon PoS
+    "USDC_BASE": 0.01,        # Base
+    "USDC_ARBITRUM": 0.02,    # Arbitrum One
+}
+USDC_GAS_ESTIMATE_USD = EVM_GAS_ESTIMATE_USD["USDC"]  # back-compat
 
 
 # ---------- Fiat FX cache ---------------------------------------------------
@@ -141,12 +155,15 @@ def choose_chain(
     """
     chains = preferred_chains or REMIT_CHAINS
     for chain in chains:
-        price = crypto_prices_usd.get(chain)
+        # Resolve pricing symbol — every USDC_* variant maps to USDC $1
+        price_sym = "USDC" if chain.startswith("USDC") else chain
+        price = crypto_prices_usd.get(price_sym)
         if not price or price <= 0:
             continue
-        # Chain fee in USD
-        if chain == "USDC":
-            fee_usd = USDC_GAS_ESTIMATE_USD
+
+        # Chain fee in USD (EVM variants pay gas in ETH → estimate directly)
+        if chain in EVM_GAS_ESTIMATE_USD:
+            fee_usd = EVM_GAS_ESTIMATE_USD[chain]
         else:
             fee_usd = CHAIN_FIXED_FEE_NATIVE.get(chain, 0.0) * price
 
@@ -155,7 +172,8 @@ def choose_chain(
         held = holdings.get(chain, 0.0)
         # For XLM: 1 XLM reserved for account; for XRP: 1 XRP testnet / 10 mainnet
         reserve = 1.0 if chain == "XLM" else (1.0 if chain == "XRP" else 0.0)
-        if held < crypto_needed + reserve + (CHAIN_FIXED_FEE_NATIVE.get(chain, 0.0) * 2):
+        native_fee_native = CHAIN_FIXED_FEE_NATIVE.get(chain, 0.0)
+        if held < crypto_needed + reserve + (native_fee_native * 2):
             continue
 
         return {

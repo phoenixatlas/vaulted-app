@@ -17,6 +17,13 @@ type Asset = {
   on_chain?: boolean; network?: string | null; wallet_address?: string | null;
 };
 
+type EvmChain = {
+  chain: string; display_name: string; short: string; network: string;
+  chain_id: number; usdc_balance: number; native_balance: number;
+  faucet_native?: string | null; faucet_usdc?: string | null;
+  wallet_address?: string;
+};
+
 export default function SendCrypto() {
   const { t } = useI18n();
   const { user } = useAuth();
@@ -29,10 +36,14 @@ export default function SendCrypto() {
   const [err, setErr] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const [gasGwei, setGasGwei] = useState<number | null>(null);
+  // EVM L2 chain picker (Sepolia | Polygon | Base | Arbitrum) — only shown when USDC selected.
+  const [evmChains, setEvmChains] = useState<EvmChain[]>([]);
+  const [usdcChain, setUsdcChain] = useState<string>("sepolia");
 
   useEffect(() => {
     api<{ assets: Asset[] }>("/wallet/assets").then((d) => setAssets(d.assets));
     api<{ gas_price_gwei: number }>("/wallet/eth/info").then((d) => setGasGwei(d.gas_price_gwei)).catch(() => {});
+    api<{ chains: EvmChain[] }>("/wallet/evm/chains").then((d) => setEvmChains(d.chains)).catch(() => {});
   }, []);
 
   const selected = assets.find((a) => a.symbol === sel);
@@ -47,7 +58,12 @@ export default function SendCrypto() {
   const isPro = !!user?.is_pro;
   const baseServiceFee = 0.10;
   const serviceFee = isPro ? baseServiceFee * 0.5 : baseServiceFee;
-  const networkLabel = isEth || isUsdc ? "Sepolia" : isBtc ? "Testnet3" : isSol ? "Devnet" : isXlm ? "Testnet" : isXrp ? "Testnet" : "";
+  const selectedEvmChain = evmChains.find((c) => c.chain === usdcChain);
+  const networkLabel = isEth
+    ? "Sepolia"
+    : isUsdc
+      ? (selectedEvmChain?.short ?? "Sepolia")
+      : isBtc ? "Testnet3" : isSol ? "Devnet" : isXlm ? "Testnet" : isXrp ? "Testnet" : "";
   const addrPlaceholder = isEth || isUsdc ? "0x..." : isBtc ? "tb1q... / m... / n..." : isSol ? "Base58 address" : isXlm ? "G... (56 chars)" : isXrp ? "r... (25-35 chars)" : "address";
 
   const submit = async () => {
@@ -78,9 +94,10 @@ export default function SendCrypto() {
           body: { to_address: addr.trim(), amount_eth: amt },
         });
       } else if (isUsdc) {
-        tx = await api("/wallet/usdc/send", {
+        // Route to the appropriate EVM chain based on the L2 picker
+        tx = await api("/wallet/evm/usdc/send", {
           method: "POST",
-          body: { to_address: addr.trim(), amount_usdc: amt },
+          body: { chain: usdcChain, to_address: addr.trim(), amount_usdc: amt },
         });
       } else if (isBtc) {
         tx = await api("/wallet/btc/send", {
@@ -145,6 +162,38 @@ export default function SendCrypto() {
             </View>
           )}
 
+          {isUsdc && evmChains.length > 0 && (
+            <View style={{ marginBottom: spacing.md }}>
+              <Text style={s.label}>Network</Text>
+              <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: spacing.sm, paddingVertical: 4 }}>
+                {evmChains.map((c) => {
+                  const active = usdcChain === c.chain;
+                  const isL1 = c.chain === "sepolia";
+                  return (
+                    <Pressable
+                      key={c.chain}
+                      testID={`usdc-chain-${c.chain}`}
+                      onPress={() => setUsdcChain(c.chain)}
+                      style={[s.l2Chip, active && s.l2ChipActive]}
+                    >
+                      <View style={{ flex: 1 }}>
+                        <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
+                          <Text style={[s.l2ChipTitle, active && { color: colors.brand }]}>{c.short}</Text>
+                          {!isL1 && (
+                            <View style={s.cheapPill}>
+                              <Text style={s.cheapPillText}>~$0.01 gas</Text>
+                            </View>
+                          )}
+                        </View>
+                        <Text style={s.l2ChipMuted}>{c.usdc_balance.toLocaleString(undefined, { maximumFractionDigits: 4 })} USDC</Text>
+                      </View>
+                    </Pressable>
+                  );
+                })}
+              </ScrollView>
+            </View>
+          )}
+
           <Text style={s.label}>{t("amount")}</Text>
           <TextInput testID="send-amount" value={amount} onChangeText={setAmount} keyboardType="decimal-pad" placeholder="0.00" placeholderTextColor={colors.onSurfaceTertiary} style={s.input} />
 
@@ -167,10 +216,10 @@ export default function SendCrypto() {
           <View style={s.feeCard} testID="fee-summary">
             <View style={s.feeRow}>
               <Text style={s.feeLabel}>
-                Network fee{isEth && gasGwei ? ` (~${gasGwei.toFixed(2)} gwei)` : isBtc ? " (miner fee)" : isSol ? " (~0.000005 SOL)" : isXlm ? " (~100 stroops)" : isXrp ? " (~10 drops)" : ""}
+                Network fee{isEth && gasGwei ? ` (~${gasGwei.toFixed(2)} gwei)` : isBtc ? " (miner fee)" : isSol ? " (~0.000005 SOL)" : isXlm ? " (~100 stroops)" : isXrp ? " (~10 drops)" : isUsdc && usdcChain !== "sepolia" ? ` (${selectedEvmChain?.short ?? "L2"})` : ""}
               </Text>
               <Text style={s.feeValue}>
-                {isEth ? "~0.00002 ETH" : isBtc ? "auto" : isSol ? "~5000 lamports" : isXlm ? "~0.00001 XLM" : isXrp ? "~0.00001 XRP" : "$0.00"}
+                {isEth ? "~0.00002 ETH" : isBtc ? "auto" : isSol ? "~5000 lamports" : isXlm ? "~0.00001 XLM" : isXrp ? "~0.00001 XRP" : isUsdc ? (usdcChain === "sepolia" ? "~$2 (L1)" : "~$0.01") : "$0.00"}
               </Text>
             </View>
             <View style={s.feeRow}>
@@ -203,7 +252,7 @@ export default function SendCrypto() {
               : <Text style={s.ctaText}>
                   {sendDisabled
                     ? `${sel} send coming soon`
-                    : `${t("confirm")} ${isEth ? "on Sepolia" : isUsdc ? "USDC on Sepolia" : isBtc ? "on BTC Testnet" : isSol ? "on SOL Devnet" : isXlm ? "on Stellar Testnet" : isXrp ? "on XRPL Testnet" : ""}`.trim()}
+                    : `${t("confirm")} ${isEth ? "on Sepolia" : isUsdc ? `USDC on ${selectedEvmChain?.short ?? "Sepolia"}` : isBtc ? "on BTC Testnet" : isSol ? "on SOL Devnet" : isXlm ? "on Stellar Testnet" : isXrp ? "on XRPL Testnet" : ""}`.trim()}
                 </Text>}
           </Pressable>
 
@@ -235,6 +284,12 @@ export default function SendCrypto() {
             <Pressable testID="faucet-link-xrp" onPress={() => Linking.openURL(`https://xrpl.org/xrp-testnet-faucet.html`)} style={s.faucet}>
               <Ionicons name="water-outline" size={16} color={colors.brand} />
               <Text style={s.faucetText}>Need test XRP? Open XRPL testnet faucet (100 XRP)</Text>
+            </Pressable>
+          )}
+          {isUsdc && selectedEvmChain?.faucet_usdc && (
+            <Pressable testID="faucet-link-usdc" onPress={() => Linking.openURL(selectedEvmChain.faucet_usdc!)} style={s.faucet}>
+              <Ionicons name="water-outline" size={16} color={colors.brand} />
+              <Text style={s.faucetText}>Need test USDC on {selectedEvmChain.short}? Open the Circle faucet</Text>
             </Pressable>
           )}
         </ScrollView>
@@ -270,4 +325,10 @@ const s = StyleSheet.create({
   warnCard: { flexDirection: "row", gap: 8, alignItems: "flex-start", padding: spacing.md, backgroundColor: colors.brandTertiary, borderRadius: radius.md, borderWidth: 1, borderColor: "rgba(201,163,91,0.40)", marginTop: spacing.lg },
   warnText: { color: colors.brandDeep, fontSize: 12, lineHeight: 16, fontWeight: "500", flex: 1 },
   error: { color: colors.error, marginTop: spacing.md, fontSize: 14 },
+  l2Chip: { minWidth: 140, paddingHorizontal: spacing.md, paddingVertical: 10, borderRadius: radius.md, borderWidth: 1, borderColor: colors.border, backgroundColor: colors.surface },
+  l2ChipActive: { borderColor: colors.brand, backgroundColor: colors.brandTertiary },
+  l2ChipTitle: { fontSize: 13, fontWeight: "700", color: colors.onSurface },
+  l2ChipMuted: { fontSize: 11, color: colors.onSurfaceTertiary, marginTop: 2 },
+  cheapPill: { backgroundColor: colors.success, paddingHorizontal: 6, paddingVertical: 2, borderRadius: radius.pill },
+  cheapPillText: { color: "#fff", fontSize: 8, fontWeight: "800", letterSpacing: 0.4 },
 });
