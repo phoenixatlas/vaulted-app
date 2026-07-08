@@ -1,0 +1,40 @@
+{
+  "summary": "Iteration 17 — regression test on Stripe Identity error-handling fix (commit e1d32f0). Wrote /app/backend/tests/test_iteration17_kyc_error.py with 3 pytest tests using FastAPI TestClient + monkeypatch on stripe.identity.VerificationSession.create. All 3 tests PASS. Test 1 (P0 — the actual fix) confirms the 'not set up to use Identity' Stripe error is trapped into a structured 503 with detail.error='stripe_identity_not_activated', detail.message containing both 'temporarily unavailable' and 'support@phoenix-atlas.com', and NO leakage of the raw Stripe phrase. Test 2 confirms generic Stripe errors still bubble as 502 'Stripe Identity error' (regression). Test 3 confirms happy path returns 200 with session_id + url (regression). Frontend Playwright test was skipped — the running local backend is wired to a real live Stripe key with Identity activated, so /api/kyc/session returns a real session URL and cannot be forced into the 503 path from the frontend without shutting down or code-patching the backend; per the request, that scenario is 'not tested (manual verification required)'.",
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [],
+    "react_native_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_iteration17_kyc_error.py",
+    "/app/test_reports/pytest/iter17_results.xml"
+  ],
+  "action_items": [
+    "Fix verified — safe to hand back to user. No follow-up required for the backend contract.",
+    "Optional: consider adding an internal debug/toggle to force the 'stripe_identity_not_activated' path in dev so frontend Playwright coverage becomes possible without pulling the STRIPE_API_KEY.",
+    "Housekeeping (pre-existing, NOT introduced by this iteration): server.py uses deprecated FastAPI @app.on_event('startup')/('shutdown') — migrate to lifespan handlers. JWT HMAC key is 28 bytes (below the 32-byte SHA256 minimum) — bump JWT_SECRET length. Both surfaced as warnings during the test run."
+  ],
+  "critical_code_review_comments": [
+    "server.py:1667-1680 error trap is correctly matched on substrings 'not set up to use Identity' or 'identity/application' — resilient to Stripe changing the request id / URL prefix, and both substrings from the same failure mode map to the same friendly 503 payload. Good.",
+    "The 503 payload uses HTTPException(detail={dict}) — FastAPI serializes this as {'detail': {...}} in the body; frontend must destructure `response.detail.error` (not `response.error`). Confirm the /kyc screen consumes it that way.",
+    "The endpoint has a 'reuse existing session' short-circuit (server.py:1641-1647) that runs BEFORE the try/except and only logs on failure. If Stripe has an existing session but Identity is later disabled, the reuse call could still surface a raw error via the warning-only branch. Low-severity — not exercised by the current fix, but worth a follow-up guard.",
+    "server.py file is ~3100 lines — well past the 700-line guideline. Splitting KYC / Remit / EVM into routers would improve maintainability (repeat comment from prior iterations)."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_iteration17_kyc_error.py (new)"
+  ],
+  "success_rate": {
+    "backend": "100% (3/3)",
+    "frontend": "not tested"
+  },
+  "seed_data_creation": "None. The autouse fixture only $unsets kyc.identity_verification_session_id / _status / _started_at on the smoketest user before and after each test to force the create-new-session path (avoid the reuse short-circuit). No new documents were created.",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "The pytest process inherits STRIPE_API_KEY=sk_test_emergent from the shell environment, which server.py's placeholder-scrubbing coerces to ''. The test file calls load_dotenv(BACKEND_DIR / '.env', override=True) BEFORE importing server so the real key from /app/backend/.env wins. If you add more in-process tests that touch Stripe, apply the same pattern. Also note: TestClient works fine with the app's motor client — no event-loop issues observed.",
+  "rca_of_issue": "Original bug: stripe.identity.VerificationSession.create raised stripe.error.StripeError('Your account is not set up to use Identity...'); the endpoint's generic except stripe.error.StripeError branch wrapped it as HTTPException(502, detail=f'Stripe Identity error: {e}'), leaking the raw account-configuration message to the frontend red banner. Fix (commit e1d32f0, server.py:1667-1680): before the generic 502, inspect str(e) for 'not set up to use Identity' or 'identity/application' and instead raise HTTPException(503, detail={error:'stripe_identity_not_activated', message:'...temporarily unavailable...support@phoenix-atlas.com'}). Verified: (a) targeted phrase → structured 503 with expected keys and no raw leakage; (b) unrelated Stripe errors → still 502 with 'Stripe Identity error'; (c) success path → still 200 with session_id/url."
+}

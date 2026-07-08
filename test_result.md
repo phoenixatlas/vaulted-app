@@ -279,3 +279,58 @@ agent_communication:
       "insufficient balance" 400s and validate the address / chain
       validation + error paths instead.
 
+
+  - agent: "main"
+    message: |
+      BUG REPORT (iteration 17 — Stripe Identity error UX):
+      User reported the raw Stripe error "Stripe Identity error: Request
+      req_XXX: Your account is not set up to use Identity. Please have an
+      account admin visit https://dashboard.stripe.com/identity/application
+      to get started." was leaking through as scary red text on /kyc when
+      they tapped "Verify identity" (screenshot in job context).
+
+      Root cause: stripe.identity.VerificationSession.create() throws
+      stripe.error.StripeError when the Identity product isn't activated on
+      the Stripe account. Old handler served the raw error verbatim.
+
+      Fix committed as e1d32f0:
+       A. BACKEND /api/kyc/session — detects "not set up to use Identity"
+          or "identity/application" substring in the Stripe error and
+          raises HTTPException(status_code=503, detail={
+              "error": "stripe_identity_not_activated",
+              "message": "Identity verification is temporarily unavailable
+                          — we're finalising our Stripe Identity onboarding.
+                          Please try again shortly, or contact
+                          support@phoenix-atlas.com for immediate help.",
+          }) instead of leaking the raw message. Non-matching Stripe errors
+          still 502 as before.
+       B. FRONTEND /kyc — on catch, checks e.status===503 OR message
+          includes 'stripe_identity_not_activated' / 'not set up to use
+          Identity' → sets errKind='config' → renders the gold construction
+          card (testID='kyc-config-error') instead of the raw red 's.err'
+          Text. Generic errors still show as red text.
+
+      Local backend restarted with the fix; production Render still has
+      OLD code (commit not yet pushed).
+
+      Please verify against LOCAL http://localhost:8001:
+        1. Monkey-patch stripe.identity.VerificationSession.create to raise
+           stripe.error.StripeError("Request req_TEST: Your account is not
+           set up to use Identity. Please have an account admin visit
+           https://dashboard.stripe.com/identity/application to get
+           started.") → POST /api/kyc/session (auth: smoketest@vaulted.app /
+           test1234) → assert status=503, detail.error=='stripe_identity_
+           not_activated', detail.message contains 'temporarily
+           unavailable' AND 'support@phoenix-atlas.com'.
+        2. Monkey-patch same method to raise stripe.error.StripeError("Rate
+           limit exceeded") → assert status=502 (generic bubble-up
+           unchanged), detail contains "Stripe Identity error".
+        3. FRONTEND regression (optional if time-boxed): with the local
+           backend still monkey-patched from test 1, load /kyc, tap
+           testID='kyc-start', wait ≤3s, assert data-testid='kyc-config-
+           error' is visible AND that the raw phrase 'not set up to use
+           Identity' is NOT anywhere in the rendered DOM.
+
+      ALL OTHER KYC / remit endpoints already passed in iteration 16 —
+      please DO NOT re-run them. Focus only on this error-handling fix.
+      Report to /app/test_reports/iteration_17.json.
