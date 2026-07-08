@@ -1626,25 +1626,48 @@ async def kyc_status(user=Depends(get_current_user)):
     }
 
 
+class KycSessionIn(BaseModel):
+    """Optional body for /kyc/session.
+    - force_new: cancels any existing session and creates a fresh one. Used by
+      the frontend's "Start over" escape hatch when a user is stuck retrying
+      the same failed document scan.
+    """
+    force_new: bool = False
+
+
 @api.post("/kyc/session")
-async def kyc_session(user=Depends(get_current_user)):
+async def kyc_session(body: KycSessionIn | None = None, user=Depends(get_current_user)):
     """Create a Stripe Identity VerificationSession and return the hosted URL
     that the frontend redirects the user to. Idempotent per user — if there's
-    already an active session that hasn't been canceled, we reuse its URL."""
+    already an active session that hasn't been canceled, we reuse its URL
+    (unless the caller passed `force_new: true`)."""
     if not STRIPE_API_KEY:
         raise HTTPException(status_code=503, detail="Stripe not configured")
 
-    # Reuse an active session if one exists (prevents Dashboard clutter + costs).
+    force_new = bool(body and body.force_new)
     kyc = user.get("kyc") or {}
     existing_id = kyc.get("identity_verification_session_id")
     existing_status = kyc.get("identity_verification_status")
-    if existing_id and existing_status in ("requires_input", "processing"):
+
+    # Reuse the existing active session UNLESS the caller explicitly asked for
+    # a brand-new one (prevents Dashboard clutter + Stripe session costs).
+    if not force_new and existing_id and existing_status in ("requires_input", "processing"):
         try:
             existing = stripe.identity.VerificationSession.retrieve(existing_id)
             if existing.get("status") in ("requires_input",) and existing.get("url"):
                 return {"session_id": existing_id, "url": existing["url"], "reused": True}
         except Exception as e:
             logger.warning(f"kyc: existing session retrieve failed ({existing_id}): {e}")
+
+    # force_new: cancel the existing Stripe session so we don't accumulate
+    # zombie sessions on the Dashboard. Best-effort — a failure to cancel is
+    # not fatal (the new session will still work).
+    if force_new and existing_id:
+        try:
+            stripe.identity.VerificationSession.cancel(existing_id)
+            logger.info(f"kyc: canceled stale session {existing_id} for user {user['id']}")
+        except Exception as e:
+            logger.warning(f"kyc: cancel stale session failed ({existing_id}): {e}")
 
     # Bump a per-user attempt counter so the Stripe idempotency key is unique
     # across cancellations. Without this, canceling a session and retrying
@@ -1693,6 +1716,9 @@ async def kyc_session(user=Depends(get_current_user)):
             "kyc.identity_verification_status": "requires_input",
             "kyc.identity_started_at": iso(now_utc()),
             "kyc.session_attempt": attempt_num,
+            # Clear any stale error from the previous session so the UI
+            # doesn't confusingly show an old failure alongside the new attempt.
+            "kyc.identity_last_error": None,
         }},
     )
     return {"session_id": session["id"], "url": session["url"], "reused": False}

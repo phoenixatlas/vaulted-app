@@ -334,3 +334,78 @@ agent_communication:
       ALL OTHER KYC / remit endpoints already passed in iteration 16 —
       please DO NOT re-run them. Focus only on this error-handling fix.
       Report to /app/test_reports/iteration_17.json.
+
+
+  - agent: "main"
+    message: |
+      ITERATION 18 — KYC "requires_input" UX overhaul + backend force_new
+      escape hatch.
+
+      Context: Production user reported "tried verification twice and returned
+      with the same message" — screenshot showed our own /kyc-return screen
+      rendering a generic "Stripe couldn't verify your document. Please try
+      again with a clearer photo." message even after Stripe sent a specific
+      last_error (e.g. document_expired, selfie_face_mismatch). Users were
+      stuck retrying the same failed session with no context and no way to
+      start over.
+
+      Root causes:
+       1. Backend stored kyc.identity_last_error on the requires_input
+          webhook, and /api/kyc/status returned it, but kyc-return.tsx
+          ignored the code entirely and always showed generic copy.
+       2. Backend /api/kyc/session ALWAYS reused an existing requires_input
+          session — no way to force a brand-new session with a fresh
+          idempotency key when the old one was in a bad state.
+
+      Fix committed:
+       A. NEW /app/frontend/src/lib/kycErrors.ts — maps Stripe Identity
+          last_error.code (~20 codes: document_expired,
+          document_unverified_other, selfie_face_mismatch, id_number_mismatch,
+          etc.) → {title, reason, tip, fatal?}. Fatal codes (age, country,
+          document_type_not_supported, consent_declined) skip the retry CTA
+          and only show start-over/support.
+       B. BACKEND /api/kyc/session — now accepts optional body
+          {"force_new": true}. When true: cancels the existing session on
+          Stripe (best-effort), bumps session_attempt, mints a fresh session
+          with new idempotency key, AND clears stale kyc.identity_last_error
+          in the DB. Backward-compatible: empty body / no body still reuses.
+       C. FRONTEND /kyc-return — reads identity_last_error, renders mapped
+          {title, reason, tip} + a 5-item photo-capture checklist +
+          three CTAs: "Try again" (reuses session), "Start over with a new
+          session" (force_new), and "I'll try later" (back to wallet). Fatal
+          errors hide "Try again". Adds inline support@phoenix-atlas.com
+          escape hatch.
+       D. FRONTEND /kyc — pre-verification screen now uses the same error
+          mapping for the last_error banner and adds a secondary "Start over
+          with a new session" button when in requires_input state.
+
+      Backend tests (all passing, local http://localhost:8001):
+        /app/backend/tests/test_iteration18_kyc_force_new.py — 4 tests
+          - TestForceNewReuses (default reuses existing session)
+          - TestForceNewCreatesFresh (force_new cancels + creates + clears
+            stale error + increments idempotency counter)
+          - TestForceNewToleratesCancelFailure (cancel error is swallowed)
+          - TestBackwardCompat (empty body still works)
+        + iteration 17 regressions all still pass.
+
+      Please verify (backend + frontend against LOCAL):
+        1. Backend: re-run iteration 17 + 18 tests to confirm nothing
+           regressed. Report only failures.
+        2. Frontend regression: on /kyc-return, simulate a requires_input
+           status with identity_last_error.code='document_unverified_other'
+           in the mocked /kyc/status response, verify:
+             - testID='kyc-return-retry' visible
+             - testID='kyc-return-start-over' visible
+             - The specific "What to do next" tip block is rendered
+             - The 5 photo tips are all rendered
+           Then simulate a FATAL error (code='under_supported_age') and verify:
+             - testID='kyc-return-retry' is NOT rendered
+             - testID='kyc-return-start-over' still rendered
+        3. On /kyc: with a mocked status returning
+           identity_verification_status='requires_input' + last_error, verify
+           the error card shows the MAPPED title (not the raw reason
+           string), and the "Start over with a new session" secondary
+           button (testID='kyc-start-over') is visible.
+
+      Auth credentials: smoketest@vaulted.app / test1234
+      Report to /app/test_reports/iteration_18.json.

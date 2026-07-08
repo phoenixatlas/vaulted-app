@@ -44,27 +44,8 @@ SMOKE_PASSWORD = "test1234"
 
 
 # --------------------------------------------------------------------------
-# Fixtures
+# Fixtures — client & smoke_auth now provided session-scoped by conftest.py
 # --------------------------------------------------------------------------
-@pytest.fixture(scope="module")
-def client():
-    with TestClient(server.app) as c:
-        yield c
-
-
-@pytest.fixture(scope="module")
-def smoke_auth(client):
-    # Ensure smoketest user has a stripe key set (server module gate)
-    assert server.STRIPE_API_KEY, (
-        "STRIPE_API_KEY is empty on the backend — /api/kyc/session would return "
-        "503 'Stripe not configured' before ever reaching the code path under test."
-    )
-    r = client.post("/api/auth/login", json={"email": SMOKE_EMAIL, "password": SMOKE_PASSWORD})
-    assert r.status_code == 200, f"smoke login failed: {r.status_code} {r.text}"
-    token = r.json()["access_token"]
-    return {"Authorization": f"Bearer {token}"}
-
-
 def _reset_kyc_session_state():
     """Wipe any existing identity_verification_session_id on the smoke user so
     the endpoint takes the create-new-session path (not the reuse path)."""
@@ -81,7 +62,13 @@ def _reset_kyc_session_state():
         )
         cli.close()
 
-    asyncio.get_event_loop().run_until_complete(_run())
+    # Use a fresh event loop each time so cross-module test runs (where a
+    # previous TestClient has already closed the default loop) don't error.
+    loop = asyncio.new_event_loop()
+    try:
+        loop.run_until_complete(_run())
+    finally:
+        loop.close()
 
 
 @pytest.fixture(autouse=True)

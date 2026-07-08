@@ -1,0 +1,45 @@
+{
+  "summary": "Iteration 18 — KYC UX fix (force_new session + mapped Stripe error copy) verified end-to-end. Backend: all 7 pytest tests pass (test_iteration17_kyc_error.py 3/3 + test_iteration18_kyc_force_new.py 4/4). Manually verified POST /api/kyc/session accepts {} (200, reused=false), {\"force_new\":true} (200, reused=false, fresh session_id), no body (200, reused=true — reuse behavior on second call), and rejects invalid types (422 with clean pydantic detail). GET /api/kyc/status still returns identity_last_error in its shape (regression OK). Frontend: /kyc-return renders the polling UI unauthenticated and transitions to the 'Still processing…' pending state with testID='kyc-return-done' visible after ~20s of failed polls. /kyc renders correctly for smoketest user — tier card, limits, verification-status pill, and testID='kyc-start' all present. Injected requires_input + document_expired via _set_kyc_state fixture pattern and reloaded /kyc: the error box shows the MAPPED title 'Document expired' (raw 'test error' string does NOT appear), both testID='kyc-start' and testID='kyc-start-over' render, labels are 'Retry verification' and 'Start over with a new session'. Zero console errors, no import errors from /app/frontend/src/lib/kycErrors.ts. Smoketest KYC state reset after the test.",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {"endpoint": "cross-file pytest fixtures", "issue": "Both iter17 and iter18 test files used asyncio.get_event_loop().run_until_complete(...) in autouse fixtures. When they ran in one pytest invocation, module-1 TestClient teardown closed the loop and module-2 fixtures hit 'RuntimeError: Event loop is closed'. Fixed by extracting session-scoped `client` + `smoke_auth` into a new conftest.py and using asyncio.new_event_loop() in the DB helpers. Both files now pass together (7/7). No production code touched."}
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [],
+    "react_native_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_iteration17_kyc_error.py",
+    "/app/backend/tests/test_iteration18_kyc_force_new.py",
+    "/app/backend/tests/conftest.py",
+    "/app/test_reports/pytest/iter18_results.xml"
+  ],
+  "action_items": [
+    "No blocking follow-ups. Fix works end-to-end.",
+    "Housekeeping (pre-existing, NOT introduced this iteration): server.py still uses deprecated FastAPI @app.on_event('startup')/('shutdown'); JWT HMAC key is 28 bytes (<32 recommended). Same warnings as iter17."
+  ],
+  "critical_code_review_comments": [
+    "kycErrors.ts (179 lines) is clean, well-scoped, table-driven, and correctly falls back to a GENERIC entry with the fallback reason when the code is unknown — so unknown Stripe codes won't show raw internal strings. Good.",
+    "kyc.tsx:164-176 gates the error box on `verifStatus === 'requires_input'`, which is correct — a passed/failed final verdict shouldn't surface the 'try again with tips' UI. However, the error box does NOT render the PHOTO_TIPS checklist exported from kycErrors.ts (l.172-178) — only info.tip is shown. Consider mounting PHOTO_TIPS below the tip line so users get the full guidance. Low priority, not blocking.",
+    "server.py force_new path (per test_iteration18): cancel + create-fresh + attempt-counter + idempotency-key rotation + last_error clear are all correctly exercised. Cancel-failure is swallowed as best-effort — good defensive coding.",
+    "server.py file is ~3100 lines (repeat comment from iter17) — router split still recommended."
+  ],
+  "updated_files": [
+    "/app/backend/tests/conftest.py (new — session-scoped client + smoke_auth fixtures)",
+    "/app/backend/tests/test_iteration17_kyc_error.py (removed local client/smoke_auth fixtures; switched to asyncio.new_event_loop() in _reset_kyc_session_state)",
+    "/app/backend/tests/test_iteration18_kyc_force_new.py (removed local client/smoke_auth fixtures; switched to asyncio.new_event_loop() in _set_kyc_state/_get_kyc_state)"
+  ],
+  "success_rate": {
+    "backend": "100% (7/7)",
+    "frontend": "100% (all 4 target scenarios verified: /kyc-return polling→pending, /kyc happy render, injected requires_input mapped error copy, force_new button present)"
+  },
+  "seed_data_creation": "Temporarily set smoketest@vaulted.app's kyc.identity_verification_session_id=vs_test, kyc.identity_verification_status=requires_input, kyc.identity_last_error={code:document_expired, reason:test error} to verify the mapped error UI. State was fully $unset after the test — smoketest user's kyc doc is now {}.",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "Next agent: (1) The new /app/backend/tests/conftest.py provides session-scoped `client` and `smoke_auth` fixtures for anything importing the FastAPI TestClient — reuse them and DO NOT re-declare local module-scoped equivalents (motor's module-level client in server.py is bound to whichever event loop starts first). (2) Any autouse fixture doing DB writes must use asyncio.new_event_loop() rather than asyncio.get_event_loop() when running alongside a TestClient — the latter now raises 'DeprecationWarning: no running event loop' or 'Event loop is closed' on Python 3.11. (3) STRIPE_API_KEY inheritance: shell inherits sk_test_emergent which server.py scrubs to ''; load_dotenv(BACKEND_DIR/'.env', override=True) BEFORE `import server` is required in every KYC test file (already in place). (4) smoke user's kyc doc is clean at handoff.",
+  "rca_of_issue": "Not an app bug — the initial combined pytest run failed because two independent iteration test files each owned a module-scoped `client = TestClient(server.app)` fixture. TestClient's context-manager exit closes the underlying event loop, but server.py's module-level AsyncIOMotorClient is created at import time and bound to whichever event loop first calls it. When module-2 tried to use the shared motor client on the module-1-closed loop, all DB reads raised 'RuntimeError: Event loop is closed'. Fix: hoist client/smoke_auth into session-scoped conftest.py fixtures so one TestClient/event-loop pair lives for the whole session; switch DB-write autouse helpers to asyncio.new_event_loop() so they don't touch the TestClient loop at all. Verified: 7/7 pass in the exact command from the review request."
+}

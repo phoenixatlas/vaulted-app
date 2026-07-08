@@ -7,6 +7,7 @@ import { useLocalSearchParams, useRouter } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
 import { api } from "@/src/lib/api";
 import { colors, spacing, radius } from "@/src/lib/theme";
+import { kycErrorInfo } from "@/src/lib/kycErrors";
 
 type KycStatus = {
   tier: string;
@@ -58,12 +59,15 @@ export default function Kyc() {
 
   useEffect(() => { load(); }, []);
 
-  const startVerification = async () => {
+  const startVerification = async (forceNew: boolean = false) => {
     setStarting(true);
     setErr(null);
     setErrKind(null);
     try {
-      const { url } = await api<{ url: string; session_id: string }>("/kyc/session", { method: "POST" });
+      const { url } = await api<{ url: string; session_id: string }>(
+        "/kyc/session",
+        { method: "POST", body: forceNew ? { force_new: true } : {} },
+      );
       // Stripe Identity is a hosted flow — redirect the user to Stripe's page,
       // then they come back via the return_url. On web this is a same-tab
       // navigation; on native this opens the system browser.
@@ -157,14 +161,19 @@ export default function Kyc() {
               </View>
             </View>
 
-            {status.identity_last_error?.reason && verifStatus === "requires_input" && (
-              <View style={s.errorBox}>
-                <Ionicons name="information-circle" size={16} color={colors.error} />
-                <Text style={s.errorBoxText}>
-                  Last check failed: {status.identity_last_error.reason}. Please try again with a clearer photo.
-                </Text>
-              </View>
-            )}
+            {status.identity_last_error && verifStatus === "requires_input" && (() => {
+              const info = kycErrorInfo(status.identity_last_error?.code, status.identity_last_error?.reason);
+              return (
+                <View style={s.errorBox}>
+                  <Ionicons name="information-circle" size={16} color={colors.error} />
+                  <View style={{ flex: 1 }}>
+                    <Text style={s.errorBoxTitle}>{info.title}</Text>
+                    <Text style={s.errorBoxText}>{info.reason}</Text>
+                    <Text style={s.errorBoxTip}>{info.tip}</Text>
+                  </View>
+                </View>
+              );
+            })()}
 
             {/* Upgrade card */}
             {!isVerified && nextDetails && (
@@ -194,7 +203,7 @@ export default function Kyc() {
                 <Pressable
                   testID="kyc-start"
                   disabled={starting}
-                  onPress={startVerification}
+                  onPress={() => startVerification(false)}
                   style={({ pressed }) => [s.cta, pressed && { opacity: 0.9 }]}
                 >
                   {starting ? (
@@ -203,6 +212,16 @@ export default function Kyc() {
                     <Text style={s.ctaText}>{verifStatus === "requires_input" ? "Retry verification" : "Verify identity"}</Text>
                   )}
                 </Pressable>
+                {verifStatus === "requires_input" && (
+                  <Pressable
+                    testID="kyc-start-over"
+                    disabled={starting}
+                    onPress={() => startVerification(true)}
+                    style={({ pressed }) => [s.ctaGhost, pressed && { opacity: 0.9 }]}
+                  >
+                    <Text style={s.ctaGhostText}>Start over with a new session</Text>
+                  </Pressable>
+                )}
                 <Text style={s.upgradeSecure}>
                   <Ionicons name="lock-closed" size={11} color={colors.onSurfaceTertiary} /> Powered by Stripe Identity · Your document never touches Vaulted servers
                 </Text>
@@ -282,7 +301,9 @@ const s = StyleSheet.create({
   statusPillText: { fontSize: 11, fontWeight: "700", letterSpacing: 0.4 },
 
   errorBox: { flexDirection: "row", gap: 8, alignItems: "flex-start", padding: spacing.sm, backgroundColor: "rgba(200,60,60,0.10)", borderRadius: radius.md, borderWidth: 1, borderColor: "rgba(200,60,60,0.35)", marginTop: spacing.sm },
+  errorBoxTitle: { color: colors.error, fontSize: 13, fontWeight: "700", marginBottom: 2 },
   errorBoxText: { flex: 1, color: colors.error, fontSize: 12, lineHeight: 16 },
+  errorBoxTip: { color: colors.onSurfaceSecondary, fontSize: 11, lineHeight: 15, marginTop: 4 },
 
   upgradeCard: { padding: spacing.lg, backgroundColor: colors.brandTertiary, borderRadius: radius.lg, borderWidth: 1, borderColor: "rgba(201,163,91,0.40)", marginTop: spacing.xl },
   upgradeHeader: { flexDirection: "row", alignItems: "center", gap: 8, marginBottom: spacing.sm },
@@ -296,6 +317,8 @@ const s = StyleSheet.create({
 
   cta: { backgroundColor: colors.brand, borderRadius: radius.md, paddingVertical: 14, alignItems: "center" },
   ctaText: { color: "#0F0B08", fontSize: 15, fontWeight: "700" },
+  ctaGhost: { backgroundColor: "transparent", borderRadius: radius.md, paddingVertical: 12, alignItems: "center", borderWidth: 1, borderColor: "rgba(122,90,32,0.4)", marginTop: spacing.sm },
+  ctaGhostText: { color: colors.brandDeep, fontSize: 13, fontWeight: "600" },
 
   verifiedCard: { alignItems: "center", padding: spacing.xl, marginTop: spacing.xl, backgroundColor: "rgba(60,180,90,0.08)", borderRadius: radius.lg, borderWidth: 1, borderColor: "rgba(60,180,90,0.40)" },
   verifiedTitle: { fontSize: 18, fontWeight: "700", color: colors.onSurface, marginTop: spacing.sm },
