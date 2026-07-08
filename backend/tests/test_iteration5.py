@@ -285,7 +285,8 @@ class TestRegression:
         if isinstance(assets, list):
             for a in assets:
                 if a.get("symbol") == "BTC":
-                    btc = a; break
+                    btc = a
+                    break
         else:
             btc = assets.get("BTC")
         assert btc, "BTC asset missing"
