@@ -15,6 +15,15 @@ export default function Receipt() {
   const ref = String(p.receipt_id ?? p.tx_hash ?? p.id ?? "");
   const counterparty = String(p.counterparty ?? "");
 
+  // Remit context (set by /remit/send)
+  let remit: any = null;
+  try {
+    if (p.remit_json) remit = JSON.parse(String(p.remit_json));
+  } catch {
+    remit = null;
+  }
+  const isRemit = !!remit;
+
   return (
     <SafeAreaView style={s.root} edges={["top", "bottom"]}>
       <View style={s.header}>
@@ -25,13 +34,28 @@ export default function Receipt() {
       <View style={s.body}>
         <View testID="receipt-card" style={s.ticket}>
           <View style={s.successIcon}><Ionicons name="checkmark" size={32} color="#fff" /></View>
-          <Text style={s.successTitle}>{isFiat ? (p.type === "deposit" ? "Deposit successful" : "Withdrawal sent") : "Sent successfully"}</Text>
-          <Text testID="receipt-amount" style={s.bigAmount}>{isFiat ? `$${amount.toFixed(2)}` : `${amount} ${asset}`}</Text>
+          <Text style={s.successTitle}>
+            {isRemit ? `Sent to ${remit.destination_flag} ${remit.destination_country}` : isFiat ? (p.type === "deposit" ? "Deposit successful" : "Withdrawal sent") : "Sent successfully"}
+          </Text>
+          {isRemit ? (
+            <>
+              <Text testID="receipt-amount" style={s.bigAmount}>
+                {remit.destination_amount?.toLocaleString(undefined, { maximumFractionDigits: 2 })} {remit.destination_currency}
+              </Text>
+              <Text style={s.subAmount}>
+                You sent {remit.source_amount} {remit.source_currency} · via {remit.chain}
+              </Text>
+            </>
+          ) : (
+            <Text testID="receipt-amount" style={s.bigAmount}>{isFiat ? `$${amount.toFixed(2)}` : `${amount} ${asset}`}</Text>
+          )}
 
           <View style={s.dotted} />
 
           <Row label="Date" value={new Date().toLocaleString()} />
-          <Row label={isFiat ? "Method" : "To"} value={counterparty} />
+          {isRemit && <Row label="FX rate" value={`1 ${remit.source_currency} = ${remit.fx_rate?.toFixed(4)} ${remit.destination_currency}`} />}
+          {isRemit && <Row label="Delivery" value={remit.receive_via} />}
+          <Row label={isFiat ? "Method" : isRemit ? "Recipient wallet" : "To"} value={counterparty.length > 22 ? counterparty.slice(0, 8) + "…" + counterparty.slice(-6) : counterparty} />
           <Row label={isFiat ? "Receipt ID" : "Tx hash"} value={ref.length > 22 ? ref.slice(0, 12) + "…" + ref.slice(-6) : ref} />
           <Row label="Status" value="Completed" valueColor={colors.success} />
         </View>
@@ -59,6 +83,7 @@ const s = StyleSheet.create({
   successIcon: { width: 64, height: 64, borderRadius: 32, backgroundColor: colors.success, alignItems: "center", justifyContent: "center", marginBottom: spacing.md, borderWidth: 2, borderColor: colors.brand },
   successTitle: { fontSize: 13, color: colors.brandDeep, fontWeight: "700", letterSpacing: 1.5, textTransform: "uppercase" },
   bigAmount: { fontSize: 36, fontWeight: "700", color: colors.onSurface, marginTop: spacing.sm, marginBottom: spacing.md, letterSpacing: -1.2 },
+  subAmount: { fontSize: 13, color: colors.onSurfaceSecondary, marginTop: -spacing.sm, marginBottom: spacing.md, fontWeight: "500" },
   dotted: { width: "100%", borderBottomWidth: 1, borderStyle: "dashed", borderColor: "rgba(201,163,91,0.45)", marginVertical: spacing.lg },
   row: { flexDirection: "row", justifyContent: "space-between", width: "100%", paddingVertical: spacing.sm },
   rowLabel: { color: colors.brandDeep, fontSize: 12, fontWeight: "600", letterSpacing: 0.5, textTransform: "uppercase" },

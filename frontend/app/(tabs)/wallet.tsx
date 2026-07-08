@@ -79,9 +79,24 @@ export default function Wallet() {
         <View style={s.actionsRow}>
           <Action testID="action-send" icon="arrow-up" label={t("send")} onPress={() => router.push("/send")} />
           <Action testID="action-receive" icon="arrow-down" label={t("receive")} onPress={() => router.push("/receive")} />
-          <Action testID="action-deposit" icon="add-circle-outline" label={t("deposit")} onPress={() => router.push("/fiat?mode=deposit")} />
+          <Action testID="action-remit" icon="paper-plane-outline" label="Send Money" onPress={() => router.push("/remit")} />
           <Action testID="action-withdraw" icon="cash-outline" label={t("fiat")} onPress={() => router.push("/fiat?mode=withdraw")} />
         </View>
+
+        <Pressable
+          testID="remit-hero-cta"
+          onPress={() => router.push("/remit")}
+          style={({ pressed }) => [s.remitCta, pressed && { opacity: 0.9 }]}
+        >
+          <View style={s.remitCtaLeft}>
+            <Text style={s.remitCtaTitle}>Send money worldwide</Text>
+            <Text style={s.remitCtaSub}>UK → Kenya, Nigeria, India, Philippines, Senegal — arrives in seconds, fees from £0.50.</Text>
+          </View>
+          <View style={s.remitCtaFlags}>
+            <Text style={s.remitCtaFlagText}>🇰🇪 🇳🇬 🇮🇳 🇵🇭 🇸🇳</Text>
+            <Ionicons name="chevron-forward" size={18} color={colors.brand} />
+          </View>
+        </Pressable>
 
         <View style={s.sectionHeader}>
           <Text style={s.sectionTitle}>{t("assets")}</Text>
@@ -174,4 +189,10 @@ const s = StyleSheet.create({
   faucetCta: { flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 6, marginTop: spacing.lg, marginHorizontal: spacing.xl, paddingVertical: 14, borderRadius: radius.md, borderWidth: 1, borderColor: colors.border, backgroundColor: colors.surface },
   faucetCtaText: { color: colors.brand, fontSize: 13, fontWeight: "600" },
   changeText: { fontSize: 11, fontWeight: "600", marginTop: 2 },
+  remitCta: { flexDirection: "row", alignItems: "center", gap: spacing.md, marginTop: spacing.xl, marginHorizontal: spacing.xl, padding: spacing.lg, borderRadius: radius.lg, backgroundColor: colors.brandTertiary, borderWidth: 1, borderColor: "rgba(201,163,91,0.40)" },
+  remitCtaLeft: { flex: 1 },
+  remitCtaTitle: { fontSize: 15, fontWeight: "700", color: colors.brandDeep, marginBottom: 4 },
+  remitCtaSub: { fontSize: 12, color: colors.onSurfaceSecondary, lineHeight: 16 },
+  remitCtaFlags: { alignItems: "center", gap: 4 },
+  remitCtaFlagText: { fontSize: 14, letterSpacing: 2 },
 });

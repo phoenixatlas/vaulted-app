@@ -40,6 +40,15 @@ from multichain import (
     BTC_TESTNET,
     USE_MAINNET,
 )
+from remit import (
+    CORRIDORS,
+    SOURCE_FIATS,
+    REMIT_CHAINS,
+    refresh_fx_rates,
+    convert_fiat,
+    choose_chain,
+    vaulted_fee_usd,
+)
 
 
 ROOT_DIR = Path(__file__).parent
@@ -1099,6 +1108,254 @@ async def xrp_send_route(body: SendXrpIn, user=Depends(get_current_user)):
     return record
 
 
+# ============================================================================
+# CROSS-BORDER REMITTANCE — fiat-first UX (Phase B)
+# ============================================================================
+FREE_TIER_REMIT_LIMIT = 3  # per calendar month, per user
+
+
+def _first_of_month_utc() -> datetime:
+    """UTC timestamp for 00:00 on the first day of the current month."""
+    now = now_utc()
+    return now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+
+
+async def _remit_send_count_this_month(user_id: str) -> int:
+    """Count of remittance sends the user has completed in the current month."""
+    return await db.transactions.count_documents({
+        "user_id": user_id,
+        "category": {"$regex": "^Remit ·"},
+        "status": {"$ne": "failed"},
+        "created_at": {"$gte": iso(_first_of_month_utc())},
+    })
+
+
+@api.get("/remit/corridors")
+async def remit_corridors():
+    """Public — no auth needed for the marketing landing to preview corridors."""
+    return {
+        "source_fiats": SOURCE_FIATS,
+        "corridors": [{"code": code, **info} for code, info in CORRIDORS.items()],
+    }
+
+
+class RemitQuoteIn(BaseModel):
+    source_fiat: str = Field(min_length=3, max_length=3)
+    amount: float = Field(gt=0)
+    destination_code: str = Field(min_length=2, max_length=2)
+
+
+@api.post("/remit/quote")
+async def remit_quote(body: RemitQuoteIn, user=Depends(get_current_user)):
+    """Return the best chain, fees, and destination-fiat receive amount for a corridor."""
+    src = body.source_fiat.upper()
+    if src not in SOURCE_FIATS:
+        raise HTTPException(status_code=400, detail=f"Unsupported source currency: {src}")
+    corridor = CORRIDORS.get(body.destination_code.upper())
+    if not corridor:
+        raise HTTPException(status_code=400, detail="Unsupported destination corridor")
+
+    # 1) FX rates
+    fx = await refresh_fx_rates(db)
+    rates = fx.get("rates") or {}
+    # Convert send amount to USD (all internal math is USD-normalised)
+    amount_usd = convert_fiat(body.amount, src, "USD", rates)
+    if amount_usd <= 0:
+        raise HTTPException(status_code=400, detail="Invalid quote amount")
+
+    # 2) Crypto prices + user's on-chain holdings
+    market = await _refresh_market_prices()
+    market_assets = market.get("assets") or {}
+    crypto_prices_usd = {sym: (ma.get("price_usd") or 0) for sym, ma in market_assets.items()}
+
+    # Refresh live balances so quote reflects reality (not stale DB rows).
+    # This mirrors what /wallet/assets does but only for remit-eligible chains.
+    multichain_addrs = await _ensure_multichain_addresses(user)
+    holdings: dict[str, float] = {}
+    try:
+        xlm_addr = multichain_addrs.get("xlm")
+        if xlm_addr:
+            holdings["XLM"] = (await fetch_xlm_balance_stroops(xlm_addr)) / 1e7
+    except Exception as e:
+        logger.warning(f"remit: XLM balance fetch failed: {e}")
+        holdings["XLM"] = 0.0
+    try:
+        xrp_addr = multichain_addrs.get("xrp")
+        if xrp_addr:
+            holdings["XRP"] = (await fetch_xrp_balance_drops(xrp_addr)) / 1e6
+    except Exception as e:
+        logger.warning(f"remit: XRP balance fetch failed: {e}")
+        holdings["XRP"] = 0.0
+    try:
+        eth_addr = user.get("wallet_address")
+        if eth_addr and eth_addr.startswith("0x"):
+            holdings["USDC"] = (await fetch_usdc_balance_micro(eth_addr)) / 1e6
+    except Exception as e:
+        logger.warning(f"remit: USDC balance fetch failed: {e}")
+        holdings["USDC"] = 0.0
+
+    # 3) Chain selection
+    pick = choose_chain(amount_usd, holdings, crypto_prices_usd)
+
+    # 4) Vaulted service fee (Pro discount applies)
+    is_pro = bool(user.get("is_pro"))
+    svc_fee_usd = vaulted_fee_usd(amount_usd, is_pro)
+
+    # 5) Recipient amount in destination fiat
+    dst_fiat = corridor["currency"]
+    dst_amount = convert_fiat(amount_usd, "USD", dst_fiat, rates)
+
+    # 6) Free-tier gate — advisory here, enforced at /remit/send.
+    remit_used = await _remit_send_count_this_month(user["id"])
+    remit_remaining = max(0, FREE_TIER_REMIT_LIMIT - remit_used) if not is_pro else None
+    paywall_required = (not is_pro) and (remit_used >= FREE_TIER_REMIT_LIMIT)
+
+    quote = {
+        "quote_id": str(uuid.uuid4()),
+        "source": {"currency": src, "amount": body.amount, "amount_usd": round(amount_usd, 2)},
+        "destination": {
+            "code": body.destination_code.upper(),
+            "country": corridor["country"],
+            "currency": dst_fiat,
+            "flag": corridor["flag"],
+            "receive_via": corridor["receive_via"],
+            "eta": corridor["eta"],
+            "amount": round(dst_amount, 2),
+        },
+        "chain": pick,  # may be None if insufficient liquidity
+        "fees": {
+            "vaulted_service_usd": svc_fee_usd,
+            "chain_fee_usd": (pick or {}).get("chain_fee_usd", 0.0),
+            "total_fee_usd": round(svc_fee_usd + (pick or {}).get("chain_fee_usd", 0.0), 2),
+        },
+        "fx_rate": round(convert_fiat(1.0, src, dst_fiat, rates), 6),
+        "fx_fetched_at": fx.get("fetched_at"),
+        "free_tier": {
+            "limit_per_month": FREE_TIER_REMIT_LIMIT,
+            "used_this_month": remit_used,
+            "remaining_this_month": remit_remaining,
+            "paywall_required": paywall_required,
+            "is_pro": is_pro,
+        },
+        "sufficient_balance": pick is not None,
+        "reason_if_no_chain": (
+            "Not enough XLM, XRP, or USDC to cover this send + chain fee. "
+            "Tap Receive on any of those assets to top up, then try again."
+        ) if pick is None else None,
+    }
+    return quote
+
+
+class RemitSendIn(BaseModel):
+    source_fiat: str = Field(min_length=3, max_length=3)
+    amount: float = Field(gt=0)
+    destination_code: str = Field(min_length=2, max_length=2)
+    recipient_address: str  # crypto address the recipient controls (until Phase C off-ramp)
+    recipient_name: Optional[str] = None
+    memo: Optional[str] = None
+
+
+@api.post("/remit/send")
+async def remit_send(body: RemitSendIn, user=Depends(get_current_user)):
+    """Fiat-first send: re-quotes, enforces free-tier gate, then broadcasts on the picked chain."""
+    is_pro = bool(user.get("is_pro"))
+    remit_used = await _remit_send_count_this_month(user["id"])
+    if (not is_pro) and remit_used >= FREE_TIER_REMIT_LIMIT:
+        raise HTTPException(
+            status_code=402,
+            detail={
+                "error": "free_tier_exhausted",
+                "message": (
+                    f"You've used your {FREE_TIER_REMIT_LIMIT} free cross-border sends this month. "
+                    f"Upgrade to Vault Pro for unlimited sends + 50% off service fees."
+                ),
+                "cta": "upgrade_to_pro",
+            },
+        )
+
+    # Re-run the quote server-side so the client can't cheat rates/chain selection
+    quote = await remit_quote(
+        RemitQuoteIn(
+            source_fiat=body.source_fiat,
+            amount=body.amount,
+            destination_code=body.destination_code,
+        ),
+        user=user,
+    )
+    if not quote["sufficient_balance"] or not quote.get("chain"):
+        raise HTTPException(status_code=400, detail=quote.get("reason_if_no_chain") or "Insufficient balance")
+
+    chain = quote["chain"]["chain"]
+    crypto_amount = float(quote["chain"]["crypto_amount"])
+    to = body.recipient_address.strip()
+
+    # Address validation per chain
+    if chain == "XLM" and not (to.startswith("G") and len(to) == 56):
+        raise HTTPException(status_code=400, detail="Recipient must be a valid Stellar (G...) address")
+    if chain == "XRP" and not (to.startswith("r") and 25 <= len(to) <= 40):
+        raise HTTPException(status_code=400, detail="Recipient must be a valid XRP (r...) address")
+    if chain == "USDC" and not (to.startswith("0x") and len(to) == 42):
+        raise HTTPException(status_code=400, detail="Recipient must be a valid Ethereum (0x...) address")
+
+    mnemonic = user.get("eth_mnemonic") or user.get("mnemonic")
+    if not mnemonic:
+        raise HTTPException(status_code=400, detail="No mnemonic on file")
+
+    memo_short = (body.memo or f"Vaulted-{body.destination_code.upper()}")[:28]
+
+    try:
+        if chain == "XLM":
+            result = await xlm_send(mnemonic, to, crypto_amount, memo=memo_short)
+        elif chain == "XRP":
+            result = await xrp_send(mnemonic, to, crypto_amount, memo=memo_short)
+        else:  # USDC path
+            raise HTTPException(
+                status_code=400,
+                detail="USDC remittance route is temporarily disabled while we integrate the L2 gasless flow. Please use XLM or XRP.",
+            )
+    except HTTPException:
+        raise
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"{chain} submission failed: {str(e)[:200]}") from e
+
+    dst = quote["destination"]
+    record = {
+        "id": str(uuid.uuid4()),
+        "user_id": user["id"],
+        "type": "send",
+        "category": f"Remit · {dst['country']}",
+        "asset": chain,
+        "amount": crypto_amount,
+        "fiat_value": quote["source"]["amount_usd"],  # USD-normalised
+        "counterparty": to,
+        "recipient_name": body.recipient_name,
+        "memo": memo_short,
+        "network": "Mainnet" if USE_MAINNET else "Testnet",
+        "tx_hash": result["tx_hash"],
+        "explorer_url": result["explorer_url"],
+        "status": "pending",
+        "service_fee_usd": quote["fees"]["vaulted_service_usd"],
+        "created_at": iso(now_utc()),
+        # Remit-specific context — used by the receipt screen + activity feed
+        "remit": {
+            "source_currency": quote["source"]["currency"],
+            "source_amount": quote["source"]["amount"],
+            "destination_currency": dst["currency"],
+            "destination_amount": dst["amount"],
+            "destination_country": dst["country"],
+            "destination_flag": dst["flag"],
+            "chain": chain,
+            "fx_rate": quote["fx_rate"],
+            "receive_via": dst["receive_via"],
+        },
+    }
+    await db.transactions.insert_one(record)
+    record.pop("_id", None)
+    return record
+
+
 class SendEthIn(BaseModel):
     to_address: str
     amount_eth: float = Field(gt=0)
@@ -1471,6 +1728,7 @@ COINGECKO_IDS = {
     "USDC": "usd-coin",
     "SOL": "solana",
     "XLM": "stellar",
+    "XRP": "ripple",
 }
 PRICE_CACHE_TTL_SECONDS = 300
 
@@ -1519,7 +1777,7 @@ async def _refresh_market_prices() -> dict:
         # Last-resort defaults so the app keeps working
         out_assets = {
             sym: {"symbol": sym, "price_usd": p, "change_24h_pct": 0.0, "sparkline_7d": []}
-            for sym, p in [("BTC", 67000), ("ETH", 3500), ("USDC", 1.0), ("SOL", 150)]
+            for sym, p in [("BTC", 67000), ("ETH", 3500), ("USDC", 1.0), ("SOL", 150), ("XLM", 0.12), ("XRP", 0.52)]
         }
 
     record = {
