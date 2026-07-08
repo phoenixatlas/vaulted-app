@@ -67,6 +67,9 @@ from compliance import (
     sum_this_month_gbp,
     check_send_limits,
     screen_sanctions,
+    opensanctions_health,
+    opensanctions_config_status,
+    COMPLIANCE_STRICT_MODE,
 )
 
 
@@ -304,6 +307,29 @@ async def get_current_user(
     user = await db.users.find_one({"id": uid}, {"_id": 0})
     if not user:
         raise HTTPException(status_code=401, detail="User not found")
+    return user
+
+
+# ---- Admin auth: comma-separated ADMIN_EMAILS env var. Any authed user
+# whose email is on that list can hit /api/admin/* endpoints. Kept intentionally
+# simple — we don't need RBAC granularity for the current admin footprint
+# (health checks, manual sanctions screens). Upgrade to a role field on the
+# user doc if the admin surface grows.
+ADMIN_EMAILS: set[str] = {
+    e.strip().lower()
+    for e in (os.environ.get("ADMIN_EMAILS", "") or "").split(",")
+    if e.strip()
+}
+
+
+async def require_admin(user=Depends(get_current_user)) -> dict:
+    if not ADMIN_EMAILS:
+        # No admin list configured on this deployment → lock everything down
+        # rather than accidentally open the endpoints wide.
+        raise HTTPException(status_code=403, detail="Admin endpoints not configured")
+    email = (user.get("email") or "").strip().lower()
+    if email not in ADMIN_EMAILS:
+        raise HTTPException(status_code=403, detail="Admin access required")
     return user
 
 
@@ -1477,6 +1503,25 @@ async def remit_send(body: RemitSendIn, user=Depends(get_current_user)):
             },
         )
 
+    # 0.5) COMPLIANCE_STRICT_MODE gate — refuse to send if the user's last
+    #      sanctions screen was DEGRADED (no key / API down). Off by default
+    #      so early-stage ops can ship without OpenSanctions live; flip on
+    #      once a paid key + FCA registration are in place. Verified users
+    #      whose screen ran successfully bypass this gate.
+    if COMPLIANCE_STRICT_MODE:
+        user_kyc = user.get("kyc") or {}
+        sanctions = user_kyc.get("sanctions") or {}
+        if sanctions.get("degraded", True):
+            raise HTTPException(status_code=503, detail={
+                "error": "sanctions_screening_unavailable",
+                "message": (
+                    "Cross-border sends are temporarily paused — our sanctions "
+                    "screening provider is unavailable. Please try again in a few minutes "
+                    "or contact support@phoenix-atlas.com."
+                ),
+                "degraded_reason": sanctions.get("degraded_reason"),
+            })
+
     # Re-run the quote server-side so the client can't cheat rates/chain selection
     quote = await remit_quote(
         RemitQuoteIn(
@@ -1622,6 +1667,8 @@ async def kyc_status(user=Depends(get_current_user)):
         "sanctions_check": {
             "matched": (kyc.get("sanctions") or {}).get("matched", False),
             "checked_at": (kyc.get("sanctions") or {}).get("checked_at"),
+            "degraded": (kyc.get("sanctions") or {}).get("degraded", False),
+            "degraded_reason": (kyc.get("sanctions") or {}).get("degraded_reason"),
         },
     }
 
@@ -1756,12 +1803,23 @@ async def _apply_identity_verified(session_obj: dict):
         logger.warning(f"identity verified_outputs fetch failed: {e}")
 
     # Sanctions screening against the verified identity
-    sanctions_result = {"matched": False, "checked_at": iso(now_utc()), "reason": "no_name"}
+    sanctions_result = {
+        "matched": False,
+        "checked_at": iso(now_utc()),
+        "degraded": True,
+        "degraded_reason": "no_name",
+    }
     if verified_name:
         try:
             sanctions_result = await screen_sanctions(verified_name, dob=verified_dob, country=verified_country)
         except Exception as e:
             logger.warning(f"sanctions screen failed for user {user_id}: {e}")
+            sanctions_result = {
+                "matched": False,
+                "checked_at": iso(now_utc()),
+                "degraded": True,
+                "degraded_reason": f"exception: {type(e).__name__}",
+            }
 
     # If the sanctions check produced a HIGH-confidence match on a sanctions
     # dataset, we do NOT auto-tier the user up — we flag for manual review.
@@ -1803,6 +1861,43 @@ async def _apply_identity_requires_input(session_obj: dict):
             },
         }},
     )
+
+
+# ============================================================================
+# ADMIN — Compliance health & manual screening tools
+# ============================================================================
+@api.get("/admin/compliance/health")
+async def admin_compliance_health(_admin=Depends(require_admin)):
+    """Ping OpenSanctions with a canary query so operators can verify at a
+    glance whether sanctions screening is actually live. Also returns the
+    current integration config (key present, strict mode, URL, scopes)."""
+    health = await opensanctions_health()
+    return {
+        "opensanctions": {
+            "config": opensanctions_config_status(),
+            "health": health,
+        },
+        "corridor_blocklist": {
+            "count": len(COUNTRY_BLOCKLIST),
+            "codes": sorted(COUNTRY_BLOCKLIST.keys()),
+        },
+        "checked_at": iso(now_utc()),
+    }
+
+
+class AdminScreenIn(BaseModel):
+    name: str = Field(min_length=1, max_length=200)
+    dob: Optional[str] = None       # ISO YYYY-MM-DD
+    country: Optional[str] = None    # ISO alpha-2
+
+
+@api.post("/admin/compliance/screen")
+async def admin_compliance_screen(body: AdminScreenIn, _admin=Depends(require_admin)):
+    """Manually screen a name/DOB/country against OpenSanctions. Useful for
+    testing after enabling a new API key, and for ad-hoc SAR investigations.
+    Returns the full raw screen result (including degraded/reason flags)."""
+    result = await screen_sanctions(body.name, dob=body.dob, country=body.country)
+    return {"input": body.model_dump(), "result": result}
 
 
 class SendEthIn(BaseModel):

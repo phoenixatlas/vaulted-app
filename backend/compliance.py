@@ -193,28 +193,78 @@ async def check_send_limits(db, user: dict, send_amount_gbp: float) -> dict:
 OPENSANCTIONS_URL = os.environ.get("OPENSANCTIONS_URL", "https://api.opensanctions.org")
 OPENSANCTIONS_API_KEY = os.environ.get("OPENSANCTIONS_API_KEY")  # optional — free tier works without
 
+# When enabled, sanctions screening failures (API down, no key, timeout) will
+# BLOCK the send (fail-closed). Default is fail-open — screening returns
+# matched=False so the transaction proceeds and we log a WARNING for audit.
+# Flip to true once FCA registration is finalised and OpenSanctions is proven
+# stable + a paid key is in place.
+COMPLIANCE_STRICT_MODE = os.environ.get("COMPLIANCE_STRICT_MODE", "false").lower() in ("1", "true", "yes")
+
 # Scopes on OpenSanctions: "sanctions" (OFAC/UK/EU/UN) is what we care about;
 # "peps" (politically-exposed persons) is a soft-warn category.
 OPENSANCTIONS_SCOPES = ["sanctions", "peps"]
 
+# Structured logger used by the audit-log pipeline. Emits one line per screen.
+_audit_logger = logging.getLogger("vaulted.compliance.audit")
+
+
+def _degraded_result(reason: str) -> dict:
+    """Uniform shape for any screen that couldn't run properly. `matched:False`
+    keeps fail-open semantics, but `degraded:True` + `degraded_reason` makes
+    the state auditable (surfaced in /kyc/status and admin health endpoint)."""
+    return {
+        "matched": False,
+        "highest_score": 0.0,
+        "top_matches": [],
+        "scope": None,
+        "checked_at": datetime.now(tz=timezone.utc).isoformat(),
+        "degraded": True,
+        "degraded_reason": reason,
+    }
+
+
+def opensanctions_config_status() -> dict:
+    """Snapshot of the current OpenSanctions integration configuration —
+    consumed by the admin health endpoint so operators can see, at a glance,
+    whether screening is live or running in fallback mode."""
+    return {
+        "url": OPENSANCTIONS_URL,
+        "api_key_configured": bool(OPENSANCTIONS_API_KEY),
+        "strict_mode": COMPLIANCE_STRICT_MODE,
+        "scopes": OPENSANCTIONS_SCOPES,
+    }
+
 
 async def screen_sanctions(name: str, dob: Optional[str] = None, country: Optional[str] = None) -> dict:
     """Screen the given identity against OFAC/UK/EU/UN sanctions + PEP lists
-    via OpenSanctions. Returns a dict:
+    via OpenSanctions. Returns:
       {
         matched: bool,
         highest_score: float,
         top_matches: [...],
         scope: "sanctions" | "peps" | None,
         checked_at: iso,
+        degraded: bool,             # True when the check couldn't actually run
+        degraded_reason: str|None,  # "no_name" | "no_api_key" | "api_status_N" | "unreachable"
       }
-    Fails-open (returns matched=False) if the API is unreachable — we log
-    and let the send proceed rather than block on an outage. Production
-    hardening: switch to fails-closed once the endpoint is proven stable.
-    """
+    Fails-open (matched=False) by default so a compliance-API outage doesn't
+    freeze the whole product. Every degraded screen emits a structured audit
+    log line so we can prove to regulators that screening was ATTEMPTED even
+    when it couldn't complete. Flip COMPLIANCE_STRICT_MODE=true to require
+    a successful (non-degraded) screen for every send."""
+    started_at = datetime.now(tz=timezone.utc)
+
     if not name or not name.strip():
-        return {"matched": False, "highest_score": 0.0, "top_matches": [], "scope": None,
-                "checked_at": datetime.now(tz=timezone.utc).isoformat(), "reason": "no_name"}
+        result = _degraded_result("no_name")
+        _log_audit(name, country, dob, result, started_at)
+        return result
+
+    # No API key configured → we don't hit the endpoint at all (it would 401).
+    # This is the most common production path when OpenSanctions is unfunded.
+    if not OPENSANCTIONS_API_KEY:
+        result = _degraded_result("no_api_key")
+        _log_audit(name, country, dob, result, started_at)
+        return result
 
     query: dict = {"schema": "Person", "properties": {"name": [name.strip()]}}
     if dob:
@@ -230,9 +280,10 @@ async def screen_sanctions(name: str, dob: Optional[str] = None, country: Option
             }
         }
     }
-    headers = {"Content-Type": "application/json"}
-    if OPENSANCTIONS_API_KEY:
-        headers["Authorization"] = f"ApiKey {OPENSANCTIONS_API_KEY}"
+    headers = {
+        "Content-Type": "application/json",
+        "Authorization": f"ApiKey {OPENSANCTIONS_API_KEY}",
+    }
 
     scope = ",".join(OPENSANCTIONS_SCOPES)
     url = f"{OPENSANCTIONS_URL}/match/default?scope={scope}"
@@ -242,15 +293,15 @@ async def screen_sanctions(name: str, dob: Optional[str] = None, country: Option
             r = await cx.post(url, json=body, headers=headers)
             if r.status_code != 200:
                 logger.warning(f"OpenSanctions non-200 ({r.status_code}): {r.text[:200]}")
-                return {"matched": False, "highest_score": 0.0, "top_matches": [],
-                        "scope": None, "checked_at": datetime.now(tz=timezone.utc).isoformat(),
-                        "reason": f"api_status_{r.status_code}"}
+                result = _degraded_result(f"api_status_{r.status_code}")
+                _log_audit(name, country, dob, result, started_at)
+                return result
             data = r.json() or {}
     except Exception as e:
         logger.warning(f"OpenSanctions fetch failed: {e}")
-        return {"matched": False, "highest_score": 0.0, "top_matches": [],
-                "scope": None, "checked_at": datetime.now(tz=timezone.utc).isoformat(),
-                "reason": "unreachable"}
+        result = _degraded_result("unreachable")
+        _log_audit(name, country, dob, result, started_at)
+        return result
 
     results = (((data.get("responses") or {}).get("candidate") or {}).get("results")) or []
     # Keep only high-confidence matches (>= 0.85)
@@ -266,12 +317,77 @@ async def screen_sanctions(name: str, dob: Optional[str] = None, country: Option
     highest = (top[0].get("score") or 0.0) if top else 0.0
     matched = highest >= 0.85 and (top[0].get("match", False) if top else False)
 
-    return {
+    result = {
         "matched": matched,
         "highest_score": highest,
         "top_matches": top_matches,
         "scope": "sanctions" if matched and top and any("sanction" in (d or "").lower() for d in (top[0].get("datasets") or [])) else ("peps" if matched else None),
-        "checked_at": datetime.now(tz=timezone.utc).isoformat(),
+        "checked_at": started_at.isoformat(),
+        "degraded": False,
+        "degraded_reason": None,
+    }
+    _log_audit(name, country, dob, result, started_at)
+    return result
+
+
+def _log_audit(name: str, country: Optional[str], dob: Optional[str], result: dict, started_at: datetime) -> None:
+    """Structured audit log line — one per screen. Consumed by the FCA
+    audit-log endpoint (upcoming P2 work) to prove screening was attempted.
+    Never logs the raw name/DOB in production — only hashed + first-letter
+    initials for privacy, so log aggregators can be search-audited without
+    leaking PII."""
+    import hashlib
+    latency_ms = int((datetime.now(tz=timezone.utc) - started_at).total_seconds() * 1000)
+    name_hash = hashlib.sha256((name or "").strip().lower().encode()).hexdigest()[:12]
+    _audit_logger.info(
+        "sanctions_screen",
+        extra={
+            "event": "sanctions_screen",
+            "name_hash": name_hash,
+            "name_initial": ((name or "?")[:1] or "?").upper(),
+            "country": country,
+            "has_dob": bool(dob),
+            "matched": result.get("matched"),
+            "degraded": result.get("degraded", False),
+            "degraded_reason": result.get("degraded_reason"),
+            "highest_score": result.get("highest_score"),
+            "scope": result.get("scope"),
+            "latency_ms": latency_ms,
+            "checked_at": result.get("checked_at"),
+        },
+    )
+
+
+async def opensanctions_health() -> dict:
+    """Ping OpenSanctions with a known-good query ("Vladimir Putin" — always
+    on sanctions lists) to verify the integration is live. Returns:
+      {ok: bool, status: "live"|"degraded"|"down", reason: str|None,
+       latency_ms: int, matched_expected: bool}
+    """
+    if not OPENSANCTIONS_API_KEY:
+        return {"ok": False, "status": "degraded", "reason": "no_api_key",
+                "latency_ms": 0, "matched_expected": False}
+    started = datetime.now(tz=timezone.utc)
+    try:
+        result = await screen_sanctions("Vladimir Putin", country="RU")
+    except Exception as e:
+        return {"ok": False, "status": "down", "reason": f"exception: {e}",
+                "latency_ms": int((datetime.now(tz=timezone.utc) - started).total_seconds() * 1000),
+                "matched_expected": False}
+    latency = int((datetime.now(tz=timezone.utc) - started).total_seconds() * 1000)
+    if result.get("degraded"):
+        return {"ok": False, "status": "degraded",
+                "reason": result.get("degraded_reason"),
+                "latency_ms": latency, "matched_expected": False}
+    # For a real live key, Putin should match at 0.85+ against sanctions
+    matched = bool(result.get("matched"))
+    return {
+        "ok": True,
+        "status": "live",
+        "reason": None if matched else "canary_no_match",
+        "latency_ms": latency,
+        "matched_expected": matched,
+        "highest_score": result.get("highest_score"),
     }
 
 
@@ -281,4 +397,6 @@ __all__ = [
     "get_user_tier", "tier_limits",
     "sum_this_month_gbp", "check_send_limits",
     "screen_sanctions",
+    "opensanctions_health", "opensanctions_config_status",
+    "COMPLIANCE_STRICT_MODE",
 ]

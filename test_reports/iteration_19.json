@@ -1,0 +1,31 @@
+{
+  "summary": "Iteration 19 (Compliance / OpenSanctions Path C+) backend verification passed. All 20 tests across test_iteration17_kyc_error.py, test_iteration18_kyc_force_new.py, and test_iteration19_compliance_health.py pass. Live localhost:8001 smoke checks confirm: kyc/status now returns sanctions_check.degraded + degraded_reason fields; admin endpoints properly locked down (403 'Admin endpoints not configured' with no ADMIN_EMAILS env set); login, wallet/assets, and remit/quote all 200 under default COMPLIANCE_STRICT_MODE=off.",
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [],
+    "react_native_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_iteration19_compliance_health.py",
+    "/app/backend/tests/test_iteration17_kyc_error.py",
+    "/app/backend/tests/test_iteration18_kyc_force_new.py",
+    "/app/test_reports/pytest/iteration_19.xml",
+    "/tmp/smoke_iter19.py"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "server.py has grown large (>3100 lines) — consider splitting into modules (auth, kyc, remit, admin, compliance) in a future iteration. Not blocking iter 19."
+  ],
+  "updated_files": [],
+  "success_rate": {"backend": "100%", "frontend": "not tested (backend-only per request)"},
+  "seed_data_creation": "None. Used pre-seeded smoke user smoketest@vaulted.app. Tests that mutate kyc.sanctions clean up via _reset_user_sanctions fixture pattern.",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "Iteration 19 shipped OpenSanctions safe-fallback + admin diagnostics + COMPLIANCE_STRICT_MODE flag. Key surfaces added: (a) screen_sanctions() now returns {degraded: bool, degraded_reason: 'no_api_key'|'no_name'|'api_status_N'|'unreachable'}; (b) GET /api/admin/compliance/health and POST /api/admin/compliance/screen gated by ADMIN_EMAILS env (CSV, empty by default → 403 'Admin endpoints not configured'); (c) /api/kyc/status now surfaces sanctions_check.degraded & degraded_reason even when user has no sanctions doc; (d) COMPLIANCE_STRICT_MODE flag on /api/remit/send returns 503 detail={error:'sanctions_screening_unavailable', degraded_reason}. Default STRICT_MODE is off. Test fixtures use motor + AsyncIOMotorClient with fresh event loops to avoid loop-closed errors from prior TestClient runs. Frontend was NOT touched in iter 19; no FE regression testing performed.",
+  "rca_of_issue": "N/A — no issues found."
+}

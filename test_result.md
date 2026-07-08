@@ -409,3 +409,50 @@ agent_communication:
 
       Auth credentials: smoketest@vaulted.app / test1234
       Report to /app/test_reports/iteration_18.json.
+
+
+  - agent: "main"
+    message: |
+      ITERATION 19 — OpenSanctions wiring (Path C+): safe fallback +
+      audit-friendly degraded state + admin diagnostic endpoints +
+      COMPLIANCE_STRICT_MODE gate + docs.
+
+      Root causes addressed:
+       1. compliance.py silently failed-open (matched=False) on 401/timeout,
+          giving zero audit evidence that screening was attempted.
+       2. No admin visibility — you couldn't tell from the app whether
+          OpenSanctions is live without reading logs.
+       3. No path to enforce fail-closed once FCA registration lands.
+       4. Docs missing.
+
+      Ships:
+       A. compliance.py — screen_sanctions() returns {degraded, degraded_reason}
+          uniformly. Short-circuits to degraded="no_api_key" when
+          OPENSANCTIONS_API_KEY is empty (avoids 401). Emits structured audit
+          log (event=sanctions_screen, name_hash, latency_ms, matched, degraded).
+          Adds opensanctions_health() canary + opensanctions_config_status().
+          Reads COMPLIANCE_STRICT_MODE env flag (default false).
+       B. server.py:
+          - New require_admin dependency + ADMIN_EMAILS env var (CSV).
+          - GET /api/admin/compliance/health — canary ping + config snapshot.
+          - POST /api/admin/compliance/screen — manual name/dob/country screen.
+          - /kyc/status now surfaces sanctions_check.{degraded, degraded_reason}.
+          - _apply_identity_verified now stores degraded/degraded_reason on user.
+          - /api/remit/send strict-mode gate: 503 if degraded && STRICT_MODE.
+       C. /app/docs/COMPLIANCE.md — architecture, env vars, three key
+          acquisition paths (paid hosted, self-hosted Yente, corridor-only),
+          admin endpoint reference, structured-log schema, strict-mode rollout.
+
+      Backend tests (all 13 passing, plus 7 iter17/18 regression → 20 total):
+        /app/backend/tests/test_iteration19_compliance_health.py
+
+      Please verify:
+        1. Re-run iter17 + iter18 + iter19 test suites and confirm no
+           regression (20/20 should pass).
+        2. Optional: smoke that /api/remit/quote and /api/remit/send are
+           unchanged for users with no kyc.sanctions data (default state —
+           strict mode is off).
+        3. Do NOT re-test wallet/multichain/subscription — untouched.
+
+      Credentials: smoketest@vaulted.app / test1234.
+      Report to /app/test_reports/iteration_19.json.
