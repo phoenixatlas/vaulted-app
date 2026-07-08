@@ -1646,6 +1646,12 @@ async def kyc_session(user=Depends(get_current_user)):
         except Exception as e:
             logger.warning(f"kyc: existing session retrieve failed ({existing_id}): {e}")
 
+    # Bump a per-user attempt counter so the Stripe idempotency key is unique
+    # across cancellations. Without this, canceling a session and retrying
+    # within 24h would hit Stripe's cached response (the canceled session)
+    # and never mint a fresh URL.
+    attempt_num = int(kyc.get("session_attempt", 0)) + 1
+
     try:
         session = stripe.identity.VerificationSession.create(
             type="document",
@@ -1661,8 +1667,9 @@ async def kyc_session(user=Depends(get_current_user)):
                 "user_id": user["id"],
                 "target_tier": "kyc_lite",
                 "email": user.get("email") or "",
+                "attempt": str(attempt_num),
             },
-            idempotency_key=f"vaulted-kyc-lite-{user['id']}",
+            idempotency_key=f"vaulted-kyc-lite-{user['id']}-{attempt_num}",
         )
     except stripe.error.StripeError as e:  # type: ignore[attr-defined]
         # Detect the "Identity product not enabled" state and surface it as a
@@ -1685,6 +1692,7 @@ async def kyc_session(user=Depends(get_current_user)):
             "kyc.identity_verification_session_id": session["id"],
             "kyc.identity_verification_status": "requires_input",
             "kyc.identity_started_at": iso(now_utc()),
+            "kyc.session_attempt": attempt_num,
         }},
     )
     return {"session_id": session["id"], "url": session["url"], "reused": False}
