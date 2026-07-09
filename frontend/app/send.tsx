@@ -9,7 +9,8 @@ import { Ionicons } from "@expo/vector-icons";
 import { api } from "@/src/lib/api";
 import { useAuth } from "@/src/lib/auth";
 import { useI18n } from "@/src/lib/i18n";
-import { colors, spacing, radius, ASSET_ICON_COLORS } from "@/src/lib/theme";
+import { colors, spacing, radius } from "@/src/lib/theme";
+import { AssetLogo } from "@/src/components/AssetLogo";
 import { authenticate, getCapabilities } from "@/src/lib/biometric";
 
 type Asset = {
@@ -147,7 +148,7 @@ export default function SendCrypto() {
           <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: spacing.sm, paddingVertical: 4 }} style={{ marginBottom: spacing.lg }}>
             {assets.map((a) => (
               <Pressable key={a.symbol} testID={`chip-${a.symbol}`} onPress={() => setSel(a.symbol)} style={[s.chip, sel === a.symbol && s.chipActive]}>
-                <View style={[s.chipDot, { backgroundColor: ASSET_ICON_COLORS[a.symbol] ?? colors.brand }]} />
+                <View style={{ width: 18, height: 18 }}><AssetLogo symbol={a.symbol} size={18} /></View>
                 <Text style={[s.chipText, sel === a.symbol && { color: colors.brand }]}>{a.symbol}</Text>
                 {a.on_chain && <Ionicons name="globe-outline" size={12} color={sel === a.symbol ? colors.brand : colors.onSurfaceTertiary} />}
               </Pressable>

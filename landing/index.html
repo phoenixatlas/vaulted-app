@@ -97,6 +97,50 @@
       transform: translateY(-1px);
       box-shadow: 0 6px 32px rgba(201, 163, 91, 0.45);
     }
+    /* Header "Launch App" — dedicated variant tuned to stand out on the
+       translucent-black header. Brighter gradient, warm inner highlight,
+       stronger glow, and a slow pulse to catch the eye without being
+       obnoxious. */
+    .btn-launch {
+      background: linear-gradient(135deg, #F5E9C9 0%, #E6C879 45%, #C9A35B 100%);
+      color: #0F0B08;
+      font-weight: 700;
+      letter-spacing: 0.2px;
+      padding: 12px 26px;
+      box-shadow:
+        0 0 0 1px rgba(245, 233, 201, 0.35) inset,   /* inner chrome highlight */
+        0 4px 18px rgba(201, 163, 91, 0.55),          /* short throw glow */
+        0 0 28px rgba(230, 200, 121, 0.35);           /* soft ambient halo */
+      position: relative;
+      animation: launchPulse 3.2s ease-in-out infinite;
+    }
+    .btn-launch:hover {
+      transform: translateY(-1px);
+      box-shadow:
+        0 0 0 1px rgba(245, 233, 201, 0.60) inset,
+        0 6px 24px rgba(230, 200, 121, 0.75),
+        0 0 40px rgba(230, 200, 121, 0.55);
+      animation-play-state: paused;
+    }
+    .btn-launch:active { transform: translateY(0); }
+    @keyframes launchPulse {
+      0%, 100% {
+        box-shadow:
+          0 0 0 1px rgba(245, 233, 201, 0.35) inset,
+          0 4px 18px rgba(201, 163, 91, 0.55),
+          0 0 28px rgba(230, 200, 121, 0.35);
+      }
+      50% {
+        box-shadow:
+          0 0 0 1px rgba(245, 233, 201, 0.55) inset,
+          0 5px 22px rgba(230, 200, 121, 0.70),
+          0 0 40px rgba(230, 200, 121, 0.55);
+      }
+    }
+    /* Respect users who've opted out of motion */
+    @media (prefers-reduced-motion: reduce) {
+      .btn-launch { animation: none; }
+    }
     .btn-ghost {
       background: transparent;
       color: var(--gold-cream);
@@ -558,7 +602,7 @@
         <a href="#features">Features</a>
         <a href="#pricing">Pricing</a>
         <a href="#security">Security</a>
-        <a class="btn btn-primary" href="https://app.phoenix-atlas.com">Launch App →</a>
+        <a class="btn btn-launch" href="https://app.phoenix-atlas.com">Launch App →</a>
       </div>
     </div>
   </header>

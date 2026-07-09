@@ -10,6 +10,7 @@ import * as Clipboard from "expo-clipboard";
 import { api } from "@/src/lib/api";
 import { useI18n } from "@/src/lib/i18n";
 import { colors, spacing, radius, ASSET_ICON_COLORS } from "@/src/lib/theme";
+import { AssetLogo } from "@/src/components/AssetLogo";
 
 type Asset = "ETH" | "USDC" | "BTC" | "SOL" | "XLM" | "XRP";
 
@@ -110,7 +111,7 @@ export default function Receive() {
             onPress={() => setAsset(a)}
             style={[s.chip, asset === a && { backgroundColor: colors.brand, borderColor: colors.brand }]}
           >
-            <View style={[s.chipDot, { backgroundColor: ASSET_ICON_COLORS[a] }]} />
+            <View style={s.chipLogo}><AssetLogo symbol={a} size={16} /></View>
             <Text style={[s.chipText, asset === a && { color: "#0F0B08" }]}>{a}</Text>
           </Pressable>
         ))}
@@ -194,6 +195,7 @@ const s = StyleSheet.create({
   chipRow: { paddingBottom: spacing.lg, flexGrow: 0 },
   chip: { flexDirection: "row", alignItems: "center", gap: 6, paddingHorizontal: spacing.md, paddingVertical: 8, borderRadius: radius.pill, backgroundColor: colors.brandTertiary, borderWidth: 1, borderColor: "rgba(201,163,91,0.40)" },
   chipDot: { width: 7, height: 7, borderRadius: 4 },
+  chipLogo: { width: 16, height: 16 },
   chipText: { fontSize: 12, fontWeight: "700", color: colors.brandDeep, letterSpacing: 0.5 },
   body: { padding: spacing.xl, alignItems: "center", gap: spacing.md, paddingBottom: spacing.xxl + spacing.xl },
   chainBadge: { flexDirection: "row", alignItems: "center", gap: 8, borderWidth: 1, paddingHorizontal: spacing.md, paddingVertical: 6, borderRadius: radius.pill, backgroundColor: "rgba(201,163,91,0.10)" },

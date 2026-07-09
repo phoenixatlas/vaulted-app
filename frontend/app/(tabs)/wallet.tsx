@@ -8,7 +8,8 @@ import { Ionicons } from "@expo/vector-icons";
 import { api } from "@/src/lib/api";
 import { useAuth } from "@/src/lib/auth";
 import { useI18n } from "@/src/lib/i18n";
-import { colors, spacing, radius, ASSET_ICON_COLORS, BRAND_IMAGES } from "@/src/lib/theme";
+import { colors, spacing, radius, BRAND_IMAGES } from "@/src/lib/theme";
+import { AssetLogo } from "@/src/components/AssetLogo";
 import Sparkline from "@/src/components/Sparkline";
 
 type Asset = { id: string; symbol: string; name: string; amount: number; price_usd: number; fiat_value: number; on_chain?: boolean; network?: string | null; change_24h_pct?: number; sparkline_7d?: number[] };
@@ -110,9 +111,7 @@ export default function Wallet() {
               style={({ pressed }) => pressed && { opacity: 0.7 }}
             >
               <View style={s.assetRow}>
-                <View style={[s.assetIcon, { backgroundColor: ASSET_ICON_COLORS[a.symbol] ?? colors.brandTertiary }]}>
-                  <Text style={s.assetSym}>{a.symbol.slice(0, 1)}</Text>
-                </View>
+                <AssetLogo symbol={a.symbol} size={40} />
                 <View style={{ flex: 1 }}>
                   <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
                     <Text style={s.assetName}>{a.name}</Text>
