@@ -19,6 +19,14 @@ export default function Receipt() {
   const status = String(p.status ?? "completed").toLowerCase();
   const isFiatFunded = funding === "stripe";
 
+  // Kotani / M-Pesa off-ramp state (populated when destination is Kenya
+  // and the Stripe callback has fired the offramp trigger).
+  let kotani: any = null;
+  try { if (p.kotani_json) kotani = JSON.parse(String(p.kotani_json)); } catch { kotani = null; }
+  const kotaniStatus = String(kotani?.status ?? p.kotani_status ?? "").toUpperCase();
+  const mpesaReceipt = String(kotani?.mpesa_receipt ?? p.mpesa_receipt ?? "");
+  const isMpesaOfframp = kotaniStatus === "SUCCESS" || !!mpesaReceipt || String(p.kotani_reference_id ?? "").length > 0;
+
   // Remit context (set by /remit/send)
   let remit: any = null;
   try {
@@ -74,6 +82,7 @@ export default function Receipt() {
           {isRemit && <Row label="FX rate" value={`1 ${remit.source_currency} = ${remit.fx_rate?.toFixed(4)} ${remit.destination_currency}`} />}
           {isRemit && <Row label="Delivery" value={remit.receive_via} />}
           {isRemit && isFiatFunded && <Row label="Paid via" value={paymentLabel} />}
+          {isMpesaOfframp && mpesaReceipt && <Row label="M-Pesa receipt" value={mpesaReceipt} valueColor={colors.success} />}
           <Row label={isFiat ? "Method" : isRemit ? (isFiatFunded ? "Recipient" : "Recipient wallet") : "To"} value={counterparty.length > 22 ? counterparty.slice(0, 8) + "…" + counterparty.slice(-6) : counterparty} />
           <Row label={isFiat || isFiatFunded ? "Receipt ID" : "Tx hash"} value={ref.length > 22 ? ref.slice(0, 12) + "…" + ref.slice(-6) : ref} />
           <Row label="Status" value={statusLabel} valueColor={statusColor} />

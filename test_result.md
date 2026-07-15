@@ -167,6 +167,58 @@ backend:
           for that region (cards + BACS/SEPA/ACH + wallets). Re-verified all
           three payment_method values return valid checkout_urls.
 
+  - task: "Kotani Pay off-ramp (USDC → M-Pesa KES) — MOCKED, auto-flips to LIVE"
+    implemented: true
+    working: true
+    file: "/app/backend/kotani.py + /app/backend/server.py"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: true
+    status_history:
+      - working: true
+        agent: "main"
+        comment: |
+          New module /app/backend/kotani.py: async client for Kotani Pay v3
+          off-ramp API (https://documentation.kotanipay.com/v3). Runs in MOCK
+          mode when KOTANI_API_KEY is empty or set to "MOCKED"; auto-flips to
+          LIVE the moment a real key lands in /app/backend/.env. Every
+          response mirrors the real {success, message, data} envelope so
+          downstream code doesn't change on go-live.
+
+          Endpoints wired into server.py:
+          - POST /api/offramp/mpesa/quote (auth user; returns Kotani rate quote)
+          - GET  /api/offramp/mpesa/status/{ref_id} (auth user; owner-scoped)
+          - POST /api/offramp/callback (Kotani webhook receiver; HMAC-SHA256
+            signature verification via X-Kotani-Signature when
+            KOTANI_WEBHOOK_SECRET is configured)
+          - GET  /api/offramp/health (admin-only diagnostic)
+
+          Auto-integration into fiat-funded remit flow: when Stripe checkout
+          completes and metadata.destination_code == "KE", the backend
+          automatically calls kotani.create_offramp() to disburse KES to the
+          recipient's M-Pesa. In MOCK mode this returns SUCCESS immediately
+          and the tx flips to status="settled" for a delightful demo UX.
+
+          Callback handling verified end-to-end (SUCCESS + FAILED terminal
+          states, unmatched refs handled gracefully, single-use tx state
+          updates atomically).
+
+          Env vars added to /app/backend/.env:
+          - KOTANI_API_KEY=MOCKED (replace with sandbox key when Kotani
+            approves the integrator account)
+          - KOTANI_BASE_URL=https://sandbox-api.kotanipay.io
+          - KOTANI_WEBHOOK_SECRET= (blank in dev; set once sandbox is live)
+          - KOTANI_MOCK= (force-mock override for tests)
+
+          Audit event types added: OFFRAMP_MPESA_INITIATED,
+          OFFRAMP_MPESA_SUCCESS, OFFRAMP_MPESA_FAILED, OFFRAMP_MPESA_REFUNDED,
+          OFFRAMP_WEBHOOK_INVALID_SIGNATURE.
+
+          Frontend receipt.tsx now shows an "M-Pesa receipt" row when
+          Kotani has settled + hides all crypto rail language for fiat
+          sends. remit.tsx passes kotani_json + kotani_reference_id +
+          mpesa_receipt to the receipt route params.
+
   - task: "Original: XLM backfill for existing (pre-XLM) users"
     implemented: true
     working: true

@@ -196,11 +196,19 @@ export default function Remit() {
           const applied: any = synced?.applied || {};
           if (applied?.kind === "remit_fund" && applied?.tx) {
             const tx = applied.tx;
+            // Kotani M-Pesa off-ramp state — populated for KES payouts.
+            // Passed to the receipt screen so the "M-Pesa receipt" row
+            // and delivered/processing status can render correctly.
+            const kotani = tx.kotani || applied.kotani || null;
             router.replace({
               pathname: "/receipt",
               params: {
                 ...tx,
                 remit_json: JSON.stringify(tx.remit || {}),
+                kotani_json: kotani ? JSON.stringify(kotani) : "",
+                kotani_reference_id: kotani?.reference_id || "",
+                kotani_status: kotani?.status || "",
+                mpesa_receipt: kotani?.mpesa_receipt || "",
                 funding_method: "stripe",
               } as any,
             });

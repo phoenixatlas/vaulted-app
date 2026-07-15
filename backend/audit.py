@@ -60,6 +60,13 @@ class EventType:
     AUTH_PASSWORD_RESET_COMPLETED = "auth.password_reset_completed"
     AUTH_PASSWORD_RESET_INVALID_TOKEN = "auth.password_reset_invalid_token"
 
+    # Off-ramp (Kotani Pay / M-Pesa) lifecycle
+    OFFRAMP_MPESA_INITIATED = "offramp.mpesa_initiated"
+    OFFRAMP_MPESA_SUCCESS = "offramp.mpesa_success"
+    OFFRAMP_MPESA_FAILED = "offramp.mpesa_failed"
+    OFFRAMP_MPESA_REFUNDED = "offramp.mpesa_refunded"
+    OFFRAMP_WEBHOOK_INVALID_SIGNATURE = "offramp.webhook_invalid_signature"
+
 
 ALL_EVENT_TYPES = {
     v for k, v in vars(EventType).items() if not k.startswith("_") and isinstance(v, str)

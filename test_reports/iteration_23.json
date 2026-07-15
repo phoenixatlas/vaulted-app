@@ -1,0 +1,44 @@
+{
+  "summary": "Kotani Pay v3 M-Pesa off-ramp (MOCK mode) — full backend acceptance sweep. 19/19 functional tests pass (quote/status/health/callback/remit-fund contract). Uncovered one HIGH-priority security bug: kotani.py reads env vars at module import time BEFORE server.py calls load_dotenv(), so KOTANI_WEBHOOK_SECRET (and KOTANI_BASE_URL / KOTANI_API_KEY / KOTANI_MOCK) set only in /app/backend/.env are never picked up. Result: webhook HMAC signature verification is permanently disabled — verify_webhook_signature() always hits the empty-secret dev short-circuit and returns True even for garbage signatures. Documented via 2 xfail tests + manual repro.",
+  "backend_issues": {
+    "critical": [
+      {
+        "endpoint": "POST /api/offramp/callback (kotani.verify_webhook_signature)",
+        "issue": "kotani.py reads KOTANI_WEBHOOK_SECRET / KOTANI_API_KEY / KOTANI_BASE_URL / KOTANI_MOCK at module import time. In server.py, `import kotani` (line 92) runs BEFORE `load_dotenv(...)` (line 96), so any value in /app/backend/.env is IGNORED. Setting KOTANI_WEBHOOK_SECRET=xyz + supervisorctl restart backend still leaves _WEBHOOK_SECRET='' → all signatures (valid, invalid, missing) return HTTP 200. This silently disables webhook auth once Kotani goes live. Same failure mode will hit KOTANI_API_KEY when a real key is dropped in .env — live_mode() will still return False until the key is exported via supervisor env instead of .env. Manual repro logged in /app/backend/tests/test_kotani_signature.py module docstring.",
+        "priority": "HIGH"
+      }
+    ],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [],
+    "react_native_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_kotani_offramp.py",
+    "/app/backend/tests/test_kotani_signature.py",
+    "/app/test_reports/pytest/iter23_results.xml"
+  ],
+  "action_items": [
+    "FIX kotani.py env-load ordering. Recommended: at the top of kotani.py add `from pathlib import Path; from dotenv import load_dotenv; load_dotenv(Path(__file__).parent / '.env')` BEFORE reading os.environ. Alternatively move the four os.environ.get(...) calls into a small `_cfg()` accessor that is invoked at request-time instead of import-time. Third option: reorder `import kotani` in server.py to AFTER `load_dotenv(...)` — but the module-level pattern will keep biting other modules, so option A/B is preferable.",
+    "After the fix, unset the xfail markers on tests/test_kotani_signature.py::test_invalid_signature_rejected and ::test_missing_signature_when_secret_set and re-run — both should turn green (401)."
+  ],
+  "critical_code_review_comments": [
+    "kotani.py lines 47-50: env captured at import time. This is the root cause of the signature-verification bypass and would also silently disable KOTANI_BASE_URL and KOTANI_MOCK env overrides.",
+    "server.py line 2313: query `db.transactions.find_one({'kotani.reference_id': ref_id}, {'_id': 0})` — good, _id excluded. LGTM.",
+    "server.py line 2286-2291: on invalid signature, an audit event is written but the exception is raised inside a function that already read `payload = await request.body()`. HTTPException(401) flow is correct; no bug.",
+    "kotani.py `_mock_offramp_status` always returns SUCCESS for kp_mock_* refs — fine for dev but note this defeats the PENDING→SUCCESS timing test if anyone tries a status-poll delay path."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_kotani_offramp.py (new — 18 tests)",
+    "/app/backend/tests/test_kotani_signature.py (new — 3 tests, 2 xfailed pending fix)"
+  ],
+  "success_rate": {"backend": "100% (19/19 functional, 2 xfail documenting known bug)", "frontend": "not tested (per request)"},
+  "seed_data_creation": "Created 5 temporary TEST_kotani_* transactions inside db.transactions (all auto-deleted at end of each test / module teardown). No lingering data.",
+  "retest_needed": true,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "After main agent fixes the env-load ordering in kotani.py, re-run `pytest /app/backend/tests/test_kotani_signature.py -v` and confirm test_invalid_signature_rejected + test_missing_signature_when_secret_set both PASS (not XPASS). Remove `@pytest.mark.xfail` markers if fix is confirmed. The full sweep is: `pytest /app/backend/tests/test_kotani_offramp.py /app/backend/tests/test_kotani_signature.py -v`. The signature test module edits /app/backend/.env in-place and restarts backend — safe (restore is in fixture teardown), but takes ~10s. Endpoints exercised: /api/offramp/mpesa/quote, /api/offramp/mpesa/status/{id}, /api/offramp/health, /api/offramp/callback, /api/remit/fund. Real Stripe checkout URL was successfully returned for KE + card payment.",
+  "rca_of_issue": "BUG: webhook signature verification silently disabled.\nREPRO: (1) sed -i 's/^KOTANI_WEBHOOK_SECRET=$/KOTANI_WEBHOOK_SECRET=anything/' /app/backend/.env; (2) sudo supervisorctl restart backend; (3) curl -X POST $URL/api/offramp/callback -H 'X-Kotani-Signature: deadbeef' -d '{\"referenceId\":\"x\",\"status\":\"SUCCESS\"}' → HTTP 200 (expected 401).\nRCA: /app/backend/kotani.py lines 47-50 read _API_KEY / _BASE_URL / _WEBHOOK_SECRET / _FORCE_MOCK at import time. /app/backend/server.py imports kotani on line 92 BEFORE load_dotenv() on line 96, so .env values are not yet in os.environ when kotani reads them. verify_webhook_signature() then hits the `if not _WEBHOOK_SECRET: return True` short-circuit for every request, effectively removing authentication from the webhook.\nMITIGATION: Add `load_dotenv(Path(__file__).parent / '.env')` at the top of kotani.py, OR wrap env reads in a lazy `_cfg()` function called per-request, OR reorder imports in server.py."
+}
