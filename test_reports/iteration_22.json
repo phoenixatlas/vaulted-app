@@ -1,0 +1,50 @@
+{
+  "summary": "Iteration 22 — tested three new features: (1) login tagline swap, (2) fiat funding for /remit via Stripe (card/apple_pay/bank), (3) forgot/reset password flow via Resend. Backend: 11 tests passed, 1 xfailed (real bug in `bank` funding path — Stripe rejects the Session.create because `customer_balance` payment_method_type requires `payment_method_options[customer_balance][funding_type]` which is never set — endpoint returns 502). Frontend: login tagline confirmed swapped, Forgot password link navigates to /forgot-password, submit shows 'Check your inbox' success card, /reset-password?token=<bad> returns 'Invalid reset link.' inline error, /remit shows all 4 funding cards (crypto/card/apple_pay/bank), tapping non-crypto options updates CTA to 'Pay £50 & send to Kenya', and clicking CTA POSTs to /api/remit/fund with correct body and receives a valid Stripe Checkout URL (loaded checkout.stripe.com successfully).",
+  "backend_issues": {
+    "critical": [
+      {
+        "endpoint": "POST /api/remit/fund",
+        "issue": "BANK payment_method returns Stripe 502: 'A value is required for payment_method_options[customer_balance][funding_type]'. Root cause: _payment_method_types_for('bank') in /app/backend/server.py:1977 returns ['card','customer_balance'], but the stripe.checkout.Session.create() call in /app/backend/server.py:2073 does NOT pass payment_method_options.customer_balance.funding_type (e.g. 'bank_transfer' or ['bank_transfer','eu_bank_transfer','gb_bank_transfer','jp_bank_transfer','us_bank_transfer']). Also customer_balance requires a Customer to be attached. Suggested fix: either (a) drop 'customer_balance' from the 'bank' branch and rely on card fallback only, (b) add payment_method_options={'customer_balance':{'funding_type':'bank_transfer','bank_transfer':{'type':'gb_bank_transfer'}}}, customer=<attached_customer>, or (c) split behaviour per source_fiat (GBP→gb_bank_transfer, EUR→eu_bank_transfer, USD→us_bank_transfer). Reproducible with backend/tests/test_iteration22_pw_reset_and_remit_fund.py::TestRemitFund::test_fund_apple_pay_and_bank_succeed[bank] — currently marked xfail.",
+        "priority": "HIGH"
+      }
+    ],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [
+      {
+        "flow": "/remit → CTA on crypto funding for fresh user with 0 balance",
+        "issue": "Freshly-registered users see CTA 'Top up to send' when crypto funding is selected (because sufficient_balance=false). Test spec expected 'Send £50 to Kenya'. This is a UX fallback for insufficient balance, NOT a bug, but worth noting: to fully validate the spec-defined CTA copy for crypto, tester needs an account seeded with USDC/XLM/XRP balance ≥ send amount. All non-crypto CTAs ('Pay £50 & send to Kenya') matched spec exactly.",
+        "affected_testIDs": ["remit-confirm", "remit-funding-crypto"]
+      }
+    ],
+    "design_issues": [],
+    "react_native_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_iteration22_pw_reset_and_remit_fund.py",
+    "/app/test_reports/pytest/iter22_results.xml"
+  ],
+  "action_items": [
+    "FIX bank funding: update _payment_method_types_for('bank') OR add payment_method_options.customer_balance.funding_type + funding_type-specific config on Session.create in /app/backend/server.py:2073 so Stripe accepts 'customer_balance' in payment_method_types. Simplest quick-fix: return ['card'] from _payment_method_types_for('bank') for now (Stripe Checkout auto-shows bank redirect methods per region via card+link)."
+  ],
+  "critical_code_review_comments": [
+    "/app/backend/server.py is 4072 lines — well past the 700-line threshold. Should be split into routers (auth.py, remit.py, kyc.py, stripe.py, etc.). Not iteration-blocking but hygiene debt.",
+    "Insecure JWT_SECRET length (28 bytes < 32-byte SHA256 recommended per RFC 7518). Non-blocking for functional tests but flagged by pyjwt InsecureKeyLengthWarning on every encode/decode.",
+    "Deprecated @app.on_event('startup') / ('shutdown') hooks — should migrate to lifespan handlers (FastAPI recommendation).",
+    "AttributeError: module 'bcrypt' has no attribute '__about__' warning surfaces on every register/reset — indicates passlib pinned to an older bcrypt API. Cosmetic; hashing still works."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_iteration22_pw_reset_and_remit_fund.py (NEW)"
+  ],
+  "success_rate": {
+    "backend": "91% (11/12 tests pass; 1 xfailed = documented backend bug for bank funding)",
+    "frontend": "100% (7/7 UI cases verified: tagline, forgot link, forgot-sent card, reset error, 4 funding cards, CTA text swap, /api/remit/fund POST + Stripe redirect)"
+  },
+  "seed_data_creation": "Backend tests register ephemeral TEST_pw_*@vaulted.app users and TEST_ghost_*@nowhere.example probes. Frontend UI test registers a testui_*@vaulted.app account. All prefixed with TEST_ or testui_ for easy cleanup.",
+  "retest_needed": true,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "After main agent fixes the bank-funding Stripe config, re-run pytest backend/tests/test_iteration22_pw_reset_and_remit_fund.py and remove the xfail marker on TestRemitFund::test_fund_apple_pay_and_bank_succeed[bank]. All other flows are green. Note the /remit crypto CTA copy is only shown as 'Send £X to Country' when sufficient_balance=true; for fresh accounts you'll see 'Top up to send' — that's expected fallback behaviour.",
+  "rca_of_issue": "BANK funding via /api/remit/fund → Stripe 502. RCA: _payment_method_types_for('bank') returns ['card','customer_balance'] (server.py:1985) but Session.create (server.py:2074) never passes payment_method_options.customer_balance.funding_type, which Stripe makes mandatory whenever 'customer_balance' is in payment_method_types. Reproduction: POST /api/remit/fund {source_fiat: GBP, amount: 40, destination_code: KE, payment_method: bank, recipient_address: ...} → 502 {detail: 'Stripe error: A value is required for payment_method_options[customer_balance][funding_type].'}. Mitigation: either drop 'customer_balance' from the bank branch (fastest, still gives users card-based bank auth via 3DS), or add payment_method_options.customer_balance = {funding_type:'bank_transfer', bank_transfer:{type: <region>_bank_transfer}} + attach a Stripe Customer to the session."
+}

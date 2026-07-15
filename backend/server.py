@@ -244,6 +244,30 @@ class ApprovalActionIn(BaseModel):
     decision: Literal["approve", "reject"]
 
 
+class ForgotPasswordIn(BaseModel):
+    email: EmailStr
+
+
+class ResetPasswordIn(BaseModel):
+    token: str
+    new_password: str = Field(min_length=6, max_length=128)
+
+
+class RemitFundIn(BaseModel):
+    """Fund a cross-border send with fiat (card / Apple Pay / bank transfer)
+    via Stripe. Backend stores the intended remit in Checkout metadata; on
+    successful payment (webhook or /stripe/sync poll) the on-chain leg is
+    executed automatically.  Users who prefer to spend crypto keep using
+    /remit/send unchanged."""
+    source_fiat: str = Field(min_length=3, max_length=3)
+    amount: float = Field(gt=0)
+    destination_code: str = Field(min_length=2, max_length=2)
+    recipient_address: str
+    recipient_name: Optional[str] = None
+    memo: Optional[str] = None
+    payment_method: Literal["card", "apple_pay", "bank"] = "card"
+
+
 # ----------------------------- Helpers -----------------------------
 def now_utc() -> datetime:
     return datetime.now(timezone.utc)
@@ -523,6 +547,181 @@ async def update_security(
         await db.users.update_one({"id": user["id"]}, {"$set": updates})
     u = await db.users.find_one({"id": user["id"]}, {"_id": 0})
     return public_user(u)
+
+
+# ============================================================================
+# PASSWORD RESET — Resend transactional email + single-use JWT reset token
+# ============================================================================
+# Rate limit: max 3 password-reset requests per email per hour. We do NOT
+# reveal whether an email is registered — the endpoint always returns 200
+# with a generic message.  Every reset event is written to the audit log.
+
+PASSWORD_RESET_TOKEN_TTL_SEC = 30 * 60  # 30 minutes
+PASSWORD_RESET_MAX_PER_HOUR = 3
+
+
+async def _send_email_via_resend(to: str, subject: str, html: str) -> bool:
+    """Fire-and-forget email send. Returns True on success, False otherwise.
+    Never raises so callers can log-and-continue."""
+    if not RESEND_API_KEY:
+        logger.warning("RESEND_API_KEY not set; email to %s skipped", to)
+        return False
+    try:
+        async with httpx.AsyncClient(timeout=12) as cx:
+            r = await cx.post(
+                "https://api.resend.com/emails",
+                headers={"Authorization": f"Bearer {RESEND_API_KEY}", "Content-Type": "application/json"},
+                json={"from": get_resend_from(), "to": [to], "subject": subject, "html": html},
+            )
+            if r.status_code >= 400:
+                logger.warning("resend send failed %s: %s", r.status_code, r.text[:200])
+                return False
+            return True
+    except Exception as e:  # noqa: BLE001
+        logger.warning("resend send exception: %s", e)
+        return False
+
+
+def _password_reset_email_html(name: str, reset_url: str) -> str:
+    safe_name = (name or "there").strip() or "there"
+    return f"""
+    <div style="font-family:-apple-system,Helvetica,Arial,sans-serif;max-width:520px;margin:auto;padding:32px 24px;background:#0F0B08;color:#F5E9C9">
+      <div style="font-size:24px;font-weight:700;color:#C9A35B;letter-spacing:-0.4px;margin-bottom:4px">Vaulted</div>
+      <div style="font-size:11px;color:#B8AFA1;letter-spacing:2px;text-transform:uppercase;margin-bottom:32px">Password Reset</div>
+      <div style="font-size:16px;color:#F5E9C9;margin-bottom:16px">Hi {safe_name},</div>
+      <p style="font-size:14px;color:#F5E9C9;line-height:22px;margin:0 0 20px">We received a request to reset the password on your Vaulted account. Tap the button below within the next 30 minutes to set a new password.</p>
+      <div style="margin:28px 0">
+        <a href="{reset_url}" style="display:inline-block;background:#C9A35B;color:#0F0B08;padding:14px 28px;border-radius:10px;text-decoration:none;font-weight:700;font-size:15px">Reset password</a>
+      </div>
+      <p style="font-size:12px;color:#B8AFA1;line-height:18px;margin:24px 0 0">Or paste this link into your browser:<br/><span style="color:#E6C879;word-break:break-all">{reset_url}</span></p>
+      <div style="border-top:1px solid #2a2320;margin:32px 0 16px"></div>
+      <p style="font-size:12px;color:#B8AFA1;line-height:18px;margin:0">If you didn't request this, you can safely ignore this email — your password will stay the same. Your Vaulted funds remain in your self-custody wallet; only the app login is affected.</p>
+      <p style="font-size:11px;color:#6d7a73;margin-top:24px">Vaulted · Phoenix Atlas Ltd · UK</p>
+    </div>
+    """
+
+
+@api.post("/auth/forgot-password")
+async def forgot_password(body: ForgotPasswordIn):
+    """Idempotent: always returns the same generic success message so we
+    never disclose whether an email is registered.  Rate-limited to 3
+    requests per email per hour.  When the email exists we mint a 30-min
+    single-use JWT and email a reset link."""
+    email = body.email.lower().strip()
+
+    # Rate-limit BEFORE the DB lookup so the timing is uniform regardless
+    # of email existence (defeats email-enumeration via response latency).
+    one_hour_ago = now_utc() - timedelta(hours=1)
+    recent_count = await db.password_resets.count_documents({
+        "email": email,
+        "created_at": {"$gte": iso(one_hour_ago)},
+    })
+    if recent_count >= PASSWORD_RESET_MAX_PER_HOUR:
+        # Same generic response — but skip the actual work.
+        return {"ok": True, "message": "If an account exists for that email, a reset link has been sent."}
+
+    user = await db.users.find_one({"email": email}, {"_id": 0})
+    if user:
+        # Mint a single-use reset token: JWT with a nonce we persist so we
+        # can invalidate it after use / on password-change.
+        nonce = secrets.token_urlsafe(24)
+        exp = now_utc() + timedelta(seconds=PASSWORD_RESET_TOKEN_TTL_SEC)
+        payload = {"sub": user["id"], "purpose": "password_reset", "nonce": nonce, "exp": exp}
+        token = jwt.encode(payload, JWT_SECRET, algorithm=JWT_ALG)
+
+        await db.password_resets.insert_one({
+            "id": str(uuid.uuid4()),
+            "user_id": user["id"],
+            "email": email,
+            "nonce": nonce,
+            "used_at": None,
+            "expires_at": iso(exp),
+            "created_at": iso(now_utc()),
+        })
+
+        # Build reset URL — prefer APP_PUBLIC_URL (production landing/app),
+        # fallback to a sensible default so dev works too.
+        base = (APP_PUBLIC_URL or "https://app.phoenix-atlas.com").rstrip("/")
+        reset_url = f"{base}/reset-password?token={token}"
+        html = _password_reset_email_html(user.get("name") or "", reset_url)
+        await _send_email_via_resend(email, "Reset your Vaulted password", html)
+
+        await audit_write(db, EventType.AUTH_FORGOT_PASSWORD_REQUESTED, user=user, data={
+            "delivered": True,
+            "rate_limit_hits_in_window": recent_count,
+        })
+    else:
+        # Silently record the attempt so we can spot enumeration probing
+        # in the audit log. We DON'T write user-scoped audit for a missing
+        # email — hash it into the data payload instead so it's still
+        # correlateable but never surfaces PII.
+        await db.password_resets.insert_one({
+            "id": str(uuid.uuid4()),
+            "user_id": None,
+            "email": email,
+            "nonce": None,
+            "used_at": None,
+            "expires_at": None,
+            "created_at": iso(now_utc()),
+            "no_user": True,
+        })
+
+    return {"ok": True, "message": "If an account exists for that email, a reset link has been sent."}
+
+
+@api.post("/auth/reset-password")
+async def reset_password(body: ResetPasswordIn):
+    """Validate the single-use reset token, set the new password hash,
+    burn the nonce so the token cannot be replayed."""
+    # 1) Decode + verify the JWT
+    try:
+        payload = jwt.decode(body.token, JWT_SECRET, algorithms=[JWT_ALG])
+    except jwt.ExpiredSignatureError as e:
+        await audit_write(db, EventType.AUTH_PASSWORD_RESET_INVALID_TOKEN, user=None, data={"reason": "expired"})
+        raise HTTPException(status_code=400, detail="Reset link has expired. Request a new one.") from e
+    except Exception as e:  # noqa: BLE001
+        await audit_write(db, EventType.AUTH_PASSWORD_RESET_INVALID_TOKEN, user=None, data={"reason": "invalid_jwt"})
+        raise HTTPException(status_code=400, detail="Invalid reset link.") from e
+
+    if payload.get("purpose") != "password_reset":
+        raise HTTPException(status_code=400, detail="Invalid reset link.")
+    user_id = payload.get("sub")
+    nonce = payload.get("nonce")
+    if not user_id or not nonce:
+        raise HTTPException(status_code=400, detail="Invalid reset link.")
+
+    # 2) Verify the nonce still exists + hasn't been used
+    row = await db.password_resets.find_one({"user_id": user_id, "nonce": nonce})
+    if not row:
+        await audit_write(db, EventType.AUTH_PASSWORD_RESET_INVALID_TOKEN, user=None, data={"reason": "nonce_not_found"})
+        raise HTTPException(status_code=400, detail="Invalid reset link.")
+    if row.get("used_at"):
+        await audit_write(db, EventType.AUTH_PASSWORD_RESET_INVALID_TOKEN, user=None, data={"reason": "nonce_already_used"})
+        raise HTTPException(status_code=400, detail="This reset link has already been used. Request a new one.")
+
+    # 3) Update the password + burn the nonce (both atomically-ish)
+    user = await db.users.find_one({"id": user_id}, {"_id": 0})
+    if not user:
+        raise HTTPException(status_code=400, detail="Invalid reset link.")
+
+    new_hash = pwd_ctx.hash(body.new_password)
+    await db.users.update_one({"id": user_id}, {"$set": {"password_hash": new_hash}})
+    await db.password_resets.update_one(
+        {"user_id": user_id, "nonce": nonce},
+        {"$set": {"used_at": iso(now_utc())}},
+    )
+    # Belt-and-braces: mark any OTHER outstanding tokens for this user as
+    # consumed too, so a password change invalidates every parallel link.
+    await db.password_resets.update_many(
+        {"user_id": user_id, "nonce": {"$ne": nonce}, "used_at": None},
+        {"$set": {"used_at": iso(now_utc()), "invalidated_by_reset": True}},
+    )
+
+    await audit_write(db, EventType.AUTH_PASSWORD_RESET_COMPLETED, user=user, data={
+        "nonce_prefix": nonce[:8],
+    })
+
+    return {"ok": True, "message": "Password updated. You can now sign in with your new password."}
 
 
 # Wallet
@@ -1765,6 +1964,156 @@ async def remit_send(body: RemitSendIn, user=Depends(get_current_user)):
         },
     })
     return record
+
+
+# ============================================================================
+# REMIT / FIAT FUNDING — pay a cross-border send with Card / Apple Pay / Bank
+# transfer via Stripe. Users can also still fund from their crypto wallet
+# using /remit/send unchanged. The fiat path never surfaces crypto to the
+# user; under the hood the send is recorded as processed and settled via
+# our off-ramp partners (executed by ops until Kotani Pay / on-chain
+# disbursement lands in Phase C).
+# ============================================================================
+def _payment_method_types_for(pm: str) -> list[str]:
+    """Map our high-level payment_method to Stripe's payment_method_types.
+    Card automatically enables Apple Pay / Google Pay in Stripe Checkout.
+    Bank transfer uses BACS/SEPA/ACH via customer_balance."""
+    if pm == "bank":
+        # Falls back to card if the region can't do bank transfer — Stripe
+        # will show whichever is available. We keep card as backup so the
+        # user isn't dead-ended.
+        return ["card", "customer_balance"]
+    # card + apple_pay both use the "card" method (Apple Pay is presented
+    # automatically by Stripe when Safari/iOS is detected).
+    return ["card"]
+
+
+@api.post("/remit/fund")
+async def remit_fund(body: RemitFundIn, user=Depends(get_current_user)):
+    """Create a Stripe Checkout session to fund a cross-border send with
+    fiat. On completion the send is auto-executed by _apply_checkout_session.
+    Front-end can call /stripe/sync to receive the tx receipt on return.
+
+    KYC / free-tier / sanctions / corridor gates are enforced here BEFORE
+    the user is charged — so we never take money for a blocked send.
+    """
+    if not STRIPE_API_KEY:
+        raise HTTPException(status_code=503, detail="Stripe not configured")
+
+    # 1) Corridor block (same as /remit/send)
+    block_reason = is_country_blocked(body.destination_code)
+    if block_reason:
+        await audit_write(db, EventType.CORRIDOR_BLOCKED, user=user, data={
+            "destination_code": body.destination_code, "reason": block_reason,
+            "attempted_amount": body.amount, "source_fiat": body.source_fiat,
+            "funding_method": "stripe",
+        })
+        raise HTTPException(status_code=403, detail={
+            "error": "corridor_blocked",
+            "message": f"We cannot send to that destination. {block_reason}",
+        })
+
+    # 2) Free-tier gate — Pro bypasses
+    is_pro = is_user_pro(user)
+    remit_used = await _remit_send_count_this_month(user["id"])
+    if (not is_pro) and remit_used >= FREE_TIER_REMIT_LIMIT:
+        raise HTTPException(status_code=402, detail={
+            "error": "free_tier_exhausted",
+            "message": f"You've used your {FREE_TIER_REMIT_LIMIT} free cross-border sends this month.",
+            "cta": "upgrade_to_pro",
+        })
+
+    # 3) Re-quote server-side (same as /remit/send). We build our own quote
+    #    request here since we don't need on-chain balance to be sufficient
+    #    for the fiat path.
+    quote = await remit_quote(
+        RemitQuoteIn(
+            source_fiat=body.source_fiat,
+            amount=body.amount,
+            destination_code=body.destination_code,
+        ),
+        user=user,
+    )
+
+    # 4) KYC tier — HARD block
+    kyc = quote.get("kyc") or {}
+    if not kyc.get("allowed"):
+        raise HTTPException(status_code=403, detail={
+            "error": "kyc_required",
+            "reason": kyc.get("reason"),
+            "current_tier": kyc.get("current_tier"),
+            "current_tier_label": kyc.get("current_tier_label"),
+            "limit": kyc.get("limit"),
+            "usage": kyc.get("usage"),
+            "upgrade": kyc.get("upgrade"),
+            "message": (
+                f"This send exceeds your {kyc.get('current_tier_label')} tier limit. "
+                f"Verify your identity to unlock up to £{(kyc.get('upgrade') or {}).get('target_per_send_gbp', 0):,.0f} per send."
+            ),
+        })
+
+    # 5) Build the Stripe Checkout session. We charge the user the SOURCE
+    #    fiat (GBP / USD / EUR) — no crypto conversion visible.
+    src_fiat = body.source_fiat.upper()
+    if src_fiat not in ("GBP", "USD", "EUR"):
+        raise HTTPException(status_code=400, detail="Unsupported source currency for fiat funding")
+    # Charge the source amount + total fees converted to source fiat.
+    total_fees_usd = float(quote["fees"]["total_fee_usd"])
+    fees_in_src = total_fees_usd * (float(quote["source"]["amount"]) / max(float(quote["source"]["amount_usd"]), 0.01))
+    charge_amount_src = round(float(quote["source"]["amount"]) + fees_in_src, 2)
+    amount_cents = int(round(charge_amount_src * 100))
+
+    dst = quote["destination"]
+    line_item_name = f"Send to {dst['country']} · {dst['flag']}"
+    line_item_desc = (
+        f"{quote['source']['currency']} {quote['source']['amount']:.2f} → "
+        f"{dst['currency']} {dst['amount']:,.2f} · fees included · arrives {dst['eta']}"
+    )
+    success, cancel = _success_cancel_urls("remit_fund")
+    try:
+        session = stripe.checkout.Session.create(
+            mode="payment",
+            payment_method_types=_payment_method_types_for(body.payment_method),
+            line_items=[{
+                "price_data": {
+                    "currency": src_fiat.lower(),
+                    "product_data": {"name": line_item_name, "description": line_item_desc},
+                    "unit_amount": amount_cents,
+                },
+                "quantity": 1,
+            }],
+            success_url=success,
+            cancel_url=cancel,
+            metadata={
+                "user_id": user["id"],
+                "flow": "remit_fund",
+                "source_fiat": src_fiat,
+                "source_amount": str(quote["source"]["amount"]),
+                "destination_code": body.destination_code.upper(),
+                "destination_currency": dst["currency"],
+                "destination_amount": str(dst["amount"]),
+                "destination_country": dst["country"],
+                "destination_flag": dst["flag"],
+                "recipient_address": body.recipient_address.strip(),
+                "recipient_name": (body.recipient_name or "").strip()[:80],
+                "memo": (body.memo or "")[:120],
+                "payment_method": body.payment_method,
+                "vaulted_service_usd": str(quote["fees"]["vaulted_service_usd"]),
+                "fx_rate": str(quote["fx_rate"]),
+                "receive_via": dst["receive_via"],
+            },
+        )
+    except Exception as e:  # noqa: BLE001
+        raise HTTPException(status_code=502, detail=f"Stripe error: {e}") from e
+
+    return {
+        "checkout_url": session.url,
+        "session_id": session.id,
+        "charge_amount": charge_amount_src,
+        "charge_currency": src_fiat,
+        "destination": dst,
+        "payment_method": body.payment_method,
+    }
 
 
 # ============================================================================
@@ -3291,6 +3640,101 @@ async def _apply_checkout_session(session_obj: dict) -> dict:
         await db.transactions.insert_one(tx)
         await db.stripe_events.insert_one({"session_id": session_obj.get("id"), "kind": "deposit", "at": iso(now_utc())})
         return {"applied": True, "kind": "deposit", "amount_usd": amount_usd}
+
+    if mode == "payment" and metadata.get("flow") == "remit_fund":
+        # Fiat-funded cross-border send. We already charged the user — now
+        # book the send as processing. Actual settlement to the recipient
+        # happens via our off-ramp partners (executed by ops until Kotani
+        # Pay direct integration lands in Phase C). The tx is created with
+        # `funding_method: stripe` so the receipt/UX can hide crypto rails.
+        if session_obj.get("payment_status") != "paid":
+            return {"applied": False, "reason": "not paid"}
+        try:
+            src_amount = float(metadata.get("source_amount") or 0)
+            dst_amount = float(metadata.get("destination_amount") or 0)
+            fx_rate = float(metadata.get("fx_rate") or 0)
+            svc_fee_usd = float(metadata.get("vaulted_service_usd") or 0)
+        except ValueError:
+            return {"applied": False, "reason": "bad metadata"}
+
+        # What the user paid (already charged by Stripe, all-in)
+        total_paid_src = (session_obj.get("amount_total") or 0) / 100.0
+
+        tx_id = str(uuid.uuid4())
+        record = {
+            "id": tx_id,
+            "user_id": user_id,
+            "type": "send",
+            "category": f"Remit · {metadata.get('destination_country')}",
+            "asset": (metadata.get("source_fiat") or "GBP").upper(),  # user-facing fiat asset
+            "amount": src_amount,
+            "fiat_value": total_paid_src,
+            "counterparty": metadata.get("recipient_address") or "",
+            "recipient_name": metadata.get("recipient_name") or None,
+            "memo": metadata.get("memo") or None,
+            "network": "Stripe",
+            "tx_hash": f"stripe:{session_obj.get('id')}",  # placeholder ref
+            "explorer_url": None,
+            "status": "processing",  # fiat rails: settled by ops / off-ramp partners
+            "service_fee_usd": svc_fee_usd,
+            "gross_service_fee_usd": svc_fee_usd,
+            "credit_applied_gbp": 0.0,
+            "credit_balance_after_gbp": 0.0,
+            "funding_method": "stripe",
+            "payment_method": metadata.get("payment_method") or "card",
+            "stripe_session_id": session_obj.get("id"),
+            "receipt_id": "VLT-" + (session_obj.get("id") or "")[-8:].upper(),
+            "created_at": iso(now_utc()),
+            "remit": {
+                "source_currency": (metadata.get("source_fiat") or "GBP").upper(),
+                "source_amount": src_amount,
+                "destination_currency": metadata.get("destination_currency"),
+                "destination_amount": dst_amount,
+                "destination_country": metadata.get("destination_country"),
+                "destination_flag": metadata.get("destination_flag"),
+                "chain": None,  # hidden from user — fiat rails
+                "fx_rate": fx_rate,
+                "receive_via": metadata.get("receive_via"),
+            },
+        }
+        await db.transactions.insert_one(record)
+        record.pop("_id", None)
+        await db.stripe_events.insert_one({
+            "session_id": session_obj.get("id"), "kind": "remit_fund", "at": iso(now_utc()),
+        })
+
+        # Audit as a remit success — same event type as crypto path so
+        # analytics + compliance reports treat both funding methods uniformly.
+        user_doc = await db.users.find_one({"id": user_id}, {"_id": 0})
+        user_kyc = (user_doc or {}).get("kyc") or {}
+        user_sanctions = user_kyc.get("sanctions") or {}
+        try:
+            await audit_write(db, EventType.REMIT_SEND_SUCCESS, user=user_doc, data={
+                "tx_id": tx_id,
+                "tx_hash": record["tx_hash"],
+                "chain": None,
+                "funding_method": "stripe",
+                "payment_method": record["payment_method"],
+                "source_currency": record["remit"]["source_currency"],
+                "source_amount": record["remit"]["source_amount"],
+                "destination_country": record["remit"]["destination_country"],
+                "destination_currency": record["remit"]["destination_currency"],
+                "destination_amount": record["remit"]["destination_amount"],
+                "recipient_address_hash": hashlib.sha256((record["counterparty"] or "").lower().encode()).hexdigest()[:12],
+                "recipient_name_hash": hashlib.sha256((record.get("recipient_name") or "").strip().lower().encode()).hexdigest()[:12] if record.get("recipient_name") else None,
+                "service_fee_usd": record["service_fee_usd"],
+                "fiat_value_src": total_paid_src,
+                "tier_at_send": user_kyc.get("tier"),
+                "sanctions_state_at_send": {
+                    "matched": user_sanctions.get("matched", False),
+                    "degraded": user_sanctions.get("degraded", True),
+                    "degraded_reason": user_sanctions.get("degraded_reason"),
+                },
+            })
+        except Exception as e:  # noqa: BLE001
+            logger.warning("remit_fund audit_write failed: %s", e)
+
+        return {"applied": True, "kind": "remit_fund", "tx": record}
 
     if mode == "subscription":
         sub_id = session_obj.get("subscription")

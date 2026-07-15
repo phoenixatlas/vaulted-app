@@ -14,6 +14,10 @@ export default function Receipt() {
   const asset = String(p.asset ?? "USD");
   const ref = String(p.receipt_id ?? p.tx_hash ?? p.id ?? "");
   const counterparty = String(p.counterparty ?? "");
+  const funding = String(p.funding_method ?? "").toLowerCase();
+  const paymentMethod = String(p.payment_method ?? "").toLowerCase();
+  const status = String(p.status ?? "completed").toLowerCase();
+  const isFiatFunded = funding === "stripe";
 
   // Remit context (set by /remit/send)
   let remit: any = null;
@@ -23,6 +27,18 @@ export default function Receipt() {
     remit = null;
   }
   const isRemit = !!remit;
+
+  const paymentLabel =
+    paymentMethod === "apple_pay" ? "Apple Pay" :
+    paymentMethod === "bank" ? "Bank transfer" :
+    paymentMethod === "card" ? "Card" : "Payment";
+
+  const statusLabel =
+    status === "processing" ? "Processing" :
+    status === "pending" ? "Pending" :
+    "Completed";
+  const statusColor =
+    status === "processing" || status === "pending" ? colors.brand : colors.success;
 
   return (
     <SafeAreaView style={s.root} edges={["top", "bottom"]}>
@@ -43,7 +59,9 @@ export default function Receipt() {
                 {remit.destination_amount?.toLocaleString(undefined, { maximumFractionDigits: 2 })} {remit.destination_currency}
               </Text>
               <Text style={s.subAmount}>
-                You sent {remit.source_amount} {remit.source_currency} · via {remit.chain}
+                {isFiatFunded
+                  ? `You paid ${remit.source_amount} ${remit.source_currency} · ${paymentLabel}`
+                  : `You sent ${remit.source_amount} ${remit.source_currency} · via ${remit.chain}`}
               </Text>
             </>
           ) : (
@@ -55,9 +73,10 @@ export default function Receipt() {
           <Row label="Date" value={new Date().toLocaleString()} />
           {isRemit && <Row label="FX rate" value={`1 ${remit.source_currency} = ${remit.fx_rate?.toFixed(4)} ${remit.destination_currency}`} />}
           {isRemit && <Row label="Delivery" value={remit.receive_via} />}
-          <Row label={isFiat ? "Method" : isRemit ? "Recipient wallet" : "To"} value={counterparty.length > 22 ? counterparty.slice(0, 8) + "…" + counterparty.slice(-6) : counterparty} />
-          <Row label={isFiat ? "Receipt ID" : "Tx hash"} value={ref.length > 22 ? ref.slice(0, 12) + "…" + ref.slice(-6) : ref} />
-          <Row label="Status" value="Completed" valueColor={colors.success} />
+          {isRemit && isFiatFunded && <Row label="Paid via" value={paymentLabel} />}
+          <Row label={isFiat ? "Method" : isRemit ? (isFiatFunded ? "Recipient" : "Recipient wallet") : "To"} value={counterparty.length > 22 ? counterparty.slice(0, 8) + "…" + counterparty.slice(-6) : counterparty} />
+          <Row label={isFiat || isFiatFunded ? "Receipt ID" : "Tx hash"} value={ref.length > 22 ? ref.slice(0, 12) + "…" + ref.slice(-6) : ref} />
+          <Row label="Status" value={statusLabel} valueColor={statusColor} />
         </View>
         <Pressable testID="receipt-done" onPress={() => router.replace("/(tabs)/wallet")} style={s.cta}>
           <Text style={s.ctaText}>{t("done")}</Text>

@@ -44,7 +44,7 @@ export default function Login() {
           </View>
 
           <Text style={s.title}>{t("welcome_back")}</Text>
-          <Text style={s.subtitle}>Self-custody crypto wallet with secure chat & calls.</Text>
+          <Text style={s.subtitle}>Sending money should never be slower than sending a message.</Text>
 
           <View style={s.field}>
             <Text style={s.label}>{t("email")}</Text>
@@ -70,6 +70,14 @@ export default function Login() {
               placeholderTextColor={colors.onSurfaceTertiary}
               style={s.input}
             />
+            <Pressable
+              testID="goto-forgot-password"
+              onPress={() => router.push("/forgot-password")}
+              hitSlop={8}
+              style={s.forgotRow}
+            >
+              <Text style={s.forgotText}>Forgot password?</Text>
+            </Pressable>
           </View>
 
           {err && <Text testID="login-error" style={s.error}>{err}</Text>}
@@ -114,5 +122,7 @@ const s = StyleSheet.create({
   switchRow: { flexDirection: "row", justifyContent: "center", marginTop: spacing.xl },
   muted: { color: "rgba(245,233,201,0.6)", fontSize: 14 },
   linkText: { color: colors.brand, fontSize: 14, fontWeight: "700" },
+  forgotRow: { alignSelf: "flex-end", marginTop: spacing.sm, padding: 4 },
+  forgotText: { color: colors.brand, fontSize: 13, fontWeight: "600" },
   error: { color: "#E0735F", marginBottom: spacing.sm, fontSize: 14 },
 });

@@ -42,6 +42,25 @@ export async function startDepositCheckout(amount_usd: number): Promise<Checkout
   return { ...out, session_id: out.session_id || r.session_id };
 }
 
+export type RemitFundBody = {
+  source_fiat: string;
+  amount: number;
+  destination_code: string;
+  recipient_address: string;
+  recipient_name?: string | null;
+  memo?: string | null;
+  payment_method: "card" | "apple_pay" | "bank";
+};
+
+export async function startRemitFundCheckout(body: RemitFundBody): Promise<CheckoutResult & { session_id?: string; charge_amount?: number; charge_currency?: string }> {
+  const r = await api<{ checkout_url: string; session_id: string; charge_amount: number; charge_currency: string }>(
+    "/remit/fund",
+    { method: "POST", body },
+  );
+  const out = await openCheckout(r.checkout_url);
+  return { ...out, session_id: out.session_id || r.session_id, charge_amount: r.charge_amount, charge_currency: r.charge_currency };
+}
+
 export async function startSubscriptionCheckout(): Promise<CheckoutResult & { session_id?: string }> {
   const r = await api<{ checkout_url: string; session_id: string }>("/stripe/checkout/subscription", {
     method: "POST",

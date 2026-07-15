@@ -10,6 +10,7 @@ import { api } from "@/src/lib/api";
 import { useAuth } from "@/src/lib/auth";
 import { colors, spacing, radius } from "@/src/lib/theme";
 import { authenticate, getCapabilities } from "@/src/lib/biometric";
+import { startRemitFundCheckout, syncStripeSession } from "@/src/lib/stripe";
 
 type Corridor = {
   code: string;
@@ -63,6 +64,17 @@ type SourceFiat = typeof SOURCE_FIATS[number];
 
 const FIAT_SYMBOL: Record<SourceFiat, string> = { GBP: "£", USD: "$", EUR: "€" };
 
+type FundingMethod = "crypto" | "card" | "apple_pay" | "bank";
+
+type FundingOption = { id: FundingMethod; label: string; icon: keyof typeof Ionicons.glyphMap; sub: string };
+
+const FUNDING_OPTIONS: FundingOption[] = [
+  { id: "crypto", label: "Crypto balance", icon: "wallet-outline", sub: "XLM · XRP · USDC" },
+  { id: "card", label: "Card", icon: "card-outline", sub: "Visa · Mastercard · Amex" },
+  { id: "apple_pay", label: Platform.OS === "ios" ? "Apple Pay" : "Google Pay", icon: Platform.OS === "ios" ? "logo-apple" : "logo-google", sub: "Fastest checkout" },
+  { id: "bank", label: "Bank transfer", icon: "business-outline", sub: "BACS · SEPA" },
+];
+
 export default function Remit() {
   const router = useRouter();
   const { user } = useAuth();
@@ -72,6 +84,7 @@ export default function Remit() {
   const [amount, setAmount] = useState("50");
   const [addr, setAddr] = useState("");
   const [recipientName, setRecipientName] = useState("");
+  const [funding, setFunding] = useState<FundingMethod>("crypto");
   const [quote, setQuote] = useState<Quote | null>(null);
   const [quoteLoading, setQuoteLoading] = useState(false);
   const [quoteErr, setQuoteErr] = useState<string | null>(null);
@@ -110,15 +123,24 @@ export default function Remit() {
   const isPro = !!user?.is_pro;
   const paywall = quote?.free_tier?.paywall_required;
   const kycRequired = quote?.kyc && !quote.kyc.allowed;
-  const addrPlaceholder = quote?.chain?.chain === "XRP"
-    ? "r... recipient XRP address"
-    : quote?.chain?.chain === "XLM"
-      ? "G... recipient Stellar address"
-      : "recipient wallet address";
+  const isFiatFunding = funding !== "crypto";
+  const addrPlaceholder = isFiatFunding
+    ? "recipient's wallet address (or leave blank if paying to a name)"
+    : quote?.chain?.chain === "XRP"
+      ? "r... recipient XRP address"
+      : quote?.chain?.chain === "XLM"
+        ? "G... recipient Stellar address"
+        : "recipient wallet address";
+  // Fiat funding bypasses the on-chain sufficient_balance check.
+  const canSubmit = !!quote && (isFiatFunding || quote.sufficient_balance);
 
   const submit = async () => {
     setErr(null);
-    if (!quote?.sufficient_balance) { setErr("Not enough crypto — top up XLM or XRP on the Wallet tab (use the Receive faucet links)."); return; }
+    if (!quote) { setErr("Waiting for a live quote — try again in a moment."); return; }
+    if (!isFiatFunding && !quote.sufficient_balance) {
+      setErr("Not enough crypto — top up XLM, XRP, or USDC on the Wallet tab, or switch to Card/Apple Pay/Bank transfer above.");
+      return;
+    }
     if (!addr.trim()) { setErr("Enter the recipient's wallet address"); return; }
     if (paywall) { router.push("/vault-pro"); return; }
     if (kycRequired) { router.push({ pathname: "/kyc", params: { reason: "over_limit" } }); return; }
@@ -133,6 +155,42 @@ export default function Remit() {
 
     setSubmitting(true);
     try {
+      if (isFiatFunding) {
+        // Fiat rails path — Stripe Checkout with card / Apple Pay / bank transfer.
+        const result = await startRemitFundCheckout({
+          source_fiat: srcFiat,
+          amount: parseFloat(amount),
+          destination_code: dest,
+          recipient_address: addr.trim(),
+          recipient_name: recipientName.trim() || null,
+          payment_method: funding as "card" | "apple_pay" | "bank",
+        });
+        if (result.status === "success" && result.session_id) {
+          // Sync the session so backend books the send + returns the tx
+          const synced = await syncStripeSession(result.session_id);
+          const applied: any = synced?.applied || {};
+          if (applied?.kind === "remit_fund" && applied?.tx) {
+            const tx = applied.tx;
+            router.replace({
+              pathname: "/receipt",
+              params: {
+                ...tx,
+                remit_json: JSON.stringify(tx.remit || {}),
+                funding_method: "stripe",
+              } as any,
+            });
+            return;
+          }
+          setErr("Payment confirmed but the send couldn't be booked. Please check Activity or contact support.");
+        } else if (result.status === "cancel") {
+          setErr("Payment cancelled — no charge was made.");
+        } else if (result.status === "error") {
+          setErr(result.error || "Payment failed. Please try a different method.");
+        }
+        return;
+      }
+
+      // Crypto rails path (existing)
       const tx = await api<any>("/remit/send", {
         method: "POST",
         body: {
@@ -218,6 +276,26 @@ export default function Remit() {
             ))}
           </ScrollView>
 
+          {/* Pay-with selector — crypto wallet OR fiat (card / Apple Pay / bank) */}
+          <Text style={s.label}>Pay with</Text>
+          <View style={s.fundingGrid}>
+            {FUNDING_OPTIONS.map((opt) => {
+              const active = funding === opt.id;
+              return (
+                <Pressable
+                  key={opt.id}
+                  testID={`remit-funding-${opt.id}`}
+                  onPress={() => setFunding(opt.id)}
+                  style={[s.fundingCard, active && s.fundingCardActive]}
+                >
+                  <Ionicons name={opt.icon} size={20} color={active ? colors.brand : colors.onSurfaceSecondary} />
+                  <Text style={[s.fundingLabel, active && { color: colors.onSurface }]}>{opt.label}</Text>
+                  <Text style={s.fundingSub}>{opt.sub}</Text>
+                </Pressable>
+              );
+            })}
+          </View>
+
           {/* Quote card — recipient gets */}
           <View style={s.quoteCard} testID="remit-quote-card">
             {quoteLoading ? (
@@ -258,10 +336,20 @@ export default function Remit() {
                   <Text style={s.quoteMuted}>Network fee</Text>
                   <Text style={s.quoteVal}>{quote.fees.chain_fee_usd === 0 ? "≈ free" : `$${quote.fees.chain_fee_usd.toFixed(4)}`}</Text>
                 </View>
-                {!quote.sufficient_balance && (
+                {!isFiatFunding && !quote.sufficient_balance && (
                   <View style={s.warnBox}>
                     <Ionicons name="alert-circle-outline" size={16} color={colors.brandDeep} />
-                    <Text style={s.warnText}>{quote.reason_if_no_chain}</Text>
+                    <Text style={s.warnText}>
+                      {quote.reason_if_no_chain} You can also pay with Card, Apple Pay, or Bank transfer above — no crypto needed.
+                    </Text>
+                  </View>
+                )}
+                {isFiatFunding && (
+                  <View style={s.fundingHintBox}>
+                    <Ionicons name="information-circle-outline" size={16} color={colors.brand} />
+                    <Text style={s.fundingHintText}>
+                      {`You'll pay ${FIAT_SYMBOL[srcFiat]}${amount} securely via Stripe. Recipient receives ${quote.destination.amount.toLocaleString(undefined, { maximumFractionDigits: 2 })} ${quote.destination.currency}.`}
+                    </Text>
                   </View>
                 )}
               </>
@@ -363,9 +451,9 @@ export default function Remit() {
 
           <Pressable
             testID="remit-confirm"
-            disabled={submitting || !quote?.sufficient_balance}
+            disabled={submitting || !canSubmit}
             onPress={submit}
-            style={({ pressed }) => [s.cta, (pressed || !quote?.sufficient_balance) && { opacity: 0.6 }]}
+            style={({ pressed }) => [s.cta, (pressed || !canSubmit) && { opacity: 0.6 }]}
           >
             {submitting ? (
               <ActivityIndicator color="#0F0B08" />
@@ -373,8 +461,10 @@ export default function Remit() {
               <Text style={s.ctaText}>
                 {paywall
                   ? "Upgrade to send"
-                  : quote?.sufficient_balance
-                    ? `Send ${FIAT_SYMBOL[srcFiat]}${amount} to ${selectedCorridor?.country ?? ""}`
+                  : canSubmit
+                    ? isFiatFunding
+                      ? `Pay ${FIAT_SYMBOL[srcFiat]}${amount} & send to ${selectedCorridor?.country ?? ""}`
+                      : `Send ${FIAT_SYMBOL[srcFiat]}${amount} to ${selectedCorridor?.country ?? ""}`
                     : "Top up to send"}
               </Text>
             )}
@@ -418,6 +508,18 @@ const s = StyleSheet.create({
 
   warnBox: { flexDirection: "row", alignItems: "flex-start", gap: 8, marginTop: spacing.md, padding: spacing.sm, backgroundColor: "rgba(201,163,91,0.10)", borderRadius: radius.md, borderWidth: 1, borderColor: "rgba(201,163,91,0.30)" },
   warnText: { color: colors.brandDeep, fontSize: 12, lineHeight: 16, flex: 1 },
+
+  fundingGrid: { flexDirection: "row", flexWrap: "wrap", gap: spacing.sm, marginBottom: spacing.md },
+  fundingCard: {
+    flexBasis: "48%", flexGrow: 1,
+    borderWidth: 1, borderColor: colors.border, borderRadius: radius.md,
+    padding: spacing.md, backgroundColor: colors.surface, gap: 4,
+  },
+  fundingCardActive: { borderColor: colors.brand, backgroundColor: colors.brandTertiary },
+  fundingLabel: { fontSize: 13, fontWeight: "700", color: colors.onSurfaceSecondary, marginTop: 4 },
+  fundingSub: { fontSize: 11, color: colors.onSurfaceTertiary },
+  fundingHintBox: { flexDirection: "row", alignItems: "flex-start", gap: 8, marginTop: spacing.md, padding: spacing.sm, backgroundColor: "rgba(201,163,91,0.08)", borderRadius: radius.md, borderWidth: 1, borderColor: "rgba(201,163,91,0.25)" },
+  fundingHintText: { color: colors.onSurface, fontSize: 12, lineHeight: 16, flex: 1 },
 
   freeTierBanner: { flexDirection: "row", alignItems: "center", gap: 8, marginTop: spacing.md, padding: spacing.md, borderRadius: radius.md, backgroundColor: colors.brandTertiary, borderWidth: 1, borderColor: "rgba(201,163,91,0.30)" },
   freeTierBannerPaywall: { backgroundColor: "rgba(200,60,60,0.10)", borderColor: "rgba(200,60,60,0.40)" },

@@ -55,6 +55,11 @@ class EventType:
     CREDIT_GRANTED = "credit.granted"        # any credit added to ledger
     CREDIT_SPENT = "credit.spent"            # credit consumed on a fee
 
+    # Password reset lifecycle
+    AUTH_FORGOT_PASSWORD_REQUESTED = "auth.forgot_password_requested"
+    AUTH_PASSWORD_RESET_COMPLETED = "auth.password_reset_completed"
+    AUTH_PASSWORD_RESET_INVALID_TOKEN = "auth.password_reset_invalid_token"
+
 
 ALL_EVENT_TYPES = {
     v for k, v in vars(EventType).items() if not k.startswith("_") and isinstance(v, str)
