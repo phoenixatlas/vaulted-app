@@ -43,11 +43,13 @@ import httpx
 
 logger = logging.getLogger("vaulted.kotani")
 
-# ---- Environment -----------------------------------------------------------
-_API_KEY = os.environ.get("KOTANI_API_KEY", "").strip()
-_BASE_URL = os.environ.get("KOTANI_BASE_URL", "https://sandbox-api.kotanipay.io").rstrip("/")
-_WEBHOOK_SECRET = os.environ.get("KOTANI_WEBHOOK_SECRET", "").strip()
-_FORCE_MOCK = os.environ.get("KOTANI_MOCK", "").strip().lower() in ("1", "true", "yes", "on")
+# ---- Environment (lazy) ---------------------------------------------------
+# IMPORTANT: server.py imports this module BEFORE it calls load_dotenv(...),
+# so we cannot read env vars at import time — the .env file hasn't been
+# parsed yet and we'd cache empty strings forever. Every accessor below
+# does a fresh os.environ.get() so a real KOTANI_API_KEY landing in
+# /app/backend/.env at runtime is picked up on the next call without a
+# process restart. Cheap: os.environ is a dict lookup.
 
 # Sentinel used in .env so people can see the intent without committing
 # a real key. Treated identically to an empty key.
@@ -56,11 +58,28 @@ _MOCK_SENTINELS = {"", "MOCKED", "PLACEHOLDER", "REPLACE_ME", "TODO"}
 _TIMEOUT = httpx.Timeout(15.0, connect=8.0)
 
 
+def _api_key() -> str:
+    return os.environ.get("KOTANI_API_KEY", "").strip()
+
+
+def _base_url() -> str:
+    return os.environ.get("KOTANI_BASE_URL", "https://sandbox-api.kotanipay.io").rstrip("/")
+
+
+def _webhook_secret() -> str:
+    return os.environ.get("KOTANI_WEBHOOK_SECRET", "").strip()
+
+
+def _force_mock() -> bool:
+    return os.environ.get("KOTANI_MOCK", "").strip().lower() in ("1", "true", "yes", "on")
+
+
 def live_mode() -> bool:
     """True when a real API key is present and mock isn't forced."""
-    if _FORCE_MOCK:
+    if _force_mock():
         return False
-    return _API_KEY.upper() not in _MOCK_SENTINELS
+    key = _api_key()
+    return key.upper() not in _MOCK_SENTINELS
 
 
 def _now_iso() -> str:
@@ -180,8 +199,8 @@ def _mock_offramp_status(reference_id: str) -> dict:
 
 # ---- Live HTTP calls -------------------------------------------------------
 async def _get(path: str, params: dict | None = None) -> dict:
-    url = f"{_BASE_URL}{path}"
-    headers = {"Authorization": f"Bearer {_API_KEY}", "Content-Type": "application/json"}
+    url = f"{_base_url()}{path}"
+    headers = {"Authorization": f"Bearer {_api_key()}", "Content-Type": "application/json"}
     async with httpx.AsyncClient(timeout=_TIMEOUT) as cx:
         r = await cx.get(url, headers=headers, params=params or {})
         if r.status_code >= 400:
@@ -191,8 +210,8 @@ async def _get(path: str, params: dict | None = None) -> dict:
 
 
 async def _post(path: str, body: dict) -> dict:
-    url = f"{_BASE_URL}{path}"
-    headers = {"Authorization": f"Bearer {_API_KEY}", "Content-Type": "application/json"}
+    url = f"{_base_url()}{path}"
+    headers = {"Authorization": f"Bearer {_api_key()}", "Content-Type": "application/json"}
     async with httpx.AsyncClient(timeout=_TIMEOUT) as cx:
         r = await cx.post(url, headers=headers, json=body)
         if r.status_code >= 400:
@@ -271,7 +290,8 @@ def verify_webhook_signature(payload: bytes, signature_header: Optional[str]) ->
     using the shared webhook secret. Returns True in dev / mock mode when
     no secret is configured (matches Kotani's un-signed delivery mode).
     """
-    if not _WEBHOOK_SECRET:
+    secret = _webhook_secret()
+    if not secret:
         # No secret configured — Kotani sends payload unsigned per docs
         # (delivery mode differs based on dashboard config).
         return True
@@ -279,7 +299,7 @@ def verify_webhook_signature(payload: bytes, signature_header: Optional[str]) ->
         logger.warning("[kotani-webhook] missing X-Kotani-Signature header")
         return False
     expected = hmac.new(
-        _WEBHOOK_SECRET.encode(),
+        secret.encode(),
         payload,
         hashlib.sha256,
     ).hexdigest()
@@ -292,10 +312,11 @@ def diagnostic_info() -> dict:
     """Safe-to-log summary of the current config. Returned by
     /api/admin/compliance/health so ops can see mode + endpoint without
     exposing the key."""
+    key = _api_key()
     return {
         "mode": "live" if live_mode() else "mock",
-        "base_url": _BASE_URL,
-        "api_key_configured": bool(_API_KEY) and _API_KEY.upper() not in _MOCK_SENTINELS,
-        "webhook_secret_configured": bool(_WEBHOOK_SECRET),
-        "mock_override_env": _FORCE_MOCK,
+        "base_url": _base_url(),
+        "api_key_configured": bool(key) and key.upper() not in _MOCK_SENTINELS,
+        "webhook_secret_configured": bool(_webhook_secret()),
+        "mock_override_env": _force_mock(),
     }

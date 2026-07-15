@@ -86,7 +86,6 @@ def test_valid_signature_accepted(signed_backend):
     assert r.status_code == 200, r.text[:200]
 
 
-@pytest.mark.xfail(reason="kotani.py reads env before load_dotenv runs; secret never loaded — see module docstring", strict=False)
 def test_invalid_signature_rejected(signed_backend):
     body = {"referenceId": "kp_mock_sig_unknown", "status": "SUCCESS"}
     raw = json.dumps(body).encode()
@@ -99,7 +98,6 @@ def test_invalid_signature_rejected(signed_backend):
     assert r.status_code == 401, r.text[:200]
 
 
-@pytest.mark.xfail(reason="kotani.py reads env before load_dotenv runs; secret never loaded — see module docstring", strict=False)
 def test_missing_signature_when_secret_set(signed_backend):
     body = {"referenceId": "kp_mock_sig_unknown", "status": "SUCCESS"}
     raw = json.dumps(body).encode()
