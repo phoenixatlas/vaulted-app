@@ -104,11 +104,70 @@
 
 user_problem_statement: |
   Cross-border remittance-focused crypto self-custody wallet (Vaulted / Phoenix Atlas).
-  Iteration goal: Multichain expansion Phase A — add XRP (Ripple), and fix stale-user
-  XLM invisibility caused by DB backfill gap.
+  Iteration 22 goal: (1) Change login tagline to "Sending money should never be
+  slower than sending a message." (2) Extend Send Money screen to let users fund
+  a cross-border send with EITHER their crypto wallet OR fiat (Card / Apple Pay /
+  Bank transfer via Stripe). (3) Add Forgot / Reset password flow via existing
+  Resend integration.
 
 backend:
-  - task: "XLM backfill for existing (pre-XLM) users"
+  - task: "Forgot / Reset password endpoints (Resend email + single-use JWT)"
+    implemented: true
+    working: true
+    file: "/app/backend/server.py + /app/backend/audit.py"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+      - working: true
+        agent: "main"
+        comment: |
+          Added POST /api/auth/forgot-password (idempotent, rate-limited 3/hr,
+          never reveals whether email exists) + POST /api/auth/reset-password
+          (single-use JWT nonce, 30-min TTL, burns nonce on use + invalidates
+          parallel outstanding tokens). Sends email via existing Resend
+          integration to APP_PUBLIC_URL/reset-password?token=xxx. New audit
+          events: AUTH_FORGOT_PASSWORD_REQUESTED, AUTH_PASSWORD_RESET_COMPLETED,
+          AUTH_PASSWORD_RESET_INVALID_TOKEN.
+      - working: true
+        agent: "testing"
+        comment: |
+          Iteration 22 test: 11/12 passed. Verified idempotent 200 for both real
+          and unknown emails, rate limit caps nonces to 3/hr, bogus tokens 400,
+          happy path mint→reset→login, reused token 400 "already used".
+
+  - task: "/api/remit/fund — fiat funding for cross-border sends"
+    implemented: true
+    working: true
+    file: "/app/backend/server.py"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+      - working: true
+        agent: "main"
+        comment: |
+          New endpoint creates a Stripe Checkout session for a remittance
+          funded by fiat. Enforces same gates as /remit/send (corridor block,
+          free-tier limit, KYC tier). Extended _apply_checkout_session to
+          handle flow="remit_fund": books a transaction with funding_method
+          ="stripe", status="processing", and no on-chain settlement (rails
+          hidden). Audits as REMIT_SEND_SUCCESS with funding_method="stripe".
+      - working: false
+        agent: "testing"
+        comment: |
+          payment_method=bank returned 502 because customer_balance requires
+          funding_type. Card + apple_pay worked, corridor block worked,
+          unauthenticated blocked correctly.
+      - working: true
+        agent: "main"
+        comment: |
+          Fixed by making the bank branch omit payment_method_types entirely
+          so Stripe Checkout auto-shows every method enabled in the dashboard
+          for that region (cards + BACS/SEPA/ACH + wallets). Re-verified all
+          three payment_method values return valid checkout_urls.
+
+  - task: "Original: XLM backfill for existing (pre-XLM) users"
     implemented: true
     working: true
     file: "/app/backend/server.py"

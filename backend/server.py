@@ -1974,18 +1974,19 @@ async def remit_send(body: RemitSendIn, user=Depends(get_current_user)):
 # our off-ramp partners (executed by ops until Kotani Pay / on-chain
 # disbursement lands in Phase C).
 # ============================================================================
-def _payment_method_types_for(pm: str) -> list[str]:
-    """Map our high-level payment_method to Stripe's payment_method_types.
-    Card automatically enables Apple Pay / Google Pay in Stripe Checkout.
-    Bank transfer uses BACS/SEPA/ACH via customer_balance."""
+def _stripe_payment_method_config(pm: str) -> dict:
+    """Return kwargs for stripe.checkout.Session.create tailored to the
+    selected payment method. Card + Apple Pay share Stripe's "card" type
+    (Apple Pay / Google Pay are surfaced automatically on supported
+    browsers). Bank transfer omits payment_method_types entirely so
+    Stripe Checkout auto-shows every method enabled in the dashboard for
+    that region (cards + bank rails + wallets)."""
     if pm == "bank":
-        # Falls back to card if the region can't do bank transfer — Stripe
-        # will show whichever is available. We keep card as backup so the
-        # user isn't dead-ended.
-        return ["card", "customer_balance"]
-    # card + apple_pay both use the "card" method (Apple Pay is presented
-    # automatically by Stripe when Safari/iOS is detected).
-    return ["card"]
+        # Omit payment_method_types → Stripe Checkout auto-selects from
+        # every enabled method in the account (BACS in UK, SEPA in EU,
+        # ACH in US, plus cards as fallback).
+        return {}
+    return {"payment_method_types": ["card"]}
 
 
 @api.post("/remit/fund")
@@ -2073,7 +2074,7 @@ async def remit_fund(body: RemitFundIn, user=Depends(get_current_user)):
     try:
         session = stripe.checkout.Session.create(
             mode="payment",
-            payment_method_types=_payment_method_types_for(body.payment_method),
+            **_stripe_payment_method_config(body.payment_method),
             line_items=[{
                 "price_data": {
                     "currency": src_fiat.lower(),
