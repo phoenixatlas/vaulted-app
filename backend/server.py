@@ -265,7 +265,7 @@ class RemitFundIn(BaseModel):
     recipient_address: str
     recipient_name: Optional[str] = None
     memo: Optional[str] = None
-    payment_method: Literal["card", "apple_pay", "bank"] = "card"
+    payment_method: Literal["card", "apple_pay", "google_pay", "bank"] = "card"
 
 
 # ----------------------------- Helpers -----------------------------

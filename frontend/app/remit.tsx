@@ -64,15 +64,20 @@ type SourceFiat = typeof SOURCE_FIATS[number];
 
 const FIAT_SYMBOL: Record<SourceFiat, string> = { GBP: "£", USD: "$", EUR: "€" };
 
-type FundingMethod = "crypto" | "card" | "apple_pay" | "bank";
+type FundingMethod = "crypto" | "card" | "apple_pay" | "google_pay" | "bank";
 
 type FundingOption = { id: FundingMethod; label: string; icon: keyof typeof Ionicons.glyphMap; sub: string };
 
+// Always show all 5 options so both Apple Pay and Google Pay customers
+// can pick their preferred rail regardless of the device the app is
+// running on. Stripe Checkout automatically surfaces the correct wallet
+// button (Apple Pay on Safari/iOS, Google Pay on Chrome/Android).
 const FUNDING_OPTIONS: FundingOption[] = [
   { id: "crypto", label: "Crypto balance", icon: "wallet-outline", sub: "XLM · XRP · USDC" },
   { id: "card", label: "Card", icon: "card-outline", sub: "Visa · Mastercard · Amex" },
-  { id: "apple_pay", label: Platform.OS === "ios" ? "Apple Pay" : "Google Pay", icon: Platform.OS === "ios" ? "logo-apple" : "logo-google", sub: "Fastest checkout" },
-  { id: "bank", label: "Bank transfer", icon: "business-outline", sub: "BACS · SEPA" },
+  { id: "apple_pay", label: "Apple Pay", icon: "logo-apple", sub: "Fastest on iPhone" },
+  { id: "google_pay", label: "Google Pay", icon: "logo-google", sub: "Fastest on Android" },
+  { id: "bank", label: "Bank transfer", icon: "business-outline", sub: "BACS · SEPA · ACH" },
 ];
 
 export default function Remit() {
@@ -124,13 +129,24 @@ export default function Remit() {
   const paywall = quote?.free_tier?.paywall_required;
   const kycRequired = quote?.kyc && !quote.kyc.allowed;
   const isFiatFunding = funding !== "crypto";
+  // For fiat funding, the "addr" field holds recipient bank/M-Pesa/IBAN
+  // details as a free-form string. For crypto funding, it must be a
+  // valid chain address matching the chain the router picked.
   const addrPlaceholder = isFiatFunding
-    ? "recipient's wallet address (or leave blank if paying to a name)"
+    ? dest === "KE"
+      ? "M-Pesa phone (e.g. +254 712 345 678)"
+      : dest === "GB"
+        ? "Sort code + account number, or IBAN"
+        : "Account number, IBAN, or mobile-money phone"
     : quote?.chain?.chain === "XRP"
       ? "r... recipient XRP address"
       : quote?.chain?.chain === "XLM"
         ? "G... recipient Stellar address"
         : "recipient wallet address";
+  const addrLabel = isFiatFunding ? "Recipient account or phone" : "Recipient wallet address";
+  const addrHelperText = isFiatFunding
+    ? `We'll settle to your recipient in ${selectedCorridor?.currency ?? "local currency"} via ${selectedCorridor?.receive_via ?? "our local partner"}. Payouts settle within ${selectedCorridor?.eta ?? "the standard corridor window"}.`
+    : `Phase B: recipient receives ${quote?.chain?.chain ?? "crypto"} in their wallet. Direct-to-${selectedCorridor?.currency ?? "local currency"} settlement (via M-Pesa / bank / mobile money) launches with our partner integrations in Phase C.`;
   // Fiat funding bypasses the on-chain sufficient_balance check.
   const canSubmit = !!quote && (isFiatFunding || quote.sufficient_balance);
 
@@ -138,10 +154,19 @@ export default function Remit() {
     setErr(null);
     if (!quote) { setErr("Waiting for a live quote — try again in a moment."); return; }
     if (!isFiatFunding && !quote.sufficient_balance) {
-      setErr("Not enough crypto — top up XLM, XRP, or USDC on the Wallet tab, or switch to Card/Apple Pay/Bank transfer above.");
+      setErr("Not enough crypto — top up XLM, XRP, or USDC on the Wallet tab, or switch to Card / Apple Pay / Google Pay / Bank transfer above.");
       return;
     }
-    if (!addr.trim()) { setErr("Enter the recipient's wallet address"); return; }
+    if (!addr.trim()) {
+      setErr(isFiatFunding
+        ? "Enter the recipient's account number, IBAN, or mobile-money phone."
+        : "Enter the recipient's wallet address.");
+      return;
+    }
+    if (isFiatFunding && !recipientName.trim()) {
+      setErr("Recipient full name is required for bank / mobile-money payouts.");
+      return;
+    }
     if (paywall) { router.push("/vault-pro"); return; }
     if (kycRequired) { router.push({ pathname: "/kyc", params: { reason: "over_limit" } }); return; }
 
@@ -156,14 +181,14 @@ export default function Remit() {
     setSubmitting(true);
     try {
       if (isFiatFunding) {
-        // Fiat rails path — Stripe Checkout with card / Apple Pay / bank transfer.
+        // Fiat rails path — Stripe Checkout with card / Apple Pay / Google Pay / bank transfer.
         const result = await startRemitFundCheckout({
           source_fiat: srcFiat,
           amount: parseFloat(amount),
           destination_code: dest,
           recipient_address: addr.trim(),
           recipient_name: recipientName.trim() || null,
-          payment_method: funding as "card" | "apple_pay" | "bank",
+          payment_method: funding as "card" | "apple_pay" | "google_pay" | "bank",
         });
         if (result.status === "success" && result.session_id) {
           // Sync the session so backend books the send + returns the tx
@@ -320,22 +345,26 @@ export default function Remit() {
                   <Text style={s.quoteMuted}>Exchange rate</Text>
                   <Text style={s.quoteVal}>1 {quote.source.currency} = {quote.fx_rate.toLocaleString(undefined, { maximumFractionDigits: 4 })} {quote.destination.currency}</Text>
                 </View>
-                <View style={s.quoteRow}>
-                  <Text style={s.quoteMuted}>Chain</Text>
-                  <Text style={s.quoteVal}>
-                    {quote.chain
-                      ? `${quote.chain.chain} · ${quote.chain.crypto_amount.toLocaleString(undefined, { maximumFractionDigits: 6 })} ${quote.chain.chain}`
-                      : "—"}
-                  </Text>
-                </View>
+                {!isFiatFunding && (
+                  <View style={s.quoteRow}>
+                    <Text style={s.quoteMuted}>Chain</Text>
+                    <Text style={s.quoteVal}>
+                      {quote.chain
+                        ? `${quote.chain.chain} · ${quote.chain.crypto_amount.toLocaleString(undefined, { maximumFractionDigits: 6 })} ${quote.chain.chain}`
+                        : "—"}
+                    </Text>
+                  </View>
+                )}
                 <View style={s.quoteRow}>
                   <Text style={s.quoteMuted}>Vaulted service fee{isPro && " (Pro -50%)"}</Text>
                   <Text style={s.quoteVal}>${quote.fees.vaulted_service_usd.toFixed(2)}</Text>
                 </View>
-                <View style={s.quoteRow}>
-                  <Text style={s.quoteMuted}>Network fee</Text>
-                  <Text style={s.quoteVal}>{quote.fees.chain_fee_usd === 0 ? "≈ free" : `$${quote.fees.chain_fee_usd.toFixed(4)}`}</Text>
-                </View>
+                {!isFiatFunding && (
+                  <View style={s.quoteRow}>
+                    <Text style={s.quoteMuted}>Network fee</Text>
+                    <Text style={s.quoteVal}>{quote.fees.chain_fee_usd === 0 ? "≈ free" : `$${quote.fees.chain_fee_usd.toFixed(4)}`}</Text>
+                  </View>
+                )}
                 {!isFiatFunding && !quote.sufficient_balance && (
                   <View style={s.warnBox}>
                     <Ionicons name="alert-circle-outline" size={16} color={colors.brandDeep} />
@@ -421,31 +450,60 @@ export default function Remit() {
             </View>
           )}
 
-          {/* Recipient wallet address */}
-          <Text style={s.label}>Recipient wallet address</Text>
-          <TextInput
-            testID="remit-addr"
-            value={addr}
-            onChangeText={setAddr}
-            autoCapitalize="none"
-            placeholder={addrPlaceholder}
-            placeholderTextColor={colors.onSurfaceTertiary}
-            style={s.input}
-          />
-          <Text style={s.helperText}>
-            Phase B: recipient receives {quote?.chain?.chain ?? "crypto"} in their wallet.
-            Direct-to-{selectedCorridor?.currency ?? "local currency"} settlement (via M-Pesa / bank / mobile money) launches with our partner integrations in Phase C.
-          </Text>
+          {/* Recipient details — differs for fiat vs crypto rails */}
+          {isFiatFunding ? (
+            <>
+              <Text style={s.label}>Recipient full name <Text style={s.required}>*</Text></Text>
+              <TextInput
+                testID="remit-name"
+                value={recipientName}
+                onChangeText={setRecipientName}
+                placeholder="e.g. Njeri Mwangi"
+                placeholderTextColor={colors.onSurfaceTertiary}
+                style={s.input}
+                autoCapitalize="words"
+              />
+              <Text style={s.helperText}>Match this to the name on their bank / M-Pesa account exactly.</Text>
 
-          <Text style={s.label}>Recipient name (optional)</Text>
-          <TextInput
-            testID="remit-name"
-            value={recipientName}
-            onChangeText={setRecipientName}
-            placeholder="e.g. Mama Njeri"
-            placeholderTextColor={colors.onSurfaceTertiary}
-            style={s.input}
-          />
+              <Text style={s.label}>{addrLabel} <Text style={s.required}>*</Text></Text>
+              <TextInput
+                testID="remit-addr"
+                value={addr}
+                onChangeText={setAddr}
+                autoCapitalize="none"
+                autoCorrect={false}
+                keyboardType={dest === "KE" || dest === "NG" ? "phone-pad" : "default"}
+                placeholder={addrPlaceholder}
+                placeholderTextColor={colors.onSurfaceTertiary}
+                style={s.input}
+              />
+              <Text style={s.helperText}>{addrHelperText}</Text>
+            </>
+          ) : (
+            <>
+              <Text style={s.label}>{addrLabel}</Text>
+              <TextInput
+                testID="remit-addr"
+                value={addr}
+                onChangeText={setAddr}
+                autoCapitalize="none"
+                placeholder={addrPlaceholder}
+                placeholderTextColor={colors.onSurfaceTertiary}
+                style={s.input}
+              />
+              <Text style={s.helperText}>{addrHelperText}</Text>
+
+              <Text style={s.label}>Recipient name (optional)</Text>
+              <TextInput
+                testID="remit-name"
+                value={recipientName}
+                onChangeText={setRecipientName}
+                placeholder="e.g. Mama Njeri"
+                placeholderTextColor={colors.onSurfaceTertiary}
+                style={s.input}
+              />
+            </>
+          )}
 
           {err && <Text testID="remit-error" style={s.errorInline}>{err}</Text>}
 
@@ -538,6 +596,7 @@ const s = StyleSheet.create({
   kycCtaText: { color: "#0F0B08", fontSize: 12, fontWeight: "800" },
 
   helperText: { fontSize: 11, color: colors.onSurfaceTertiary, lineHeight: 15, marginTop: 4 },
+  required: { color: "#E0735F" },
   errorInline: { color: colors.error, fontSize: 13, marginTop: spacing.sm },
 
   cta: { backgroundColor: colors.brand, borderRadius: radius.md, paddingVertical: 16, alignItems: "center", marginTop: spacing.xl },
