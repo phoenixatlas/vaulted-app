@@ -7,6 +7,7 @@ import { api } from "@/src/lib/api";
 import { useI18n } from "@/src/lib/i18n";
 import { colors, spacing, radius } from "@/src/lib/theme";
 import { ExportSheet } from "@/src/components/ExportSheet";
+import KycStatusBanner from "@/src/components/KycStatusBanner";
 
 type Tx = {
   id: string; type: string; category: string; asset: string; amount: number; fiat_value: number;
@@ -41,6 +42,10 @@ export default function Activity() {
           <Text style={s.exportText}>{t("export")}</Text>
         </Pressable>
       </View>
+      {/* Progress banner for in-flight identity verification. Users
+          often check Activity to see whether their tx has settled — this
+          reassures them the ID check is moving too. */}
+      <KycStatusBanner />
       {loading ? <ActivityIndicator color={colors.brand} style={{ marginTop: 40 }} /> :
         items.length === 0 ? (
           <View style={s.empty}><Text style={s.emptyText}>{t("no_tx")}</Text></View>

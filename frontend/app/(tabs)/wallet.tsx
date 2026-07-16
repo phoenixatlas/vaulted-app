@@ -11,6 +11,7 @@ import { useI18n } from "@/src/lib/i18n";
 import { colors, spacing, radius, BRAND_IMAGES } from "@/src/lib/theme";
 import { AssetLogo } from "@/src/components/AssetLogo";
 import Sparkline from "@/src/components/Sparkline";
+import KycStatusBanner from "@/src/components/KycStatusBanner";
 
 type Asset = { id: string; symbol: string; name: string; amount: number; price_usd: number; fiat_value: number; on_chain?: boolean; network?: string | null; change_24h_pct?: number; sparkline_7d?: number[] };
 
@@ -59,6 +60,11 @@ export default function Wallet() {
             <Ionicons name="person" size={20} color={colors.brand} />
           </Pressable>
         </View>
+
+        {/* Contextual KYC verification banner — self-renders only when
+            status is "processing" or "requires_input". Silently no-op
+            otherwise. */}
+        <KycStatusBanner />
 
         <ImageBackground
           source={BRAND_IMAGES.mark}
