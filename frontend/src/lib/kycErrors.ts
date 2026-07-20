@@ -157,9 +157,21 @@ const MAP: Record<string, KycErrorInfo> = {
 
 const GENERIC: KycErrorInfo = {
   title: "Verification needs another attempt",
-  reason: "Stripe couldn't verify your document this time.",
-  tip: "Retake in bright, even lighting. Lay the document flat, fit all four corners in frame, and hold steady.",
+  reason: "We couldn't confirm your identity from the last attempt.",
+  tip: "This can happen because of your document photo OR because your selfie didn't match the photo on your ID. Try the tips below — pay special attention to the selfie tips if your document is more than a few years old.",
 };
+
+/** Selfie-specific "what to do next" — surfaces when we detect the
+ * failure was at the face-match step (e.g. selfie_face_mismatch,
+ * selfie_unverified_other) rather than a document quality issue. */
+export const SELFIE_TIPS: string[] = [
+  "Match how you look on your ID photo — remove glasses if you didn't wear them, or wear them if you did",
+  "Match your facial hair to the ID photo (shave/regrow if significantly different)",
+  "No hat, hood, or head covering — bare head unless it's on your ID",
+  "Look directly at the camera at eye level — don't hold the phone below your chin",
+  "Even light on your face (not the document) — window in front of you, no backlight",
+  "Neutral expression, mouth closed, both eyes visible",
+];
 
 export function kycErrorInfo(code: string | null | undefined, fallbackReason?: string | null): KycErrorInfo {
   if (!code) return { ...GENERIC, reason: fallbackReason || GENERIC.reason };

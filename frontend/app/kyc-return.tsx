@@ -5,7 +5,7 @@ import { useRouter } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
 import { api } from "@/src/lib/api";
 import { colors, spacing, radius } from "@/src/lib/theme";
-import { kycErrorInfo, PHOTO_TIPS, type KycErrorInfo } from "@/src/lib/kycErrors";
+import { kycErrorInfo, PHOTO_TIPS, SELFIE_TIPS, type KycErrorInfo } from "@/src/lib/kycErrors";
 
 /** Stripe Identity return_url lands here after the user finishes (or bails on)
  * the hosted verification flow. We poll /kyc/status a few times because the
@@ -77,6 +77,18 @@ export default function KycReturn() {
     ? kycErrorInfo(statusData?.identity_last_error?.code, statusData?.identity_last_error?.reason)
     : null;
 
+  // Detect if the failure was at the selfie step vs document step. Stripe
+  // codes for selfie failures start with "selfie_" (e.g. selfie_face_mismatch);
+  // reason strings sometimes carry "selfie" too. When we can't tell (generic
+  // fallback), show BOTH tip lists so we don't misdirect the user.
+  const errCode = (statusData?.identity_last_error?.code || "").toLowerCase();
+  const errReason = (statusData?.identity_last_error?.reason || "").toLowerCase();
+  const isSelfieFailure = errCode.startsWith("selfie_") || errCode.includes("face") || errReason.includes("selfie");
+  const isDocumentFailure = errCode.startsWith("document_") || errCode.startsWith("id_number_") || errCode.includes("dob") || errCode.includes("name") || errCode.includes("address");
+  // When no code at all (generic fallback), show both sets — one of them
+  // is bound to be the real issue and better UX than picking wrong.
+  const showBothTips = !errCode;
+
   return (
     <SafeAreaView style={s.root} edges={["top", "bottom"]}>
       <ScrollView contentContainerStyle={s.body} showsVerticalScrollIndicator={false}>
@@ -117,12 +129,24 @@ export default function KycReturn() {
               <Text style={s.tipBody}>{err.tip}</Text>
             </View>
 
-            {/* Photo capture checklist (generic tips that always help) */}
-            {!err.fatal && (
+            {/* Photo capture checklist — selfie vs document specific, or both
+                when we can't tell which step failed (generic fallback). */}
+            {!err.fatal && (isSelfieFailure || showBothTips) && (
               <View style={s.checklistCard}>
-                <Text style={s.checklistTitle}>Photo tips</Text>
+                <Text style={s.checklistTitle}>Selfie tips (most common cause)</Text>
+                {SELFIE_TIPS.map((t) => (
+                  <View key={`selfie-${t}`} style={s.checklistRow}>
+                    <Ionicons name="person-circle" size={14} color={colors.brand} />
+                    <Text style={s.checklistText}>{t}</Text>
+                  </View>
+                ))}
+              </View>
+            )}
+            {!err.fatal && (isDocumentFailure || showBothTips || (!isSelfieFailure && !isDocumentFailure)) && (
+              <View style={s.checklistCard}>
+                <Text style={s.checklistTitle}>Document photo tips</Text>
                 {PHOTO_TIPS.map((t) => (
-                  <View key={t} style={s.checklistRow}>
+                  <View key={`doc-${t}`} style={s.checklistRow}>
                     <Ionicons name="checkmark-circle" size={14} color={colors.success} />
                     <Text style={s.checklistText}>{t}</Text>
                   </View>

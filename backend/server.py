@@ -2721,19 +2721,64 @@ async def _apply_identity_verified(session_obj: dict):
 
 async def _apply_identity_requires_input(session_obj: dict):
     """Webhook handler for identity.verification_session.requires_input —
-    a check failed and the user needs to retry with a better photo/document."""
+    a check failed and the user needs to retry with a better photo/document.
+
+    The session-level `last_error` is only a summary. The real per-step
+    reason (document / selfie / id_number) lives in the last verification
+    report, which we fetch here so the frontend can show step-specific
+    guidance instead of a generic "retake in bright light" message.
+    """
     user_id = (session_obj.get("metadata") or {}).get("user_id")
     if not user_id:
         return
     last_error = session_obj.get("last_error") or {}
+
+    # Fetch the detailed report so we can distinguish document vs selfie
+    # failures. Falls back gracefully — if this fails we still store the
+    # summary error so the flow isn't blocked.
+    document_error: dict | None = None
+    selfie_error: dict | None = None
+    id_number_error: dict | None = None
+    report_id = session_obj.get("last_verification_report")
+    if report_id and STRIPE_API_KEY:
+        try:
+            report = stripe.identity.VerificationReport.retrieve(report_id)
+            document_error = (report.get("document") or {}).get("error") or None
+            selfie_error = (report.get("selfie") or {}).get("error") or None
+            id_number_error = (report.get("id_number") or {}).get("error") or None
+        except Exception as e:  # noqa: BLE001
+            logger.warning("VerificationReport retrieve failed: %s", e)
+
+    # Prefer the most specific error we found. Selfie failures are the most
+    # commonly misdiagnosed as "document quality" issues in the wild — check
+    # them first so the frontend gets the right step-specific code.
+    resolved_code = last_error.get("code")
+    resolved_reason = last_error.get("reason")
+    if selfie_error and selfie_error.get("code"):
+        resolved_code = selfie_error.get("code")
+        resolved_reason = selfie_error.get("reason")
+    elif document_error and document_error.get("code"):
+        resolved_code = document_error.get("code")
+        resolved_reason = document_error.get("reason")
+    elif id_number_error and id_number_error.get("code"):
+        resolved_code = id_number_error.get("code")
+        resolved_reason = id_number_error.get("reason")
+
     await db.users.update_one(
         {"id": user_id},
         {"$set": {
             "kyc.identity_verification_status": "requires_input",
             "kyc.identity_last_error": {
-                "code": last_error.get("code"),
-                "reason": last_error.get("reason"),
+                "code": resolved_code,
+                "reason": resolved_reason,
                 "at": iso(now_utc()),
+                # Also persist the raw sub-step errors for admin diagnostics
+                "step_errors": {
+                    "document": document_error,
+                    "selfie": selfie_error,
+                    "id_number": id_number_error,
+                    "session": last_error or None,
+                },
             },
         }},
     )
@@ -2743,8 +2788,11 @@ async def _apply_identity_requires_input(session_obj: dict):
         user_id=user_id,
         data={
             "session_id": session_obj.get("id"),
-            "error_code": last_error.get("code"),
-            "error_reason": last_error.get("reason"),
+            "error_code": resolved_code,
+            "error_reason": resolved_reason,
+            "selfie_error_code": (selfie_error or {}).get("code"),
+            "document_error_code": (document_error or {}).get("code"),
+            "id_number_error_code": (id_number_error or {}).get("code"),
         },
     )
 
