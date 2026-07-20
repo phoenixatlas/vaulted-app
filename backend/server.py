@@ -2390,6 +2390,79 @@ async def kyc_status(user=Depends(get_current_user)):
     }
 
 
+@api.get("/kyc/debug")
+async def kyc_debug(user=Depends(get_current_user)):
+    """Diagnostic endpoint — pulls the RAW Stripe Identity verification
+    report(s) for the current user's most recent verification session so
+    we can see the exact document / selfie / id_number rejection codes.
+
+    Only exposes what Stripe already surfaces to the account owner —
+    never leaks other users' data. Safe to call from the client.
+    """
+    if not STRIPE_API_KEY:
+        raise HTTPException(status_code=503, detail="Stripe not configured")
+
+    kyc = user.get("kyc") or {}
+    session_id = kyc.get("identity_verification_id") or kyc.get("identity_session_id")
+    if not session_id:
+        return {
+            "ok": False,
+            "reason": "no_active_session",
+            "hint": "Start a verification session via /kyc/session first.",
+        }
+
+    try:
+        session = stripe.identity.VerificationSession.retrieve(
+            session_id,
+            expand=["last_verification_report"],
+        )
+    except Exception as e:  # noqa: BLE001
+        return {"ok": False, "reason": "stripe_retrieve_failed", "detail": str(e)[:400]}
+
+    # Build a minimal, safe summary — no raw doc images or full personal
+    # data, just the codes / reasons we need for triage.
+    summary: dict = {
+        "ok": True,
+        "session_id": session.get("id"),
+        "session_status": session.get("status"),
+        "session_type": session.get("type"),
+        "session_options": (session.get("options") or {}),
+        "session_last_error": session.get("last_error"),
+        "created": session.get("created"),
+        "attempt_count": session.get("client_reference_id") is not None,
+    }
+
+    report = session.get("last_verification_report") or {}
+    if isinstance(report, dict):
+        doc = report.get("document") or {}
+        selfie = report.get("selfie") or {}
+        id_number = report.get("id_number") or {}
+        summary["last_report"] = {
+            "id": report.get("id"),
+            "type": report.get("type"),
+            "created": report.get("created"),
+            "document": {
+                "status": doc.get("status"),
+                "error": doc.get("error"),
+                "type": doc.get("type"),
+                "issuing_country": doc.get("issuing_country"),
+                "expiration_date": doc.get("expiration_date"),
+                # Deliberately NOT returning: files (raw doc images),
+                # first_name / last_name / dob / address / number
+            },
+            "selfie": {
+                "status": selfie.get("status"),
+                "error": selfie.get("error"),
+                # Not returning file ids
+            },
+            "id_number": {
+                "status": id_number.get("status"),
+                "error": id_number.get("error"),
+            },
+        }
+    return summary
+
+
 class KycSessionIn(BaseModel):
     """Optional body for /kyc/session.
     - force_new: cancels any existing session and creates a fresh one. Used by
