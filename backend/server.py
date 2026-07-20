@@ -2899,9 +2899,13 @@ async def admin_kyc_manual_edd_approve(
     # Clear the residual "last_error" so the frontend banner disappears
     new_kyc.pop("identity_last_error", None)
 
+    # NOTE: new_kyc already has `identity_last_error` popped above, so a plain
+    # $set on the full kyc document is enough. Combining $set on `kyc` with a
+    # $unset on `kyc.identity_last_error` in a single update raises a
+    # "conflict at 'kyc'" write error in MongoDB.
     await db.users.update_one(
         {"id": target["id"]},
-        {"$set": {"kyc": new_kyc}, "$unset": {"kyc.identity_last_error": ""}},
+        {"$set": {"kyc": new_kyc}},
     )
 
     # Write to immutable audit trail — every field required for FCA review
