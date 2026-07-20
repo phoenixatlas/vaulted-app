@@ -269,6 +269,22 @@ class RemitFundIn(BaseModel):
     payment_method: Literal["card", "apple_pay", "google_pay", "bank"] = "card"
 
 
+class ManualEddApproveIn(BaseModel):
+    """Admin-triggered Enhanced Due Diligence approval — used when Stripe
+    Identity's automated face-match / doc-check algorithms can't verify a
+    legitimate user (algorithm ceiling, ~3-5% of users). The admin has
+    already reviewed the customer's docs manually per MLR 2017 Reg 33.
+
+    Every field except user_email/user_id is required for audit compliance.
+    """
+    user_id: Optional[str] = None
+    user_email: Optional[EmailStr] = None
+    target_tier: Literal["basic", "kyc_verified", "enhanced"] = "kyc_verified"
+    edd_reference: str = Field(min_length=6, max_length=64)  # ticket / doc-store ref
+    edd_reason: str = Field(min_length=8, max_length=500)     # why manual approval was warranted
+    documents_verified: list[str] = Field(default_factory=list)  # e.g. ["passport", "utility_bill_2024_06"]
+
+
 # ----------------------------- Helpers -----------------------------
 def now_utc() -> datetime:
     return datetime.now(timezone.utc)
@@ -2817,6 +2833,98 @@ async def admin_compliance_health(_admin=Depends(require_admin)):
         },
         "checked_at": iso(now_utc()),
     }
+
+
+# ============================================================================
+# MANUAL EDD (Enhanced Due Diligence) — admin-triggered KYC approval
+# ============================================================================
+# Stripe Identity's automated face-match / document-check algorithms can't
+# verify a small proportion of legitimate users (algorithm ceiling — ~3-5%
+# of users, often those with older ID photos, non-Western features the model
+# was under-trained on, or age-progression edge cases). MLR 2017 Reg 33
+# explicitly allows manual EDD in these cases, provided the reviewing admin
+# retains records of the documents reviewed + the reason for manual approval.
+#
+# This endpoint is the digital lever for that: an admin (identified by
+# ADMIN_EMAILS on Render) records the EDD outcome, and the user's KYC tier
+# is bumped instantly. Every approval is written to the immutable audit log.
+
+@api.post("/admin/kyc/manual-edd-approve")
+async def admin_kyc_manual_edd_approve(
+    body: ManualEddApproveIn,
+    admin=Depends(require_admin),
+):
+    """Manually mark a user as KYC-verified after reviewing their identity
+    documents offline. Records the reviewing admin + reason in audit trail.
+
+    Provide either user_id OR user_email. Returns the updated user summary.
+    """
+    if not body.user_id and not body.user_email:
+        raise HTTPException(status_code=400, detail="Provide user_id or user_email")
+
+    query: dict = {}
+    if body.user_id:
+        query["id"] = body.user_id
+    else:
+        query["email"] = (body.user_email or "").lower().strip()
+
+    target = await db.users.find_one(query, {"_id": 0})
+    if not target:
+        raise HTTPException(status_code=404, detail="User not found")
+
+    # Preserve any existing KYC context so audit can reconstruct the "before"
+    prior_kyc = target.get("kyc") or {}
+    prior_state = {
+        "identity_verification_status": prior_kyc.get("identity_verification_status"),
+        "tier": prior_kyc.get("tier"),
+        "identity_last_error_code": (prior_kyc.get("identity_last_error") or {}).get("code"),
+    }
+
+    # Update user KYC state — mark verified + set target tier + record EDD context
+    new_kyc = {
+        **prior_kyc,
+        "identity_verification_status": "verified",
+        "tier": body.target_tier,
+        "verified_at": iso(now_utc()),
+        "manual_edd": {
+            "approved_by_admin_email_hash": hashlib.sha256(
+                (admin.get("email") or "").lower().encode()
+            ).hexdigest()[:12],
+            "approved_at": iso(now_utc()),
+            "edd_reference": body.edd_reference.strip(),
+            "edd_reason": body.edd_reason.strip(),
+            "documents_verified": body.documents_verified,
+        },
+    }
+    # Clear the residual "last_error" so the frontend banner disappears
+    new_kyc.pop("identity_last_error", None)
+
+    await db.users.update_one(
+        {"id": target["id"]},
+        {"$set": {"kyc": new_kyc}, "$unset": {"kyc.identity_last_error": ""}},
+    )
+
+    # Write to immutable audit trail — every field required for FCA review
+    await audit_write(db, EventType.KYC_MANUAL_EDD_APPROVED, user=target, data={
+        "target_user_id": target["id"],
+        "target_user_email_hash": hashlib.sha256((target.get("email") or "").lower().encode()).hexdigest()[:12],
+        "reviewing_admin_email_hash": hashlib.sha256((admin.get("email") or "").lower().encode()).hexdigest()[:12],
+        "target_tier": body.target_tier,
+        "edd_reference": body.edd_reference,
+        "edd_reason": body.edd_reason,
+        "documents_verified": body.documents_verified,
+        "prior_state": prior_state,
+        "regulatory_basis": "UK MLR 2017 Regulation 33 — Enhanced Due Diligence",
+    })
+
+    # Trigger any post-KYC hooks (e.g. referral reward credit)
+    try:
+        await credit_referral_on_kyc(db, target["id"])
+    except Exception as e:  # noqa: BLE001
+        logger.warning("credit_referral_on_kyc failed for %s: %s", target["id"], e)
+
+    refreshed = await db.users.find_one({"id": target["id"]}, {"_id": 0})
+    return {"ok": True, "user": public_user(refreshed)}
 
 
 class AdminScreenIn(BaseModel):

@@ -67,6 +67,12 @@ class EventType:
     OFFRAMP_MPESA_REFUNDED = "offramp.mpesa_refunded"
     OFFRAMP_WEBHOOK_INVALID_SIGNATURE = "offramp.webhook_invalid_signature"
 
+    # Manual EDD (Enhanced Due Diligence) — admin overrides Stripe Identity
+    # when automated verification fails for a legitimate user (algorithm
+    # ceiling, ~3-5% of users). Records the reviewing admin + evidence
+    # for MLR 2017 Reg 33 compliance.
+    KYC_MANUAL_EDD_APPROVED = "kyc.manual_edd_approved"
+
 
 ALL_EVENT_TYPES = {
     v for k, v in vars(EventType).items() if not k.startswith("_") and isinstance(v, str)
