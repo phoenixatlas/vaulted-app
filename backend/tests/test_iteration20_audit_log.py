@@ -29,6 +29,7 @@ import pytest
 from motor.motor_asyncio import AsyncIOMotorClient
 
 import server  # noqa: E402
+import deps  # noqa: E402
 import compliance  # noqa: E402
 import audit  # noqa: E402
 
@@ -160,17 +161,17 @@ class TestEventTypeConstants:
 # --------------------------------------------------------------------------
 class TestAdminAuditLogEndpoint:
     def test_requires_admin(self, client, smoke_auth, monkeypatch):
-        monkeypatch.setattr(server, "ADMIN_EMAILS", {"someoneelse@example.com"})
+        monkeypatch.setattr(deps, "ADMIN_EMAILS", {"someoneelse@example.com"})
         r = client.get("/api/admin/audit-log", headers=smoke_auth)
         assert r.status_code == 403, r.text
 
     def test_no_admin_configured_returns_403(self, client, smoke_auth, monkeypatch):
-        monkeypatch.setattr(server, "ADMIN_EMAILS", set())
+        monkeypatch.setattr(deps, "ADMIN_EMAILS", set())
         r = client.get("/api/admin/audit-log", headers=smoke_auth)
         assert r.status_code == 403
 
     def test_event_types_endpoint(self, client, smoke_auth, monkeypatch):
-        monkeypatch.setattr(server, "ADMIN_EMAILS", {SMOKE_EMAIL})
+        monkeypatch.setattr(deps, "ADMIN_EMAILS", {SMOKE_EMAIL})
         r = client.get("/api/admin/audit-log/event-types", headers=smoke_auth)
         assert r.status_code == 200
         types = r.json()["event_types"]
@@ -178,7 +179,7 @@ class TestAdminAuditLogEndpoint:
         assert "remit.send_success" in types
 
     def test_list_endpoint_returns_pagination_shape(self, client, smoke_auth, monkeypatch):
-        monkeypatch.setattr(server, "ADMIN_EMAILS", {SMOKE_EMAIL})
+        monkeypatch.setattr(deps, "ADMIN_EMAILS", {SMOKE_EMAIL})
         r = client.get("/api/admin/audit-log?limit=5", headers=smoke_auth)
         assert r.status_code == 200, r.text
         body = r.json()
@@ -188,7 +189,7 @@ class TestAdminAuditLogEndpoint:
         assert "next_cursor" in body
 
     def test_unknown_event_type_returns_400(self, client, smoke_auth, monkeypatch):
-        monkeypatch.setattr(server, "ADMIN_EMAILS", {SMOKE_EMAIL})
+        monkeypatch.setattr(deps, "ADMIN_EMAILS", {SMOKE_EMAIL})
         r = client.get("/api/admin/audit-log?event_type=totally.made.up", headers=smoke_auth)
         assert r.status_code == 400
         detail = r.json()["detail"]
@@ -197,7 +198,7 @@ class TestAdminAuditLogEndpoint:
         assert "kyc.verified" in detail["allowed"]
 
     def test_user_summary_endpoint(self, client, smoke_auth, monkeypatch):
-        monkeypatch.setattr(server, "ADMIN_EMAILS", {SMOKE_EMAIL})
+        monkeypatch.setattr(deps, "ADMIN_EMAILS", {SMOKE_EMAIL})
         uid = _smoke_user_id()
         r = client.get(f"/api/admin/audit-log/user/{uid}", headers=smoke_auth)
         assert r.status_code == 200
@@ -253,7 +254,7 @@ class TestRemitSendBlockedWritesAudit:
 
 class TestAdminManualScreenWritesAudit:
     def test_manual_screen_writes_event(self, client, smoke_auth, monkeypatch):
-        monkeypatch.setattr(server, "ADMIN_EMAILS", {SMOKE_EMAIL})
+        monkeypatch.setattr(deps, "ADMIN_EMAILS", {SMOKE_EMAIL})
         monkeypatch.setattr(compliance, "OPENSANCTIONS_API_KEY", None)
         uid = _smoke_user_id()
         r = client.post(
@@ -270,7 +271,7 @@ class TestAuditLogFiltering:
     """Confirm filters actually narrow results."""
 
     def test_event_type_filter(self, client, smoke_auth, monkeypatch):
-        monkeypatch.setattr(server, "ADMIN_EMAILS", {SMOKE_EMAIL})
+        monkeypatch.setattr(deps, "ADMIN_EMAILS", {SMOKE_EMAIL})
 
         # Seed one blocked-corridor event
         client.post(
@@ -290,7 +291,7 @@ class TestAuditLogFiltering:
         assert body["count"] >= 1
 
     def test_user_id_filter(self, client, smoke_auth, monkeypatch):
-        monkeypatch.setattr(server, "ADMIN_EMAILS", {SMOKE_EMAIL})
+        monkeypatch.setattr(deps, "ADMIN_EMAILS", {SMOKE_EMAIL})
         uid = _smoke_user_id()
 
         # Seed one event

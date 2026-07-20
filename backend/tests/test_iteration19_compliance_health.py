@@ -20,6 +20,7 @@ import pytest
 
 # NOTE: pathlib/dotenv/server already set up by /app/backend/tests/conftest.py
 import server  # noqa: E402
+import deps  # noqa: E402
 import compliance  # noqa: E402
 from motor.motor_asyncio import AsyncIOMotorClient  # noqa: E402
 import asyncio
@@ -85,20 +86,20 @@ class TestHealthNoKey:
 class TestAdminGate:
     def test_health_without_admin_returns_403(self, client, smoke_auth, monkeypatch):
         """A regular authed user is not on ADMIN_EMAILS → 403."""
-        monkeypatch.setattr(server, "ADMIN_EMAILS", {"root@example.com"})
+        monkeypatch.setattr(deps, "ADMIN_EMAILS", {"root@example.com"})
         r = client.get("/api/admin/compliance/health", headers=smoke_auth)
         assert r.status_code == 403, r.text
 
     def test_health_no_admin_configured_returns_403(self, client, smoke_auth, monkeypatch):
         """Empty ADMIN_EMAILS locks the endpoints down entirely."""
-        monkeypatch.setattr(server, "ADMIN_EMAILS", set())
+        monkeypatch.setattr(deps, "ADMIN_EMAILS", set())
         r = client.get("/api/admin/compliance/health", headers=smoke_auth)
         assert r.status_code == 403, r.text
 
     def test_health_with_admin_returns_200(self, client, smoke_auth, monkeypatch):
         """When smoketest is on ADMIN_EMAILS and no API key set, returns
         200 with degraded status."""
-        monkeypatch.setattr(server, "ADMIN_EMAILS", {SMOKE_EMAIL})
+        monkeypatch.setattr(deps, "ADMIN_EMAILS", {SMOKE_EMAIL})
         monkeypatch.setattr(compliance, "OPENSANCTIONS_API_KEY", None)
         r = client.get("/api/admin/compliance/health", headers=smoke_auth)
         assert r.status_code == 200, r.text
@@ -110,7 +111,7 @@ class TestAdminGate:
         assert body["corridor_blocklist"]["count"] > 0
 
     def test_screen_endpoint_returns_full_shape(self, client, smoke_auth, monkeypatch):
-        monkeypatch.setattr(server, "ADMIN_EMAILS", {SMOKE_EMAIL})
+        monkeypatch.setattr(deps, "ADMIN_EMAILS", {SMOKE_EMAIL})
         monkeypatch.setattr(compliance, "OPENSANCTIONS_API_KEY", None)
         r = client.post(
             "/api/admin/compliance/screen",

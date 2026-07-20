@@ -1,8 +1,6 @@
 from fastapi import FastAPI, APIRouter, Depends, HTTPException, status, Request, Header
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
-from dotenv import load_dotenv
 from starlette.middleware.cors import CORSMiddleware
-from motor.motor_asyncio import AsyncIOMotorClient
 import os
 import logging
 import asyncio
@@ -13,12 +11,10 @@ import hashlib
 import httpx
 import stripe
 from eth_account import Account
-from pathlib import Path
 from datetime import datetime, timedelta, timezone
 from typing import List, Optional, Literal
 
 from pydantic import BaseModel, EmailStr, Field
-from passlib.context import CryptContext
 import jwt
 
 from multichain import (
@@ -91,393 +87,72 @@ from referrals import (
 )
 import kotani
 
-
-ROOT_DIR = Path(__file__).parent
-load_dotenv(ROOT_DIR / ".env")
-
-mongo_url = os.environ["MONGO_URL"]
-# Pass certifi's CA bundle explicitly when connecting to Atlas (mongodb+srv://).
-# Fixes "SSL handshake failed: TLSV1_ALERT_INTERNAL_ERROR" on hosted platforms
-# (Render, Railway, etc.) whose default OS trust store can be stale/incomplete.
-_mongo_kwargs: dict = {}
-if "mongodb+srv" in mongo_url or "mongodb.net" in mongo_url:
-    try:
-        import certifi
-        _mongo_kwargs["tlsCAFile"] = certifi.where()
-    except Exception:
-        pass
-client = AsyncIOMotorClient(mongo_url, **_mongo_kwargs)
-db = client[os.environ["DB_NAME"]]
-
-JWT_SECRET = os.environ.get("JWT_SECRET", "vaulted-dev-secret-change-me")
-JWT_ALG = "HS256"
-JWT_EXPIRE_HOURS = 24 * 7
-
-STRIPE_API_KEY = os.environ.get("STRIPE_API_KEY", "")
-# Treat the well-known placeholder as "unconfigured" so endpoints degrade gracefully.
-if STRIPE_API_KEY in ("sk_test_emergent", "sk_test_placeholder", "your_stripe_key_here"):
-    STRIPE_API_KEY = ""
-STRIPE_WEBHOOK_SECRET = os.environ.get("STRIPE_WEBHOOK_SECRET", "")
-DAILY_API_KEY = os.environ.get("DAILY_API_KEY", "")
-DAILY_DOMAIN = os.environ.get("DAILY_DOMAIN", "")
-VAULT_PRO_PRICE_USD = float(os.environ.get("VAULT_PRO_PRICE_USD", "9.99"))
-APP_PUBLIC_URL = os.environ.get("APP_PUBLIC_URL", "")
-SEPOLIA_RPC_URL = os.environ.get("SEPOLIA_RPC_URL", "https://ethereum-sepolia-rpc.publicnode.com")
-SEPOLIA_CHAIN_ID = 11155111
-
-RESEND_API_KEY = os.environ.get("RESEND_API_KEY", "")
-# Sender address — defaults to Resend's shared sandbox until a custom domain is verified.
-RESEND_FROM = os.environ.get("RESEND_FROM", "Vaulted <onboarding@resend.dev>")
-# Domain we'd like to graduate the sender to once verified.
-RESEND_TARGET_DOMAIN = os.environ.get("RESEND_TARGET_DOMAIN", "phoenix-atlas.com")
-RESEND_TARGET_FROM = os.environ.get(
-    "RESEND_TARGET_FROM", f"Vaulted <noreply@{os.environ.get('RESEND_TARGET_DOMAIN', 'phoenix-atlas.com')}>"
+# --- P2 refactor: shared modules -----------------------------------------
+# Every route in this file uses these; keeping the imports centralised means
+# routers extracted into /routers/*.py can import from the same source of
+# truth (db, JWT, auth deps, Pydantic models) without touching server.py.
+from deps import (
+    client,
+    db,
+    JWT_SECRET,
+    JWT_ALG,
+    JWT_EXPIRE_HOURS,
+    STRIPE_API_KEY,
+    STRIPE_WEBHOOK_SECRET,
+    DAILY_API_KEY,
+    DAILY_DOMAIN,
+    VAULT_PRO_PRICE_USD,
+    APP_PUBLIC_URL,
+    SEPOLIA_RPC_URL,
+    SEPOLIA_CHAIN_ID,
+    MULTISIG_THRESHOLD_ETH,
+    APPROVAL_TTL_HOURS,
+    pwd_ctx,
+    bearer,
+    logger,
+    now_utc,
+    iso,
+    make_token,
+    is_user_pro,
+    _ensure_eth_private_key,
+    public_user,
+    get_current_user,
+    ADMIN_EMAILS,
+    require_admin,
 )
-# Mutable at runtime — the Resend poller flips this when the target domain verifies.
-_resolved_resend_from: Optional[str] = None
-
-
-def get_resend_from() -> str:
-    return _resolved_resend_from or RESEND_FROM
-
-
-MULTISIG_THRESHOLD_ETH = float(os.environ.get("MULTISIG_THRESHOLD_ETH", "0.01"))
-APPROVAL_TTL_HOURS = 24
-
-# Enable HD wallet features
-Account.enable_unaudited_hdwallet_features()
+from models import (
+    RegisterIn, LoginIn, TokenOut, UpdateLanguageIn,
+    ForgotPasswordIn, ResetPasswordIn, RegisterKeyIn,
+    SendCryptoIn, SendUsdcIn, SendEvmUsdcIn, SendCoinIn,
+    SendXlmIn, SendXrpIn, SendEthIn,
+    FiatTxIn, StripeDepositIn, StripeSyncIn,
+    RemitQuoteIn, RemitSendIn, RemitFundIn,
+    OfframpQuoteIn, OfframpInitiateIn,
+    KycSessionIn, ManualEddApproveIn, AdminScreenIn,
+    SendMessageIn, SendChatCryptoIn, CreateGroupIn, StartConversationIn,
+    CallRoomIn,
+    CosignerInviteIn, ApprovalActionIn,
+    RegisterPushBody,
+)
+from emails import (
+    RESEND_API_KEY,
+    RESEND_FROM,
+    RESEND_TARGET_DOMAIN,
+    RESEND_TARGET_FROM,
+    PASSWORD_RESET_TOKEN_TTL_SEC,
+    PASSWORD_RESET_MAX_PER_HOUR,
+    get_resend_from,
+    send_email_via_resend as _send_email_via_resend,
+    password_reset_email_html as _password_reset_email_html,
+    start_resend_domain_poller,
+)
+from seed import DEFAULT_ASSETS, SEED_BALANCES, SEED_CONTACTS, seed_user_data
 
 if STRIPE_API_KEY:
     stripe.api_key = STRIPE_API_KEY
 
-pwd_ctx = CryptContext(schemes=["bcrypt"], deprecated="auto")
-bearer = HTTPBearer(auto_error=False)
-
 app = FastAPI(title="Vaulted Wallet API")
 api = APIRouter(prefix="/api")
-
-logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
-logger = logging.getLogger("vaulted")
-
-
-# ----------------------------- Models -----------------------------
-class RegisterIn(BaseModel):
-    email: EmailStr
-    password: str = Field(min_length=6)
-    name: str = Field(min_length=1, max_length=80)
-    # Optional 8-char alphanumeric invite code. Case-insensitive.
-    referred_by_code: Optional[str] = Field(default=None, max_length=16)
-
-
-class LoginIn(BaseModel):
-    email: EmailStr
-    password: str
-
-
-class TokenOut(BaseModel):
-    access_token: str
-    token_type: str = "bearer"
-    user: dict
-
-
-class SendCryptoIn(BaseModel):
-    asset: str
-    amount: float = Field(gt=0)
-    to_address: str
-    memo: Optional[str] = None
-
-
-class FiatTxIn(BaseModel):
-    amount: float = Field(gt=0)
-    currency: str = "USD"
-    method: Literal["card", "bank", "applepay"] = "card"
-
-
-class SendMessageIn(BaseModel):
-    conversation_id: str
-    text: str = Field(min_length=1, max_length=8000)
-    nonce: Optional[str] = None  # base64 NaCl secretbox nonce when encrypted
-    encrypted: bool = False
-
-
-class SendChatCryptoIn(BaseModel):
-    conversation_id: str
-    amount_eth: float = Field(gt=0, le=1.0)
-    to_contact_id: Optional[str] = None  # required for group chats; ignored for 1-on-1
-
-
-class CreateGroupIn(BaseModel):
-    name: str = Field(min_length=1, max_length=80)
-    contact_ids: list[str] = Field(min_length=1, max_length=20)
-
-
-class StartConversationIn(BaseModel):
-    contact_id: str
-
-
-class UpdateLanguageIn(BaseModel):
-    language: str
-
-
-class RegisterKeyIn(BaseModel):
-    public_key: str  # base64 NaCl box public key
-
-
-class StripeDepositIn(BaseModel):
-    amount_usd: float = Field(gt=0, le=10000)
-
-
-class StripeSyncIn(BaseModel):
-    session_id: str
-
-
-class CallRoomIn(BaseModel):
-    conversation_id: Optional[str] = None
-
-
-class CosignerInviteIn(BaseModel):
-    email: EmailStr
-    label: Optional[str] = None
-
-
-class ApprovalActionIn(BaseModel):
-    token: str
-    decision: Literal["approve", "reject"]
-
-
-class ForgotPasswordIn(BaseModel):
-    email: EmailStr
-
-
-class ResetPasswordIn(BaseModel):
-    token: str
-    new_password: str = Field(min_length=6, max_length=128)
-
-
-class RemitFundIn(BaseModel):
-    """Fund a cross-border send with fiat (card / Apple Pay / bank transfer)
-    via Stripe. Backend stores the intended remit in Checkout metadata; on
-    successful payment (webhook or /stripe/sync poll) the on-chain leg is
-    executed automatically.  Users who prefer to spend crypto keep using
-    /remit/send unchanged."""
-    source_fiat: str = Field(min_length=3, max_length=3)
-    amount: float = Field(gt=0)
-    destination_code: str = Field(min_length=2, max_length=2)
-    recipient_address: str
-    recipient_name: Optional[str] = None
-    memo: Optional[str] = None
-    payment_method: Literal["card", "apple_pay", "google_pay", "bank"] = "card"
-
-
-class ManualEddApproveIn(BaseModel):
-    """Admin-triggered Enhanced Due Diligence approval — used when Stripe
-    Identity's automated face-match / doc-check algorithms can't verify a
-    legitimate user (algorithm ceiling, ~3-5% of users). The admin has
-    already reviewed the customer's docs manually per MLR 2017 Reg 33.
-
-    Every field except user_email/user_id is required for audit compliance.
-    """
-    user_id: Optional[str] = None
-    user_email: Optional[EmailStr] = None
-    # Must match compliance.TIER_LIMITS keys exactly, otherwise get_user_tier()
-    # falls back to DEFAULT_TIER ("unverified") and the approval has no visible
-    # effect. `kyc_full` is the default for manual EDD (Enhanced Due Diligence).
-    target_tier: Literal["kyc_lite", "kyc_full"] = "kyc_full"
-    edd_reference: str = Field(min_length=6, max_length=64)  # ticket / doc-store ref
-    edd_reason: str = Field(min_length=8, max_length=500)     # why manual approval was warranted
-    documents_verified: list[str] = Field(default_factory=list)  # e.g. ["passport", "utility_bill_2024_06"]
-
-
-# ----------------------------- Helpers -----------------------------
-def now_utc() -> datetime:
-    return datetime.now(timezone.utc)
-
-
-def iso(dt: datetime) -> str:
-    return dt.astimezone(timezone.utc).isoformat()
-
-
-def make_token(user_id: str) -> str:
-    payload = {
-        "sub": user_id,
-        "iat": int(now_utc().timestamp()),
-        "exp": int((now_utc() + timedelta(hours=JWT_EXPIRE_HOURS)).timestamp()),
-    }
-    return jwt.encode(payload, JWT_SECRET, algorithm=JWT_ALG)
-
-
-def is_user_pro(u: dict) -> bool:
-    """Single source of truth: a user is 'Pro' if their Stripe subscription is
-    active or trialing. Used by every fee/paywall check across the app to
-    avoid the previous bug where /remit read a `u["is_pro"]` field that
-    only existed on the public_user() response, never on the raw DB doc."""
-    return ((u.get("subscription") or {}).get("status") in ("active", "trialing"))
-
-
-async def _ensure_eth_private_key(user: dict) -> Optional[str]:
-    """Derive + persist eth_private_key on-the-fly for legacy users who signed
-    up before the field was added to the schema. Returns the key or None if
-    even the mnemonic is missing (unrecoverable)."""
-    if user.get("eth_private_key"):
-        return user["eth_private_key"]
-    mnemonic = user.get("eth_mnemonic") or user.get("mnemonic")
-    if not mnemonic:
-        return None
-    try:
-        Account.enable_unaudited_hdwallet_features()
-        acct = Account.from_mnemonic(mnemonic)
-    except Exception as e:
-        logger.warning(f"eth_private_key backfill from mnemonic failed: {e}")
-        return None
-    pk_hex = "0x" + acct.key.hex()
-    # Persist so we only pay the KDF cost once
-    await db.users.update_one({"id": user["id"]}, {"$set": {"eth_private_key": pk_hex}})
-    user["eth_private_key"] = pk_hex
-    return pk_hex
-
-
-def public_user(u: dict) -> dict:
-    sub = u.get("subscription") or {}
-    return {
-        "id": u["id"],
-        "email": u["email"],
-        "name": u["name"],
-        "language": u.get("language", "en"),
-        "avatar": u.get("avatar"),
-        "wallet_address": u.get("wallet_address"),
-        "biometric_enabled": u.get("biometric_enabled", False),
-        "multisig_enabled": u.get("multisig_enabled", False),
-        "public_key": u.get("public_key"),
-        "onboarding_seed_acknowledged": u.get("onboarding_seed_acknowledged", False),
-        "referral_code": u.get("referral_code"),
-        "subscription": {
-            "tier": sub.get("tier", "free"),
-            "status": sub.get("status", "inactive"),
-            "current_period_end": sub.get("current_period_end"),
-        },
-        "is_pro": is_user_pro(u),
-    }
-
-
-async def get_current_user(
-    creds: Optional[HTTPAuthorizationCredentials] = Depends(bearer),
-) -> dict:
-    if not creds or not creds.credentials:
-        raise HTTPException(status_code=401, detail="Not authenticated")
-    try:
-        data = jwt.decode(creds.credentials, JWT_SECRET, algorithms=[JWT_ALG])
-        uid = data.get("sub")
-    except jwt.PyJWTError:
-        raise HTTPException(status_code=401, detail="Invalid token")
-    user = await db.users.find_one({"id": uid}, {"_id": 0})
-    if not user:
-        raise HTTPException(status_code=401, detail="User not found")
-    return user
-
-
-# ---- Admin auth: comma-separated ADMIN_EMAILS env var. Any authed user
-# whose email is on that list can hit /api/admin/* endpoints. Kept intentionally
-# simple — we don't need RBAC granularity for the current admin footprint
-# (health checks, manual sanctions screens). Upgrade to a role field on the
-# user doc if the admin surface grows.
-ADMIN_EMAILS: set[str] = {
-    e.strip().lower()
-    for e in (os.environ.get("ADMIN_EMAILS", "") or "").split(",")
-    if e.strip()
-}
-
-
-async def require_admin(user=Depends(get_current_user)) -> dict:
-    if not ADMIN_EMAILS:
-        # No admin list configured on this deployment → lock everything down
-        # rather than accidentally open the endpoints wide.
-        raise HTTPException(status_code=403, detail="Admin endpoints not configured")
-    email = (user.get("email") or "").strip().lower()
-    if email not in ADMIN_EMAILS:
-        raise HTTPException(status_code=403, detail="Admin access required")
-    return user
-
-
-DEFAULT_ASSETS = [
-    {"symbol": "BTC", "name": "Bitcoin", "price_usd": 67234.12, "icon": "bitcoin"},
-    {"symbol": "ETH", "name": "Ethereum", "price_usd": 3582.40, "icon": "ethereum"},
-    {"symbol": "USDC", "name": "USD Coin", "price_usd": 1.00, "icon": "usdc"},
-    {"symbol": "SOL", "name": "Solana", "price_usd": 158.22, "icon": "solana"},
-    {"symbol": "XLM", "name": "Stellar Lumens", "price_usd": 0.12, "icon": "stellar"},
-    {"symbol": "XRP", "name": "XRP", "price_usd": 0.52, "icon": "ripple"},
-]
-
-SEED_BALANCES = {"BTC": 0, "ETH": 0, "USDC": 0, "SOL": 0, "XLM": 0, "XRP": 0}
-
-SEED_CONTACTS = [
-    {"name": "Maya Chen", "email": "maya@vaulted.app", "priority": False,
-     "avatar": "https://images.pexels.com/photos/8384889/pexels-photo-8384889.jpeg?auto=compress&cs=tinysrgb&dpr=2&h=200&w=200"},
-    {"name": "Daniel Park", "email": "daniel@vaulted.app", "priority": False,
-     "avatar": "https://images.pexels.com/photos/35334114/pexels-photo-35334114.jpeg?auto=compress&cs=tinysrgb&dpr=2&h=200&w=200"},
-    {"name": "Vault Support", "email": "support@vaulted.app", "priority": True,
-     "avatar": "https://images.unsplash.com/photo-1534528741775-53994a69daeb?crop=entropy&cs=srgb&fm=jpg&w=200&h=200&fit=crop"},
-]
-
-
-async def seed_user_data(user_id: str) -> None:
-    # Seed balances
-    for a in DEFAULT_ASSETS:
-        await db.balances.insert_one({
-            "id": str(uuid.uuid4()),
-            "user_id": user_id,
-            "symbol": a["symbol"],
-            "name": a["name"],
-            "amount": SEED_BALANCES.get(a["symbol"], 0),
-            "icon": a["icon"],
-            "updated_at": iso(now_utc()),
-        })
-    # Seed contacts + welcome conversation
-    for c in SEED_CONTACTS:
-        cid = str(uuid.uuid4())
-        await db.contacts.insert_one({
-            "id": cid,
-            "user_id": user_id,
-            "name": c["name"],
-            "email": c["email"],
-            "avatar": c["avatar"],
-            "priority": c.get("priority", False),
-            "created_at": iso(now_utc()),
-        })
-        conv_id = str(uuid.uuid4())
-        await db.conversations.insert_one({
-            "id": conv_id,
-            "user_id": user_id,
-            "contact_id": cid,
-            "contact_name": c["name"],
-            "contact_avatar": c["avatar"],
-            "last_message": "Welcome to Vaulted secure chat.",
-            "last_message_at": iso(now_utc()),
-            "encrypted": True,
-            "priority": c.get("priority", False),
-            "unread": 1,
-        })
-        await db.messages.insert_one({
-            "id": str(uuid.uuid4()),
-            "conversation_id": conv_id,
-            "user_id": user_id,
-            "sender": "contact",
-            "text": f"Hi! I'm {c['name']}. Welcome to Vaulted — your messages here are end-to-end encrypted.",
-            "created_at": iso(now_utc()),
-        })
-
-    # Welcome transaction
-    await db.transactions.insert_one({
-        "id": str(uuid.uuid4()),
-        "user_id": user_id,
-        "type": "receive",
-        "category": "crypto",
-        "asset": "USDC",
-        "amount": 1250.00,
-        "fiat_value": 1250.00,
-        "counterparty": "Welcome Bonus",
-        "status": "completed",
-        "created_at": iso(now_utc()),
-    })
 
 
 # ----------------------------- Routes -----------------------------
@@ -568,57 +243,6 @@ async def update_security(
     u = await db.users.find_one({"id": user["id"]}, {"_id": 0})
     return public_user(u)
 
-
-# ============================================================================
-# PASSWORD RESET — Resend transactional email + single-use JWT reset token
-# ============================================================================
-# Rate limit: max 3 password-reset requests per email per hour. We do NOT
-# reveal whether an email is registered — the endpoint always returns 200
-# with a generic message.  Every reset event is written to the audit log.
-
-PASSWORD_RESET_TOKEN_TTL_SEC = 30 * 60  # 30 minutes
-PASSWORD_RESET_MAX_PER_HOUR = 3
-
-
-async def _send_email_via_resend(to: str, subject: str, html: str) -> bool:
-    """Fire-and-forget email send. Returns True on success, False otherwise.
-    Never raises so callers can log-and-continue."""
-    if not RESEND_API_KEY:
-        logger.warning("RESEND_API_KEY not set; email to %s skipped", to)
-        return False
-    try:
-        async with httpx.AsyncClient(timeout=12) as cx:
-            r = await cx.post(
-                "https://api.resend.com/emails",
-                headers={"Authorization": f"Bearer {RESEND_API_KEY}", "Content-Type": "application/json"},
-                json={"from": get_resend_from(), "to": [to], "subject": subject, "html": html},
-            )
-            if r.status_code >= 400:
-                logger.warning("resend send failed %s: %s", r.status_code, r.text[:200])
-                return False
-            return True
-    except Exception as e:  # noqa: BLE001
-        logger.warning("resend send exception: %s", e)
-        return False
-
-
-def _password_reset_email_html(name: str, reset_url: str) -> str:
-    safe_name = (name or "there").strip() or "there"
-    return f"""
-    <div style="font-family:-apple-system,Helvetica,Arial,sans-serif;max-width:520px;margin:auto;padding:32px 24px;background:#0F0B08;color:#F5E9C9">
-      <div style="font-size:24px;font-weight:700;color:#C9A35B;letter-spacing:-0.4px;margin-bottom:4px">Vaulted</div>
-      <div style="font-size:11px;color:#B8AFA1;letter-spacing:2px;text-transform:uppercase;margin-bottom:32px">Password Reset</div>
-      <div style="font-size:16px;color:#F5E9C9;margin-bottom:16px">Hi {safe_name},</div>
-      <p style="font-size:14px;color:#F5E9C9;line-height:22px;margin:0 0 20px">We received a request to reset the password on your Vaulted account. Tap the button below within the next 30 minutes to set a new password.</p>
-      <div style="margin:28px 0">
-        <a href="{reset_url}" style="display:inline-block;background:#C9A35B;color:#0F0B08;padding:14px 28px;border-radius:10px;text-decoration:none;font-weight:700;font-size:15px">Reset password</a>
-      </div>
-      <p style="font-size:12px;color:#B8AFA1;line-height:18px;margin:24px 0 0">Or paste this link into your browser:<br/><span style="color:#E6C879;word-break:break-all">{reset_url}</span></p>
-      <div style="border-top:1px solid #2a2320;margin:32px 0 16px"></div>
-      <p style="font-size:12px;color:#B8AFA1;line-height:18px;margin:0">If you didn't request this, you can safely ignore this email — your password will stay the same. Your Vaulted funds remain in your self-custody wallet; only the app login is affected.</p>
-      <p style="font-size:11px;color:#6d7a73;margin-top:24px">Vaulted · Phoenix Atlas Ltd · UK</p>
-    </div>
-    """
 
 
 @api.post("/auth/forgot-password")
@@ -1042,11 +666,6 @@ async def usdc_info(user=Depends(get_current_user)):
     }
 
 
-class SendUsdcIn(BaseModel):
-    to_address: str
-    amount_usdc: float = Field(gt=0)
-
-
 @api.post("/wallet/usdc/send")
 async def usdc_send(body: SendUsdcIn, user=Depends(get_current_user)):
     pk = user.get("eth_private_key")
@@ -1154,12 +773,6 @@ async def evm_chains(user=Depends(get_current_user)):
     return {"chains": out}
 
 
-class SendEvmUsdcIn(BaseModel):
-    chain: str  # "polygon" | "base" | "arbitrum" | "sepolia"
-    to_address: str
-    amount_usdc: float = Field(gt=0)
-
-
 @api.post("/wallet/evm/usdc/send")
 async def evm_usdc_send(body: SendEvmUsdcIn, user=Depends(get_current_user)):
     """Broadcast a USDC transfer on the specified EVM chain (Polygon / Base /
@@ -1229,11 +842,6 @@ async def evm_usdc_send(body: SendEvmUsdcIn, user=Depends(get_current_user)):
     await db.transactions.insert_one(record)
     record.pop("_id", None)
     return record
-
-
-class SendCoinIn(BaseModel):
-    to_address: str
-    amount: float = Field(gt=0)
 
 
 @api.post("/wallet/btc/send")
@@ -1402,12 +1010,6 @@ async def xlm_info(user=Depends(get_current_user)):
     }
 
 
-class SendXlmIn(BaseModel):
-    to_address: str
-    amount: float = Field(gt=0)
-    memo: Optional[str] = None
-
-
 @api.post("/wallet/xlm/send")
 async def xlm_send_route(body: SendXlmIn, user=Depends(get_current_user)):
     """Broadcast a native XLM payment via Stellar Horizon. Signs via stellar-sdk (ed25519)."""
@@ -1501,12 +1103,6 @@ async def xrp_info(user=Depends(get_current_user)):
     }
 
 
-class SendXrpIn(BaseModel):
-    to_address: str
-    amount: float = Field(gt=0)
-    memo: Optional[str] = None
-
-
 @api.post("/wallet/xrp/send")
 async def xrp_send_route(body: SendXrpIn, user=Depends(get_current_user)):
     """Broadcast a native XRP payment via the XRPL JSON-RPC. Signs via xrpl-py (secp256k1)."""
@@ -1596,12 +1192,6 @@ async def remit_corridors():
         "source_fiats": SOURCE_FIATS,
         "corridors": [{"code": code, **info} for code, info in CORRIDORS.items()],
     }
-
-
-class RemitQuoteIn(BaseModel):
-    source_fiat: str = Field(min_length=3, max_length=3)
-    amount: float = Field(gt=0)
-    destination_code: str = Field(min_length=2, max_length=2)
 
 
 @api.post("/remit/quote")
@@ -1724,15 +1314,6 @@ async def remit_quote(body: RemitQuoteIn, user=Depends(get_current_user)):
         ) if pick is None else None,
     }
     return quote
-
-
-class RemitSendIn(BaseModel):
-    source_fiat: str = Field(min_length=3, max_length=3)
-    amount: float = Field(gt=0)
-    destination_code: str = Field(min_length=2, max_length=2)
-    recipient_address: str  # crypto address the recipient controls (until Phase C off-ramp)
-    recipient_name: Optional[str] = None
-    memo: Optional[str] = None
 
 
 @api.post("/remit/send")
@@ -2138,235 +1719,6 @@ async def remit_fund(body: RemitFundIn, user=Depends(get_current_user)):
 
 
 # ============================================================================
-# OFF-RAMP / KOTANI PAY — USDC → M-Pesa (KES) direct payout to a phone number
-# ============================================================================
-# Automatically kicks in when a fiat-funded remit lands with destination
-# Kenya (KE). The Stripe payment is booked first (funds land in Vaulted's
-# balance); then Kotani Pay disburses KES directly to the recipient's
-# M-Pesa wallet. Runs in MOCK mode until KOTANI_API_KEY is set in .env —
-# flips to LIVE automatically on backend restart with a real key.
-# Docs: https://documentation.kotanipay.com/v3/flows/offramp-flow
-
-
-class OfframpQuoteIn(BaseModel):
-    """Ask Kotani for a live USDC→KES rate before initiating a payout.
-    Front-end calls this to show the recipient KES amount alongside our
-    own remit-quote number so we can flag divergence > 3%."""
-    amount_usd: float = Field(gt=0)
-    to_currency: str = Field(default="KES", min_length=3, max_length=3)
-
-
-class OfframpInitiateIn(BaseModel):
-    """Auth'd, non-Stripe path: user has already deposited USDC and wants
-    to push it straight to an M-Pesa recipient. Rare path — most sends go
-    through /remit/fund → automated off-ramp on Stripe callback."""
-    phone_number: str = Field(min_length=10, max_length=18)
-    recipient_name: str = Field(min_length=1, max_length=80)
-    amount_usd: float = Field(gt=0)
-    country: str = Field(default="KE", min_length=2, max_length=2)
-
-
-def _offramp_callback_url() -> str:
-    base = (APP_PUBLIC_URL or "https://vaulted-app.onrender.com").rstrip("/")
-    return f"{base}/api/offramp/callback"
-
-
-async def _trigger_kotani_offramp_for_remit(remit_tx: dict) -> dict:
-    """Called from _apply_checkout_session for KE-destined fiat-funded
-    remits. Books the Kotani off-ramp, updates the transaction row with
-    the Kotani reference id, and audits every terminal state.
-
-    Returns a summary dict for the /stripe/sync response. Failures are
-    non-fatal — the user still sees a successful send (money charged);
-    ops can retry the off-ramp from admin dashboard.
-    """
-    remit_ctx = (remit_tx.get("remit") or {})
-    if remit_ctx.get("destination_country_code") != "KE" and remit_ctx.get("destination_currency") != "KES":
-        return {"kotani": {"skipped": True, "reason": "destination not KES/M-Pesa"}}
-    phone = (remit_tx.get("counterparty") or "").strip()
-    recipient_name = (remit_tx.get("recipient_name") or "").strip() or "Vaulted Recipient"
-    src_amount_usd = float(remit_tx.get("fiat_value") or 0.0)
-    # Rough USD conversion from source fiat — we already have the tx's
-    # source in USD via the remit_quote earlier so this is a passable
-    # approximation for the off-ramp instruction.
-    kotani_res = await kotani.create_offramp(
-        phone_number=phone,
-        recipient_name=recipient_name,
-        amount_usdc=src_amount_usd,
-        estimated_kes=float(remit_ctx.get("destination_amount") or 0.0),
-        callback_url=_offramp_callback_url(),
-        country="KE",
-        currency="KES",
-        mobile_money_network="MPESA",
-    )
-    data = (kotani_res or {}).get("data") or {}
-    ref_id = data.get("referenceId")
-    kotani_status = data.get("status", "UNKNOWN")
-
-    # Persist the Kotani ref on the transaction so status polls + webhook
-    # correlation both work.
-    await db.transactions.update_one(
-        {"id": remit_tx["id"]},
-        {"$set": {
-            "kotani": {
-                "reference_id": ref_id,
-                "status": kotani_status,
-                "mode": "live" if kotani.live_mode() else "mock",
-                "initiated_at": iso(now_utc()),
-                "callback_url": _offramp_callback_url(),
-            },
-            # Success-status transactions: flip receipt status to "settled"
-            # for mock (deterministic) — live mode waits for webhook.
-            **({"status": "settled"} if (kotani_status == "SUCCESS" and not kotani.live_mode()) else {}),
-        }},
-    )
-
-    audit_event = EventType.OFFRAMP_MPESA_INITIATED
-    if not kotani_res.get("success"):
-        audit_event = EventType.OFFRAMP_MPESA_FAILED
-    try:
-        user_doc = await db.users.find_one({"id": remit_tx["user_id"]}, {"_id": 0})
-        await audit_write(db, audit_event, user=user_doc, data={
-            "tx_id": remit_tx["id"],
-            "kotani_reference_id": ref_id,
-            "kotani_status": kotani_status,
-            "kotani_mode": "live" if kotani.live_mode() else "mock",
-            "phone_masked": kotani.mask_phone(phone),
-            "amount_kes": remit_ctx.get("destination_amount"),
-            "amount_usd": src_amount_usd,
-        })
-    except Exception as e:  # noqa: BLE001
-        logger.warning("kotani audit_write failed: %s", e)
-
-    return {"kotani": {"reference_id": ref_id, "status": kotani_status, "mode": "live" if kotani.live_mode() else "mock"}}
-
-
-@api.get("/offramp/health")
-async def offramp_health(_admin=Depends(require_admin)):
-    """Admin-only sanity check — confirms Kotani auth works (or that we're
-    intentionally in mock mode). Not for end users."""
-    res = await kotani.health()
-    return {"kotani": res, "config": kotani.diagnostic_info()}
-
-
-@api.post("/offramp/mpesa/quote")
-async def offramp_mpesa_quote(body: OfframpQuoteIn, user=Depends(get_current_user)):
-    """Show the user what KES they'll get for a given USD amount. Used
-    by the frontend as a secondary rate check next to our own remit quote —
-    if Kotani's rate diverges > 3%, we warn the user."""
-    res = await kotani.offramp_rate(
-        from_token="USDC",
-        to_currency=body.to_currency,
-        amount_usd=body.amount_usd,
-    )
-    return {
-        "kotani": res,
-        "mode": "live" if kotani.live_mode() else "mock",
-    }
-
-
-@api.get("/offramp/mpesa/status/{reference_id}")
-async def offramp_mpesa_status(reference_id: str, user=Depends(get_current_user)):
-    """Poll a single off-ramp. Also cross-checks the tx belongs to the
-    caller (or is admin) to prevent enumeration."""
-    tx = await db.transactions.find_one(
-        {"$or": [
-            {"id": reference_id},
-            {"kotani.reference_id": reference_id},
-        ]},
-        {"_id": 0},
-    )
-    if not tx:
-        raise HTTPException(status_code=404, detail="No such off-ramp reference")
-    if tx.get("user_id") != user["id"]:
-        # Allow admins through
-        if not user.get("is_admin"):
-            raise HTTPException(status_code=403, detail="Not your transaction")
-    kotani_ref = (tx.get("kotani") or {}).get("reference_id") or reference_id
-    res = await kotani.offramp_status(kotani_ref)
-    return {"kotani": res, "tx": tx}
-
-
-@api.post("/offramp/callback")
-async def offramp_callback(request: Request):
-    """Webhook endpoint — Kotani Pay POSTs terminal state here after fiat
-    disbursement. Signature verification is enforced when
-    KOTANI_WEBHOOK_SECRET is configured.
-
-    Terminal states we handle:
-    - SUCCESS: mark tx settled, record M-Pesa receipt
-    - FAILED: mark tx failed, ops will follow up
-    - REFUNDED / REFUND_FAILED: informational only for the tx timeline
-    """
-    payload = await request.body()
-    signature = request.headers.get("X-Kotani-Signature")
-    event_type = request.headers.get("X-Kotani-Event", "callback")
-
-    if not kotani.verify_webhook_signature(payload, signature):
-        await audit_write(db, EventType.OFFRAMP_WEBHOOK_INVALID_SIGNATURE, user=None, data={
-            "event_type": event_type,
-            "sig_present": bool(signature),
-        })
-        raise HTTPException(status_code=401, detail="Invalid webhook signature")
-
-    try:
-        event = json.loads(payload.decode())
-    except Exception as e:  # noqa: BLE001
-        raise HTTPException(status_code=400, detail=f"Invalid JSON: {e}") from e
-
-    # Kotani sends either the raw tx object (unsigned mode) or a
-    # {event, data} envelope (signed mode). Handle both.
-    if isinstance(event, dict) and isinstance(event.get("data"), dict):
-        data = event["data"]
-    elif isinstance(event, dict):
-        # Unsigned mode — the whole payload is the tx object
-        data = event
-    else:
-        raise HTTPException(status_code=400, detail="Payload must be a JSON object")
-
-    ref_id = data.get("referenceId") or data.get("reference_id")
-    kotani_status = (data.get("status") or "").upper()
-    if not ref_id or not kotani_status:
-        raise HTTPException(status_code=400, detail="Payload missing referenceId or status")
-
-    tx = await db.transactions.find_one({"kotani.reference_id": ref_id}, {"_id": 0})
-    if not tx:
-        # Kotani retries webhooks; a stray one is not fatal — log + 200.
-        logger.warning("[kotani-webhook] no local tx for referenceId=%s", ref_id)
-        return {"ok": True, "matched": False}
-
-    updates: dict = {"kotani.status": kotani_status, "kotani.updated_at": iso(now_utc())}
-    audit_event = None
-    if kotani_status == "SUCCESS":
-        updates["status"] = "settled"
-        updates["kotani.mpesa_receipt"] = (data.get("receipt") or {}).get("mpesaReceipt")
-        updates["kotani.settled_at"] = data.get("settledAt") or iso(now_utc())
-        audit_event = EventType.OFFRAMP_MPESA_SUCCESS
-    elif kotani_status == "FAILED":
-        updates["status"] = "failed"
-        updates["kotani.failure_reason"] = data.get("failureReason") or data.get("message")
-        audit_event = EventType.OFFRAMP_MPESA_FAILED
-    elif kotani_status in ("REFUNDED", "REFUND_PENDING"):
-        updates["status"] = "refunded" if kotani_status == "REFUNDED" else "processing"
-        audit_event = EventType.OFFRAMP_MPESA_REFUNDED
-
-    await db.transactions.update_one({"id": tx["id"]}, {"$set": updates})
-
-    if audit_event:
-        user_doc = await db.users.find_one({"id": tx["user_id"]}, {"_id": 0})
-        try:
-            await audit_write(db, audit_event, user=user_doc, data={
-                "tx_id": tx["id"],
-                "kotani_reference_id": ref_id,
-                "kotani_status": kotani_status,
-                "mpesa_receipt": (data.get("receipt") or {}).get("mpesaReceipt"),
-            })
-        except Exception as e:  # noqa: BLE001
-            logger.warning("kotani webhook audit_write failed: %s", e)
-
-    return {"ok": True, "matched": True, "status": kotani_status}
-
-# ============================================================================
 # KYC / IDENTITY — Stripe Identity + OpenSanctions integration
 # ============================================================================
 KYC_RETURN_URL = os.environ.get("KYC_RETURN_URL") or (
@@ -2480,15 +1832,6 @@ async def kyc_debug(user=Depends(get_current_user)):
             },
         }
     return summary
-
-
-class KycSessionIn(BaseModel):
-    """Optional body for /kyc/session.
-    - force_new: cancels any existing session and creates a fresh one. Used by
-      the frontend's "Start over" escape hatch when a user is stuck retrying
-      the same failed document scan.
-    """
-    force_new: bool = False
 
 
 @api.post("/kyc/session")
@@ -2814,273 +2157,6 @@ async def _apply_identity_requires_input(session_obj: dict):
             "id_number_error_code": (id_number_error or {}).get("code"),
         },
     )
-
-
-# ============================================================================
-# ADMIN — Compliance health & manual screening tools
-# ============================================================================
-@api.get("/admin/compliance/health")
-async def admin_compliance_health(_admin=Depends(require_admin)):
-    """Ping OpenSanctions with a canary query so operators can verify at a
-    glance whether sanctions screening is actually live. Also returns the
-    current integration config (key present, strict mode, URL, scopes)."""
-    health = await opensanctions_health()
-    return {
-        "opensanctions": {
-            "config": opensanctions_config_status(),
-            "health": health,
-        },
-        "corridor_blocklist": {
-            "count": len(COUNTRY_BLOCKLIST),
-            "codes": sorted(COUNTRY_BLOCKLIST.keys()),
-        },
-        "checked_at": iso(now_utc()),
-    }
-
-
-# ============================================================================
-# MANUAL EDD (Enhanced Due Diligence) — admin-triggered KYC approval
-# ============================================================================
-# Stripe Identity's automated face-match / document-check algorithms can't
-# verify a small proportion of legitimate users (algorithm ceiling — ~3-5%
-# of users, often those with older ID photos, non-Western features the model
-# was under-trained on, or age-progression edge cases). MLR 2017 Reg 33
-# explicitly allows manual EDD in these cases, provided the reviewing admin
-# retains records of the documents reviewed + the reason for manual approval.
-#
-# This endpoint is the digital lever for that: an admin (identified by
-# ADMIN_EMAILS on Render) records the EDD outcome, and the user's KYC tier
-# is bumped instantly. Every approval is written to the immutable audit log.
-
-@api.post("/admin/kyc/manual-edd-approve")
-async def admin_kyc_manual_edd_approve(
-    body: ManualEddApproveIn,
-    admin=Depends(require_admin),
-):
-    """Manually mark a user as KYC-verified after reviewing their identity
-    documents offline. Records the reviewing admin + reason in audit trail.
-
-    Provide either user_id OR user_email. Returns the updated user summary.
-    """
-    if not body.user_id and not body.user_email:
-        raise HTTPException(status_code=400, detail="Provide user_id or user_email")
-
-    query: dict = {}
-    if body.user_id:
-        query["id"] = body.user_id
-    else:
-        query["email"] = (body.user_email or "").lower().strip()
-
-    target = await db.users.find_one(query, {"_id": 0})
-    if not target:
-        raise HTTPException(status_code=404, detail="User not found")
-
-    # Preserve any existing KYC context so audit can reconstruct the "before"
-    prior_kyc = target.get("kyc") or {}
-    prior_state = {
-        "identity_verification_status": prior_kyc.get("identity_verification_status"),
-        "tier": prior_kyc.get("tier"),
-        "identity_last_error_code": (prior_kyc.get("identity_last_error") or {}).get("code"),
-    }
-
-    # Update user KYC state — mark verified + set target tier + record EDD context
-    new_kyc = {
-        **prior_kyc,
-        "identity_verification_status": "verified",
-        "tier": body.target_tier,
-        "verified_at": iso(now_utc()),
-        "manual_edd": {
-            "approved_by_admin_email_hash": hashlib.sha256(
-                (admin.get("email") or "").lower().encode()
-            ).hexdigest()[:12],
-            "approved_at": iso(now_utc()),
-            "edd_reference": body.edd_reference.strip(),
-            "edd_reason": body.edd_reason.strip(),
-            "documents_verified": body.documents_verified,
-        },
-    }
-    # Clear the residual "last_error" so the frontend banner disappears
-    new_kyc.pop("identity_last_error", None)
-
-    # NOTE: new_kyc already has `identity_last_error` popped above, so a plain
-    # $set on the full kyc document is enough. Combining $set on `kyc` with a
-    # $unset on `kyc.identity_last_error` in a single update raises a
-    # "conflict at 'kyc'" write error in MongoDB.
-    await db.users.update_one(
-        {"id": target["id"]},
-        {"$set": {"kyc": new_kyc}},
-    )
-
-    # Write to immutable audit trail — every field required for FCA review
-    await audit_write(db, EventType.KYC_MANUAL_EDD_APPROVED, user=target, data={
-        "target_user_id": target["id"],
-        "target_user_email_hash": hashlib.sha256((target.get("email") or "").lower().encode()).hexdigest()[:12],
-        "reviewing_admin_email_hash": hashlib.sha256((admin.get("email") or "").lower().encode()).hexdigest()[:12],
-        "target_tier": body.target_tier,
-        "edd_reference": body.edd_reference,
-        "edd_reason": body.edd_reason,
-        "documents_verified": body.documents_verified,
-        "prior_state": prior_state,
-        "regulatory_basis": "UK MLR 2017 Regulation 33 — Enhanced Due Diligence",
-    })
-
-    # Trigger any post-KYC hooks (e.g. referral reward credit)
-    try:
-        await credit_referral_on_kyc(db, target["id"])
-    except Exception as e:  # noqa: BLE001
-        logger.warning("credit_referral_on_kyc failed for %s: %s", target["id"], e)
-
-    refreshed = await db.users.find_one({"id": target["id"]}, {"_id": 0})
-    return {"ok": True, "user": public_user(refreshed)}
-
-
-class AdminScreenIn(BaseModel):
-    name: str = Field(min_length=1, max_length=200)
-    dob: Optional[str] = None       # ISO YYYY-MM-DD
-    country: Optional[str] = None    # ISO alpha-2
-
-
-@api.post("/admin/compliance/screen")
-async def admin_compliance_screen(body: AdminScreenIn, admin=Depends(require_admin)):
-    """Manually screen a name/DOB/country against OpenSanctions. Useful for
-    testing after enabling a new API key, and for ad-hoc SAR investigations.
-    Returns the full raw screen result (including degraded/reason flags)."""
-    result = await screen_sanctions(body.name, dob=body.dob, country=body.country)
-    await audit_write(db, EventType.ADMIN_MANUAL_SCREEN, user=admin, data={
-        "screened_name_hash": hashlib.sha256((body.name or "").strip().lower().encode()).hexdigest()[:12],
-        "screened_country": body.country,
-        "has_dob": bool(body.dob),
-        "matched": result.get("matched"),
-        "degraded": result.get("degraded", False),
-        "highest_score": result.get("highest_score"),
-    })
-    return {"input": body.model_dump(), "result": result}
-
-
-# ============================================================================
-# ADMIN — Audit-log endpoint (FCA / MLR 2017 record-keeping)
-# ============================================================================
-@api.get("/admin/audit-log")
-async def admin_audit_log(
-    _admin=Depends(require_admin),
-    event_type: Optional[str] = None,
-    user_id: Optional[str] = None,
-    from_iso: Optional[str] = None,
-    to_iso: Optional[str] = None,
-    limit: int = 50,
-    cursor: Optional[str] = None,
-):
-    """Cursor-paginated audit event feed. Supports filtering by event_type,
-    user_id, and timestamp range (ISO 8601). Newest first. Meant to be
-    consumed by ops dashboards, compliance officers, and (eventually) a
-    scheduled export job that ships events to a WORM (write-once-read-many)
-    archival store for the 5-year MLR 2017 retention requirement."""
-    if event_type and event_type not in ALL_EVENT_TYPES:
-        raise HTTPException(status_code=400, detail={
-            "error": "unknown_event_type",
-            "provided": event_type,
-            "allowed": sorted(ALL_EVENT_TYPES),
-        })
-    return await audit_query(
-        db,
-        event_type=event_type,
-        user_id=user_id,
-        from_iso=from_iso,
-        to_iso=to_iso,
-        limit=limit,
-        cursor=cursor,
-    )
-
-
-@api.get("/admin/audit-log/event-types")
-async def admin_audit_event_types(_admin=Depends(require_admin)):
-    """Enumerate every event_type the audit system knows how to write. Useful
-    for populating filter dropdowns in an ops UI without hardcoding."""
-    return {"event_types": sorted(ALL_EVENT_TYPES)}
-
-
-@api.get("/admin/audit-log/user/{user_id}")
-async def admin_audit_log_for_user(user_id: str, _admin=Depends(require_admin)):
-    """Compliance-file view for a single user. Returns every event we've
-    recorded for that user, ordered chronologically, plus counts by
-    event_type. Consumed by SAR (Suspicious Activity Report) filings and
-    ad-hoc regulator requests."""
-    return await audit_summarize_user(db, user_id)
-
-
-# ============================================================================
-# REFERRAL LOOP — invite-link viral growth + £5 GBP credit
-# ============================================================================
-REFERRAL_LINK_BASE = os.environ.get("REFERRAL_LINK_BASE") or (
-    APP_PUBLIC_URL.rstrip("/") if APP_PUBLIC_URL else "https://app.phoenix-atlas.com"
-)
-
-
-@api.get("/referrals/me")
-async def referrals_me(user=Depends(get_current_user)):
-    """Everything the /referral screen needs in one call: my code, my
-    shareable link, my credit balance, and my referral history."""
-    code = await ensure_referral_code(db, user)
-    balance = await get_balance_gbp(db, user["id"])
-    summary = await referral_summary(db, user["id"])
-    share_link = f"{REFERRAL_LINK_BASE}/?ref={code}"
-    return {
-        "referral_code": code,
-        "share_link": share_link,
-        "share_message": (
-            f"Send money home for less on Vaulted. Sign up with my code {code} "
-            f"and we both get £{REFERRAL_REWARD_GBP:.0f} credit."
-        ),
-        "credit_balance_gbp": balance,
-        "reward_per_side_gbp": REFERRAL_REWARD_GBP,
-        "signup_bonus_gbp": REFERRAL_SIGNUP_BONUS_GBP,
-        **summary,
-    }
-
-
-@api.get("/referrals/validate/{code}")
-async def referrals_validate(code: str):
-    """Public endpoint used by the signup form to preview who invited them —
-    returns just enough to build trust without leaking full PII."""
-    from referrals import user_by_referral_code
-    referrer = await user_by_referral_code(db, code)
-    if not referrer:
-        return {"valid": False}
-    name = (referrer.get("name") or "").strip()
-    # Show first name + last initial (Sarah B.) at most
-    parts = name.split()
-    display = (parts[0] if parts else "A friend") + (
-        f" {parts[1][:1]}." if len(parts) > 1 and parts[1] else ""
-    )
-    return {
-        "valid": True,
-        "referrer_name_masked": display,
-        "reward_per_side_gbp": REFERRAL_REWARD_GBP,
-    }
-
-
-@api.get("/credit/balance")
-async def credit_balance(user=Depends(get_current_user)):
-    """Current GBP credit balance for the caller."""
-    balance = await get_balance_gbp(db, user["id"])
-    return {"balance_gbp": balance}
-
-
-@api.get("/credit/ledger")
-async def credit_ledger(user=Depends(get_current_user), limit: int = 50):
-    """Paginated credit ledger — newest first. Includes source labels the
-    frontend can render (referral_reward, referral_signup_bonus,
-    remit_fee_offset, admin_grant)."""
-    limit = max(1, min(200, int(limit)))
-    rows = await db.credit_ledger.find(
-        {"user_id": user["id"]}, {"_id": 0},
-    ).sort("created_at", -1).limit(limit).to_list(length=limit)
-    return {"entries": rows, "count": len(rows)}
-
-
-class SendEthIn(BaseModel):
-    to_address: str
-    amount_eth: float = Field(gt=0)
 
 
 @api.post("/wallet/eth/send")
@@ -4209,7 +3285,7 @@ async def _apply_checkout_session(session_obj: dict) -> dict:
         kotani_result: dict = {}
         try:
             if (metadata.get("destination_code") or "").upper() == "KE":
-                kotani_result = await _trigger_kotani_offramp_for_remit(record)
+                kotani_result = await trigger_kotani_offramp_for_remit(record)
                 # Reload the record so the returned tx has the fresh kotani state
                 fresh = await db.transactions.find_one({"id": record["id"]}, {"_id": 0})
                 if fresh:
@@ -4385,6 +3461,18 @@ async def create_call_room(body: CallRoomIn, user=Depends(get_current_user)):
     return {"configured": True, "room_url": room["url"], "token": token, "name": room_name}
 
 
+# --- P2 refactor: extracted routers ---------------------------------------
+# Each router is a self-contained APIRouter defined in /routers/*.py. Mount
+# them onto the top-level /api router BEFORE app.include_router(api) so
+# their routes get the /api prefix (and appear in OpenAPI, in the same
+# position they had before extraction).
+from routers.admin import router as admin_router
+from routers.referrals import router as referrals_router
+from routers.offramp import router as offramp_router, trigger_kotani_offramp_for_remit
+api.include_router(admin_router)
+api.include_router(referrals_router)
+api.include_router(offramp_router)
+
 app.include_router(api)
 
 
@@ -4419,60 +3507,15 @@ async def shutdown_db_client():
 
 
 # ---------- Resend domain auto-poller -----------------------------------------
-# Periodically checks Resend for the target domain (e.g. phoenix-atlas.com).
-# As soon as it flips to "verified", we promote the sender by populating
-# `_resolved_resend_from`. No env-file rewriting required.
-async def _resend_domain_poller():
-    global _resolved_resend_from
-    if not RESEND_API_KEY:
-        logger.info("[resend-poller] no API key set; skipping")
-        return
-    interval = int(os.environ.get("RESEND_POLL_INTERVAL_SEC", "300"))  # 5 min default
-    backoff_until = 0.0
-    while True:
-        try:
-            now = asyncio.get_event_loop().time()
-            if now >= backoff_until:
-                async with httpx.AsyncClient(timeout=10) as cx:
-                    r = await cx.get(
-                        "https://api.resend.com/domains",
-                        headers={"Authorization": f"Bearer {RESEND_API_KEY}"},
-                    )
-                if r.status_code == 200:
-                    for d in (r.json() or {}).get("data", []):
-                        if d.get("name") == RESEND_TARGET_DOMAIN and d.get("status") == "verified":
-                            if _resolved_resend_from != RESEND_TARGET_FROM:
-                                _resolved_resend_from = RESEND_TARGET_FROM
-                                logger.info(
-                                    "[resend-poller] %s verified — sender promoted to %s",
-                                    RESEND_TARGET_DOMAIN, RESEND_TARGET_FROM,
-                                )
-                            return  # done forever
-                    # not verified yet, trigger a re-check from Resend's side
-                    domain_id = next(
-                        (d.get("id") for d in (r.json() or {}).get("data", []) if d.get("name") == RESEND_TARGET_DOMAIN),
-                        None,
-                    )
-                    if domain_id:
-                        async with httpx.AsyncClient(timeout=10) as cx2:
-                            await cx2.post(
-                                f"https://api.resend.com/domains/{domain_id}/verify",
-                                headers={"Authorization": f"Bearer {RESEND_API_KEY}"},
-                            )
-                elif r.status_code in (401, 403):
-                    logger.warning("[resend-poller] auth failed (%s); stopping", r.status_code)
-                    return
-                else:
-                    backoff_until = now + 60  # 1 min cool-down on transient errors
-        except Exception as e:  # pragma: no cover — best-effort
-            logger.warning("[resend-poller] iteration failed: %s", e)
-        await asyncio.sleep(interval)
+# The poller lives in emails.py (extracted during the P2 refactor). We just
+# schedule it from here as an @app.on_event("startup") hook so it fires as
+# part of FastAPI's normal startup sequence.
 
 
 @app.on_event("startup")
 async def _start_resend_poller():
     # Fire-and-forget; FastAPI will keep this task alive for the process lifetime.
-    asyncio.create_task(_resend_domain_poller())
+    start_resend_domain_poller()
 
 
 @app.on_event("startup")
@@ -4502,12 +3545,6 @@ _push_client = httpx.AsyncClient(
     headers={"X-Push-Key": EMERGENT_PUSH_KEY},
     timeout=10.0,
 )
-
-
-class RegisterPushBody(BaseModel):
-    user_id: str
-    platform: str
-    device_token: str
 
 
 @app.post("/api/register-push", status_code=201)
