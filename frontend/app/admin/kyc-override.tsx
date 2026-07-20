@@ -27,7 +27,10 @@ import { api } from "@/src/lib/api";
 import { useAuth } from "@/src/lib/auth";
 import { colors, spacing, radius } from "@/src/lib/theme";
 
-type Tier = "basic" | "kyc_verified" | "enhanced";
+// Must match backend compliance.TIER_LIMITS keys exactly. `unverified` is not
+// selectable here — that's the default anyway, and manual EDD only makes sense
+// when upgrading a user out of it.
+type Tier = "kyc_lite" | "kyc_full";
 type DocOption = { id: string; label: string };
 const DOC_OPTIONS: DocOption[] = [
   { id: "passport", label: "Passport" },
@@ -44,7 +47,7 @@ export default function AdminKycOverride() {
   const router = useRouter();
   const { user } = useAuth();
   const [targetEmail, setTargetEmail] = useState<string>(user?.email || "");
-  const [tier, setTier] = useState<Tier>("kyc_verified");
+  const [tier, setTier] = useState<Tier>("kyc_full");
   const [reference, setReference] = useState("");
   const [reason, setReason] = useState("");
   const [selectedDocs, setSelectedDocs] = useState<Set<string>>(new Set());
@@ -170,7 +173,7 @@ export default function AdminKycOverride() {
 
           <Text style={s.label}>Target tier</Text>
           <View style={s.tierRow}>
-            {(["basic", "kyc_verified", "enhanced"] as Tier[]).map((tt) => (
+            {(["kyc_lite", "kyc_full"] as Tier[]).map((tt) => (
               <Pressable
                 key={tt}
                 testID={`edd-tier-${tt}`}
@@ -178,7 +181,7 @@ export default function AdminKycOverride() {
                 style={[s.tierChip, tier === tt && s.tierChipActive]}
               >
                 <Text style={[s.tierChipText, tier === tt && s.tierChipTextActive]}>
-                  {tt === "basic" ? "Basic (£100/tx)" : tt === "kyc_verified" ? "Verified (£1k/tx · £5k/mo)" : "Enhanced (£15k+)"}
+                  {tt === "kyc_lite" ? "KYC Verified (£1k/tx · £5k/mo)" : "Enhanced KYC (£10k/tx · £50k/mo)"}
                 </Text>
               </Pressable>
             ))}

@@ -279,7 +279,10 @@ class ManualEddApproveIn(BaseModel):
     """
     user_id: Optional[str] = None
     user_email: Optional[EmailStr] = None
-    target_tier: Literal["basic", "kyc_verified", "enhanced"] = "kyc_verified"
+    # Must match compliance.TIER_LIMITS keys exactly, otherwise get_user_tier()
+    # falls back to DEFAULT_TIER ("unverified") and the approval has no visible
+    # effect. `kyc_full` is the default for manual EDD (Enhanced Due Diligence).
+    target_tier: Literal["kyc_lite", "kyc_full"] = "kyc_full"
     edd_reference: str = Field(min_length=6, max_length=64)  # ticket / doc-store ref
     edd_reason: str = Field(min_length=8, max_length=500)     # why manual approval was warranted
     documents_verified: list[str] = Field(default_factory=list)  # e.g. ["passport", "utility_bill_2024_06"]
