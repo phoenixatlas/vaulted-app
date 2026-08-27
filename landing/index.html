@@ -4,13 +4,24 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <meta name="theme-color" content="#0A0807">
-  <title>Vaulted — Send Money Worldwide from £0.50 · Self-Custody Crypto Wallet</title>
-  <meta name="description" content="Send money home in seconds — from £0.50. Cross-border remittance across 8 countries including Kenya, Nigeria, Ghana, India, Philippines, Senegal, Mexico. Self-custody crypto wallet with encrypted chat and video calls. Your keys. Your money.">
-  <meta property="og:title" content="Vaulted — Send Money Worldwide from £0.50">
-  <meta property="og:description" content="Cross-border remittance in seconds, from £0.50. Self-custody wallet with encrypted chat + video calls. Six chains. Eight corridors.">
+  <title>Vaulted — UK Fintech in Build · Cross-Border Remittance & Self-Custody Crypto Wallet (Waitlist)</title>
+  <meta name="description" content="Vaulted is a UK fintech in pre-launch. Cross-border remittance across 8 corridors backed by a self-custody crypto wallet. Currently in waitlist mode ahead of FCA authorization — not open for customer transactions.">
+  <meta property="og:title" content="Vaulted — UK Fintech in Build (Waitlist)">
+  <meta property="og:description" content="Fiat-first cross-border remittance backed by a self-custody wallet. Currently in waitlist mode ahead of FCA authorization.">
   <meta property="og:url" content="https://phoenix-atlas.com">
   <meta property="og:type" content="website">
   <meta name="twitter:card" content="summary_large_image">
+  <meta name="robots" content="index, follow">
+  <!--
+    P0 legal / regulatory rework (July 2026):
+    - Reframed hero + CTAs to "join the waitlist" / "preview" pending FCA authorization
+    - Added persistent pre-authorization banner (required until authorized)
+    - Added FCA crypto financial-promotions warning (mandatory per Oct 2023 rules)
+    - Labelled all £ / FX example amounts as illustrative
+    - Added registered company disclosures + risk-disclosure link in footer
+    Do NOT strip these disclosures without a written go-ahead from a UK fintech lawyer.
+  -->
+
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:wght@500;600;700&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
@@ -150,6 +161,72 @@
     .btn-large { padding: 16px 36px; font-size: 16px; }
     @media (max-width: 720px) {
       .nav-links a:not(.btn) { display: none; }
+    }
+
+    /* -----------------------------------------------------------------
+       PRE-AUTHORIZATION BANNER (required until FCA authorized)
+       Sits above the fixed <header> and pushes content down. Must remain
+       persistent, not dismissible, on every page while Vaulted is in
+       waitlist / preview mode.
+       ----------------------------------------------------------------- */
+    .preauth-banner {
+      position: fixed; top: 0; left: 0; right: 0; z-index: 101;
+      background: #2a1e0a;
+      border-bottom: 1px solid rgba(201, 163, 91, 0.35);
+      color: #F5E9C9;
+      font-size: 12px;
+      line-height: 1.5;
+      padding: 10px 16px;
+      text-align: center;
+    }
+    .preauth-banner strong { color: var(--gold-light); font-weight: 600; }
+    .preauth-banner a {
+      color: var(--gold-light);
+      text-decoration: underline;
+      text-underline-offset: 2px;
+    }
+    /* Push everything below the fixed banner + header. Header CSS uses
+       top:0 - override to sit under the banner via padding on <body>. */
+    body { padding-top: 44px; }
+    header { top: 44px; }
+    @media (max-width: 720px) {
+      .preauth-banner { font-size: 11px; padding: 8px 12px; }
+      body { padding-top: 56px; }
+      header { top: 56px; }
+    }
+
+    /* Full-width FCA cryptoasset financial-promotions warning
+       Mandatory wording per FCA rules (Oct 2023). Do not paraphrase. */
+    .fca-crypto-warning {
+      background: #1a120a;
+      border: 1px solid rgba(201, 163, 91, 0.25);
+      border-radius: 12px;
+      padding: 18px 20px;
+      margin: 32px auto;
+      max-width: 900px;
+      color: var(--text-primary);
+      font-size: 13px;
+      line-height: 1.55;
+    }
+    .fca-crypto-warning .fca-label {
+      display: inline-block;
+      font-size: 10px; font-weight: 700;
+      color: #FFB84D;
+      letter-spacing: 2px; text-transform: uppercase;
+      margin-bottom: 8px;
+    }
+    .fca-crypto-warning a {
+      color: var(--gold-light);
+      text-decoration: underline;
+      text-underline-offset: 2px;
+    }
+
+    /* Small "illustrative only" caption used under example amounts */
+    .illustrative-note {
+      font-size: 11px;
+      color: var(--text-muted);
+      font-style: italic;
+      margin-top: 4px;
     }
 
     /* HERO */
@@ -589,20 +666,27 @@
 </head>
 <body>
 
+  <!-- PRE-AUTHORIZATION BANNER (persistent, non-dismissible) -->
+  <div class="preauth-banner" role="alert" aria-live="polite">
+    <strong>Vaulted is a UK fintech in build.</strong>
+    Live money-transfer services will launch upon receipt of applicable authorizations from the Financial Conduct Authority.
+    Not currently open for customer transactions.
+    <a href="/risk-disclosure.html">Read the risk disclosure &rarr;</a>
+  </div>
+
   <!-- HEADER -->
   <header>
     <div class="container nav">
       <div>
         <div class="wordmark">Vaulted</div>
-        <div class="wordmark-tag">Self-Custody · Encrypted · Sovereign</div>
+        <div class="wordmark-tag">Self-Custody &middot; Encrypted &middot; Sovereign</div>
       </div>
       <div class="nav-links">
         <a href="#features">Features</a>
-        <a href="#corridors">Send Money</a>
-        <a href="#features">Features</a>
+        <a href="#corridors">Corridors</a>
         <a href="#pricing">Pricing</a>
         <a href="#security">Security</a>
-        <a class="btn btn-launch" href="https://app.phoenix-atlas.com">Launch App →</a>
+        <a class="btn btn-launch" href="https://app.phoenix-atlas.com">Preview app &rarr;</a>
       </div>
     </div>
   </header>
@@ -610,17 +694,17 @@
   <!-- HERO -->
   <section class="hero">
     <div class="container">
-      <div class="eyebrow">Cross-border remittance · Six chains · Eight corridors</div>
-      <h1>Send £50 home in 5 seconds. <span class="gold-text">Anywhere</span>. Fees from £0.50.</h1>
-      <p class="hero-sub">Vaulted turns self-custody crypto into a fiat-first remittance app. Pick a country, enter pounds, we auto-pick the cheapest chain (XLM · XRP · USDC on Polygon/Base/Arbitrum). No middlemen. No exit fees. Your keys throughout.</p>
+      <div class="eyebrow">Cross-border remittance &middot; UK fintech in build</div>
+      <h1>Send &pound;50 home in 5 seconds. <span class="gold-text">Coming soon</span> to the UK.</h1>
+      <p class="hero-sub">Vaulted is building a fiat-first cross-border remittance app backed by a self-custody crypto wallet. Pick a country, enter pounds, we&rsquo;ll auto-pick the cheapest chain (XLM &middot; XRP &middot; USDC on Polygon/Base/Arbitrum). Currently in waitlist mode ahead of FCA authorization.</p>
       <div class="hero-cta-row">
-        <a class="btn btn-primary btn-large" href="https://app.phoenix-atlas.com">Send money now →</a>
-        <a class="btn btn-ghost btn-large" href="#corridors">See corridors</a>
+        <a class="btn btn-primary btn-large" href="#waitlist">Join the waitlist &rarr;</a>
+        <a class="btn btn-ghost btn-large" href="https://app.phoenix-atlas.com">Preview the app</a>
       </div>
       <div class="hero-chips">
-        <div class="chip">🇰🇪 Kenya · KES</div>
-        <div class="chip">🇳🇬 Nigeria · NGN</div>
-        <div class="chip">🇮🇳 India · INR</div>
+        <div class="chip">&#127477;&#127472; Kenya &middot; KES</div>
+        <div class="chip">&#127475;&#127468; Nigeria &middot; NGN</div>
+        <div class="chip">&#127470;&#127475; India &middot; INR</div>
         <div class="chip">🇵🇭 Philippines · PHP</div>
         <div class="chip">🇸🇳 Senegal · XOF</div>
         <div class="chip">🇬🇭 Ghana · GHS</div>
@@ -633,9 +717,9 @@
   <section id="corridors" style="background: var(--bg-elevated);">
     <div class="container">
       <div class="corridors-hero">
-        <div class="section-eyebrow">Live corridors</div>
-        <div class="corridor-headline">Send money to <span class="italic">eight countries</span> in seconds.</div>
-        <p class="section-sub">Fiat-first UX. Enter pounds, dollars or euros — recipient gets their local currency. Vaulted auto-picks the cheapest chain (XLM, XRP, or USDC on Polygon / Base / Arbitrum) so you never pay Ethereum L1 gas.</p>
+        <div class="section-eyebrow">Planned corridors</div>
+        <div class="corridor-headline">Sending money to <span class="italic">eight countries</span>, once we&rsquo;re live.</div>
+        <p class="section-sub">Fiat-first UX. Enter pounds, dollars or euros &mdash; recipient gets their local currency. Vaulted will auto-pick the cheapest chain (XLM, XRP, or USDC on Polygon / Base / Arbitrum) so you never pay Ethereum L1 gas. Amounts below are <strong>illustrative examples</strong>, not live quotes.</p>
       </div>
       <div class="corridors-grid">
         <a class="corridor-card" href="https://app.phoenix-atlas.com">
@@ -696,8 +780,14 @@
         </a>
       </div>
       <p style="text-align:center; color: var(--text-muted); font-size: 12px; margin-top: 40px; max-width: 780px; margin-left: auto; margin-right: auto;">
-        Amounts shown are live FX examples for a £50 send. Rates refresh every 6 hours from open exchange rate feeds. Fees shown are the Vaulted service fee at £50; Vault Pro cuts that by 50%. Phase C off-ramp partners (M-Pesa, MoMo, Wave, UPI) roll out through 2026 — during Phase B the recipient receives crypto to their own wallet.
+        <strong>Illustrative amounts only</strong> &mdash; not a live quote and not a promise of execution. FX examples are refreshed periodically from open exchange rate feeds. Fees shown are the target Vaulted service fee at &pound;50; Vault Pro is planned to cut that by 50%. Off-ramp partners (M-Pesa, MoMo, Wave, UPI) are in integration; live availability is contingent on partner go-live and applicable authorizations.
       </p>
+
+      <!-- FCA cryptoasset financial promotions warning (mandatory, Oct 2023 rules) -->
+      <div class="fca-crypto-warning" role="note">
+        <div class="fca-label">Risk warning &middot; Cryptoassets</div>
+        Don&rsquo;t invest unless you&rsquo;re prepared to lose all the money you invest. This is a high-risk investment and you should not expect to be protected if something goes wrong. <a href="/risk-disclosure.html">Take 2 mins to learn more.</a>
+      </div>
     </div>
   </section>
 
@@ -713,7 +803,7 @@
         <div class="feature-card">
           <div class="feature-icon">🌍</div>
           <div class="feature-title">Cross-border remittance</div>
-          <p class="feature-desc">Send GBP, USD, or EUR to 8 countries. Vaulted quotes live FX and auto-picks the cheapest chain (XLM · XRP · USDC L2). Fees from £0.50.</p>
+          <p class="feature-desc">Send GBP, USD, or EUR to 8 planned countries. Vaulted will quote real-time FX and auto-pick the cheapest chain (XLM &middot; XRP &middot; USDC L2). Target fees from &pound;0.50 once live.</p>
         </div>
         <div class="feature-card">
           <div class="feature-icon">🔑</div>
@@ -748,24 +838,25 @@
   <section style="background: var(--bg-elevated);">
     <div class="container">
       <div class="section-head">
-        <div class="section-eyebrow">How it works</div>
+        <div class="section-eyebrow">How it will work</div>
         <h2 class="section-title">Three steps to sovereignty.</h2>
+        <p class="section-sub" style="margin-top: 12px;">The flow below describes Vaulted&rsquo;s planned end-to-end experience once we&rsquo;re live. In waitlist mode you can preview the app, but sends do not settle to real recipients.</p>
       </div>
       <div class="steps">
         <div class="step">
           <div class="step-number">01</div>
           <div class="step-title">Create your vault</div>
-          <p class="step-desc">Sign up in under a minute. We generate a 12-word recovery phrase on your device — write it down somewhere safe.</p>
+          <p class="step-desc">Sign up in under a minute. We generate a 12-word recovery phrase on your device &mdash; write it down somewhere safe. It never touches our servers.</p>
         </div>
         <div class="step">
           <div class="step-number">02</div>
           <div class="step-title">Top up any chain</div>
-          <p class="step-desc">Receive BTC, ETH, USDC (Ethereum · Polygon · Base · Arbitrum), SOL, XLM, or XRP. One 0x address covers every EVM chain.</p>
+          <p class="step-desc">Receive BTC, ETH, USDC (Ethereum &middot; Polygon &middot; Base &middot; Arbitrum), SOL, XLM, or XRP. One 0x address covers every EVM chain.</p>
         </div>
         <div class="step">
           <div class="step-number">03</div>
           <div class="step-title">Send money in seconds</div>
-          <p class="step-desc">Pick a country → enter pounds → confirm. Vaulted auto-picks the cheapest chain and settles in ~5-30 seconds. Fees from £0.50.</p>
+          <p class="step-desc">Pick a country &rarr; enter pounds &rarr; confirm. Vaulted will auto-pick the cheapest chain and settle in ~5&ndash;30 seconds. Target fees from &pound;0.50. Live once authorized.</p>
         </div>
       </div>
     </div>
@@ -777,7 +868,7 @@
       <div class="section-head">
         <div class="section-eyebrow">Pricing</div>
         <h2 class="section-title">Simple. Honest.</h2>
-        <p class="section-sub">Send money worldwide on the free tier. Upgrade to Vault Pro when you need unlimited sends, halved fees, multi-sig wallets, and group chat.</p>
+        <p class="section-sub">The pricing below reflects our <strong>planned launch structure</strong>. The free tier will cover the vast majority of retail users; Vault Pro is for power users who need unlimited sends, halved fees, multi-sig wallets, and group chat.</p>
       </div>
       <div class="pricing-grid">
         <div class="pricing-card">
@@ -845,14 +936,32 @@
     </div>
   </section>
 
-  <!-- CTA -->
-  <section class="cta-section">
+  <!-- CTA / WAITLIST -->
+  <section class="cta-section" id="waitlist">
     <div class="container">
-      <h2>Send money the <span class="italic">smart</span> way.</h2>
-      <p>Open Vaulted, generate your keys, and send your first cross-border transfer in under 60 seconds. No credit card. No middlemen. Your money, your keys.</p>
-      <a class="btn btn-primary btn-large" href="https://app.phoenix-atlas.com">Launch Vaulted →</a>
+      <h2>Get on the <span class="italic">waitlist</span>.</h2>
+      <p>We&rsquo;ll invite you to preview Vaulted as soon as authorized services in your corridor go live. No card required. No spam. One email when we launch.</p>
+      <form class="waitlist-form" onsubmit="return handleWaitlist(event);" style="max-width: 460px; margin: 24px auto 0; display: flex; gap: 8px; flex-wrap: wrap; justify-content: center;">
+        <input type="email" name="email" required placeholder="you@example.com" aria-label="Email address" style="flex: 1 1 240px; min-width: 220px; padding: 14px 18px; border-radius: 999px; border: 1px solid var(--border); background: rgba(255,255,255,0.03); color: var(--text-primary); font-family: 'Inter', sans-serif; font-size: 15px;">
+        <button type="submit" class="btn btn-primary btn-large" style="padding: 14px 28px;">Join the waitlist &rarr;</button>
+      </form>
+      <p class="illustrative-note" style="margin-top: 14px;">By joining you agree to the <a href="/privacy.html" style="color: var(--gold-light);">privacy policy</a> and <a href="/terms.html" style="color: var(--gold-light);">terms</a>. You can unsubscribe at any time.</p>
+      <p style="margin-top: 32px; font-size: 12px; color: var(--text-muted);">Prefer to see the app in preview mode first? <a href="https://app.phoenix-atlas.com" style="color: var(--gold-light);">Preview the app &rarr;</a></p>
     </div>
   </section>
+  <script>
+    // Simple mailto-fallback waitlist. Wire this up to a real ESP (Resend
+    // contacts / Mailchimp / ConvertKit) before going wide.
+    function handleWaitlist(e) {
+      e.preventDefault();
+      var email = e.target.email.value.trim();
+      if (!email) return false;
+      window.location.href = 'mailto:hello@phoenix-atlas.com'
+        + '?subject=' + encodeURIComponent('Vaulted waitlist: ' + email)
+        + '&body=' + encodeURIComponent('Please add me to the Vaulted waitlist. Email: ' + email);
+      return false;
+    }
+  </script>
 
   <!-- FOOTER -->
   <footer>
@@ -860,17 +969,18 @@
       <div class="footer-grid">
         <div class="footer-brand">
           <div class="wordmark">Vaulted</div>
-          <div class="wordmark-tag">Self-Custody · Encrypted · Sovereign</div>
-          <p>The self-custody crypto wallet with encrypted communications, built by PhoenixAtlas Technologies Ltd.</p>
+          <div class="wordmark-tag">Self-Custody &middot; Encrypted &middot; Sovereign</div>
+          <p>A UK fintech in build. Vaulted is currently in waitlist mode ahead of authorization from the Financial Conduct Authority.</p>
         </div>
         <div class="footer-col">
           <h4>Product</h4>
           <ul>
-            <li><a href="#corridors">Send Money</a></li>
+            <li><a href="#corridors">Corridors</a></li>
             <li><a href="#features">Features</a></li>
             <li><a href="#pricing">Pricing</a></li>
             <li><a href="#security">Security</a></li>
-            <li><a href="https://app.phoenix-atlas.com">Launch App</a></li>
+            <li><a href="#waitlist">Waitlist</a></li>
+            <li><a href="https://app.phoenix-atlas.com">Preview app</a></li>
           </ul>
         </div>
         <div class="footer-col">
@@ -878,15 +988,16 @@
           <ul>
             <li><a href="mailto:hello@phoenix-atlas.com">Contact</a></li>
             <li><a href="mailto:support@phoenix-atlas.com">Support</a></li>
+            <li><a href="/risk-disclosure.html">Risk disclosure</a></li>
             <li><a href="/privacy.html">Privacy</a></li>
             <li><a href="/terms.html">Terms</a></li>
           </ul>
         </div>
         <div class="footer-col">
-          <h4>Networks</h4>
+          <h4>Networks (planned)</h4>
           <ul>
             <li>Bitcoin</li>
-            <li>Ethereum · Polygon · Base · Arbitrum</li>
+            <li>Ethereum &middot; Polygon &middot; Base &middot; Arbitrum</li>
             <li>USDC (multi-chain)</li>
             <li>Solana</li>
             <li>Stellar (XLM)</li>
@@ -894,9 +1005,17 @@
           </ul>
         </div>
       </div>
+
+      <!-- Companies Act 2006: registered particulars required on all marketing -->
+      <div style="margin-top: 40px; padding-top: 28px; border-top: 1px solid var(--border); font-size: 12px; color: var(--text-muted); line-height: 1.7;">
+        <p><strong>PhoenixAtlas Technologies Ltd</strong> is a company registered in England and Wales. Contact: <a href="mailto:hello@phoenix-atlas.com" style="color: var(--gold-light);">hello@phoenix-atlas.com</a>. Registered office and company number available on request pending final Companies House filing.</p>
+        <p style="margin-top: 10px;">Vaulted is <strong>not currently authorized</strong> by the Financial Conduct Authority (FCA). Cross-border money remittance, cryptoasset custody, and cryptoasset exchange services shown on this site are in build and will only be offered upon receipt of applicable authorizations. Nothing on this site constitutes an offer to provide regulated services or investment advice.</p>
+        <p style="margin-top: 10px;"><strong>Cryptoasset risk warning:</strong> Don&rsquo;t invest unless you&rsquo;re prepared to lose all the money you invest. This is a high-risk investment and you should not expect to be protected if something goes wrong. <a href="/risk-disclosure.html" style="color: var(--gold-light);">Learn more.</a></p>
+      </div>
+
       <div class="footer-bottom">
-        <p>© 2026 PhoenixAtlas Technologies Ltd. All rights reserved.</p>
-        <span class="tag">Made with care · UK</span>
+        <p>&copy; 2026 PhoenixAtlas Technologies Ltd. All rights reserved.</p>
+        <span class="tag">Made with care &middot; UK</span>
       </div>
     </div>
   </footer>

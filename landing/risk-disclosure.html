@@ -1,0 +1,236 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="theme-color" content="#0A0807">
+  <title>Risk Disclosure — Vaulted</title>
+  <meta name="description" content="Vaulted risk disclosure and current regulatory status. UK fintech in pre-launch — not currently authorized by the FCA.">
+  <meta name="robots" content="index, follow">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:wght@500;600;700&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    :root {
+      --bg: #0A0807;
+      --bg-elevated: #161210;
+      --bg-card: #1F1815;
+      --gold: #C9A35B;
+      --gold-light: #E6C879;
+      --gold-cream: #F5E9C9;
+      --text-primary: #F5E9C9;
+      --text-secondary: #A89878;
+      --text-muted: #6B5F4A;
+      --border: rgba(201, 163, 91, 0.18);
+      --gradient: linear-gradient(135deg, #C9A35B 0%, #E6C879 50%, #C9A35B 100%);
+    }
+    body {
+      font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+      background: var(--bg);
+      color: var(--text-primary);
+      line-height: 1.7;
+      -webkit-font-smoothing: antialiased;
+      padding-top: 44px;
+    }
+    .preauth-banner {
+      position: fixed; top: 0; left: 0; right: 0; z-index: 101;
+      background: #2a1e0a;
+      border-bottom: 1px solid rgba(201, 163, 91, 0.35);
+      color: #F5E9C9;
+      font-size: 12px;
+      line-height: 1.5;
+      padding: 10px 16px;
+      text-align: center;
+    }
+    .preauth-banner strong { color: var(--gold-light); font-weight: 600; }
+    .preauth-banner a { color: var(--gold-light); text-decoration: underline; text-underline-offset: 2px; }
+    @media (max-width: 720px) {
+      .preauth-banner { font-size: 11px; padding: 8px 12px; }
+      body { padding-top: 56px; }
+    }
+    .container { max-width: 820px; margin: 0 auto; padding: 48px 24px 80px; }
+    .wordmark {
+      font-family: 'Cormorant Garamond', serif;
+      font-weight: 700; font-size: 32px;
+      background: var(--gradient);
+      -webkit-background-clip: text;
+      background-clip: text;
+      color: transparent;
+      letter-spacing: 0.5px;
+    }
+    .back-link {
+      display: inline-block;
+      color: var(--text-secondary);
+      text-decoration: none;
+      font-size: 14px;
+      margin-bottom: 32px;
+    }
+    .back-link:hover { color: var(--gold-light); }
+    h1 {
+      font-family: 'Cormorant Garamond', serif;
+      font-weight: 600;
+      font-size: clamp(32px, 5vw, 52px);
+      line-height: 1.1;
+      letter-spacing: -0.5px;
+      margin: 12px 0 20px;
+    }
+    .last-updated {
+      color: var(--text-muted);
+      font-size: 13px;
+      letter-spacing: 1px;
+      text-transform: uppercase;
+      margin-bottom: 40px;
+    }
+    .fca-warning-hero {
+      background: #2a1e0a;
+      border: 1px solid rgba(255, 184, 77, 0.45);
+      border-radius: 14px;
+      padding: 24px 28px;
+      margin: 32px 0 48px;
+    }
+    .fca-warning-hero .label {
+      font-size: 11px; font-weight: 700;
+      color: #FFB84D;
+      letter-spacing: 2.5px; text-transform: uppercase;
+      margin-bottom: 12px;
+    }
+    .fca-warning-hero p {
+      font-size: 16px;
+      color: var(--gold-cream);
+      line-height: 1.6;
+    }
+    h2 {
+      font-family: 'Cormorant Garamond', serif;
+      font-weight: 600;
+      font-size: 28px;
+      color: var(--gold-light);
+      margin: 48px 0 16px;
+      letter-spacing: -0.3px;
+    }
+    h3 {
+      font-family: 'Inter', sans-serif;
+      font-weight: 600;
+      font-size: 17px;
+      color: var(--gold-cream);
+      margin: 28px 0 10px;
+    }
+    p, li {
+      color: var(--text-primary);
+      font-size: 15px;
+      line-height: 1.7;
+      margin-bottom: 12px;
+    }
+    ul, ol { margin: 12px 0 20px 22px; }
+    li { margin-bottom: 8px; }
+    a { color: var(--gold-light); text-decoration: underline; text-underline-offset: 2px; }
+    strong { color: var(--gold-cream); font-weight: 600; }
+    hr {
+      border: none;
+      border-top: 1px solid var(--border);
+      margin: 40px 0;
+    }
+    .callout {
+      background: rgba(201, 163, 91, 0.06);
+      border-left: 3px solid var(--gold);
+      padding: 16px 20px;
+      margin: 20px 0;
+      border-radius: 4px;
+      font-size: 14px;
+    }
+    footer {
+      margin-top: 60px;
+      padding-top: 32px;
+      border-top: 1px solid var(--border);
+      font-size: 12px;
+      color: var(--text-muted);
+    }
+    footer p { font-size: 12px; margin-bottom: 8px; }
+  </style>
+</head>
+<body>
+
+  <div class="preauth-banner" role="alert">
+    <strong>Vaulted is a UK fintech in build.</strong>
+    Live money-transfer services will launch upon receipt of applicable authorizations from the Financial Conduct Authority.
+    Not currently open for customer transactions.
+  </div>
+
+  <div class="container">
+    <a class="back-link" href="/">&larr; Back to Vaulted</a>
+    <div class="wordmark">Vaulted</div>
+    <h1>Risk disclosure</h1>
+    <div class="last-updated">Last updated · July 2026</div>
+
+    <div class="fca-warning-hero" role="note">
+      <div class="label">Cryptoasset risk warning</div>
+      <p>Don&rsquo;t invest unless you&rsquo;re prepared to lose all the money you invest. This is a high-risk investment and you should not expect to be protected if something goes wrong.</p>
+    </div>
+
+    <h2>1. Regulatory status</h2>
+    <p>Vaulted is a product being built by <strong>PhoenixAtlas Technologies Ltd</strong>, a company registered in England and Wales.</p>
+    <p>Vaulted is <strong>not currently authorized</strong> by the Financial Conduct Authority (&ldquo;FCA&rdquo;). None of the services described on this website &mdash; cross-border money remittance, cryptoasset custody, cryptoasset exchange, or fiat on-ramp / off-ramp &mdash; are being offered to customers at this time.</p>
+    <p>Vaulted intends to seek authorization under one or more of:</p>
+    <ul>
+      <li>The <strong>Payment Services Regulations 2017</strong> (for cross-border remittance)</li>
+      <li>The <strong>Money Laundering, Terrorist Financing and Transfer of Funds (Information on the Payer) Regulations 2017</strong> (&ldquo;MLR 2017&rdquo;) for cryptoasset business registration</li>
+      <li>The <strong>FCA Financial Promotions Regime</strong> (as it applies to cryptoassets, October 2023 rules)</li>
+    </ul>
+    <p>Until authorization is granted, Vaulted operates in <strong>waitlist / preview mode</strong>. Any &ldquo;send&rdquo; or transfer functionality visible in the preview app is for demonstration purposes only and does not settle real value to a recipient.</p>
+
+    <h2>2. What Vaulted is not</h2>
+    <ul>
+      <li>Vaulted is <strong>not</strong> a bank. Funds deposited via the preview app are not client money and are not currently safeguarded under the Payment Services Regulations.</li>
+      <li>Vaulted is <strong>not</strong> covered by the Financial Services Compensation Scheme (FSCS).</li>
+      <li>Vaulted is <strong>not</strong> providing investment advice. Nothing on this site is a recommendation to buy, sell, or hold any cryptoasset.</li>
+      <li>Nothing on this website constitutes an offer to enter into a regulated activity in the United Kingdom.</li>
+    </ul>
+
+    <h2>3. Cryptoasset risks</h2>
+    <p>Cryptoassets (including Bitcoin, Ether, USDC, Solana, Stellar Lumens, and XRP) are <strong>high-risk, speculative assets</strong>. If you choose to use the preview app with real cryptoassets you should understand that:</p>
+    <ul>
+      <li>Their value can go up and down rapidly, and can go to zero.</li>
+      <li>They are largely <strong>unregulated in the UK</strong>. Compensation schemes such as FSCS and the Financial Ombudsman Service typically do not apply.</li>
+      <li>Once a transaction has been broadcast to a public blockchain, it is <strong>irreversible</strong>. Vaulted cannot recall or refund on-chain transactions.</li>
+      <li><strong>Self-custody</strong> means you &mdash; not Vaulted &mdash; are solely responsible for your recovery phrase. If you lose it, your funds are lost permanently. There is no password reset for on-chain assets.</li>
+      <li>Vaulted&rsquo;s preview app currently runs Ethereum-side flows on the <strong>Sepolia testnet</strong>, which uses tokens that have no monetary value.</li>
+    </ul>
+
+    <h2>4. Cross-border remittance</h2>
+    <p>The remittance flows visible on the marketing site (Kenya, Nigeria, India, Philippines, Senegal, C&ocirc;te d&rsquo;Ivoire, Ghana, Mexico) are <strong>planned corridors</strong>. Amounts and fees shown are <strong>illustrative examples</strong>, not live quotes, and do not represent an offer to execute a transfer.</p>
+    <p>Live remittance services will only be enabled once:</p>
+    <ol>
+      <li>Applicable UK regulatory authorization is in place;</li>
+      <li>Third-party off-ramp partners (M-Pesa aggregators, mobile-money processors, local bank rails) are integrated and have completed their own KYB approval; and</li>
+      <li>Users have completed KYC / identity verification under our accepted programme.</li>
+    </ol>
+
+    <h2>5. The preview app</h2>
+    <p>Vaulted&rsquo;s preview app at <a href="https://app.phoenix-atlas.com">app.phoenix-atlas.com</a> is provided <strong>for demonstration and testing only</strong>. Do not deposit funds you cannot afford to lose. Any Stripe test-mode charges, ETH broadcasts on Sepolia, or mobile-money simulations you see are engineering test artefacts, not customer-facing services.</p>
+    <p>Vaulted may &mdash; without prior notice &mdash; reset test data, take the preview app offline, or change functionality at any time while in build.</p>
+
+    <h2>6. Data protection</h2>
+    <p>PhoenixAtlas Technologies Ltd complies with the UK GDPR and the Data Protection Act 2018. See our <a href="/privacy.html">privacy policy</a> for detail on data collection, retention, and your rights (including access, rectification, erasure, and objection).</p>
+
+    <h2>7. Complaints</h2>
+    <p>If you have a concern or complaint about Vaulted, please contact us at <a href="mailto:support@phoenix-atlas.com">support@phoenix-atlas.com</a>. We will acknowledge your complaint within 5 working days and aim to respond substantively within 20 working days.</p>
+    <p>Because Vaulted is not currently FCA-authorized, the Financial Ombudsman Service is not available for disputes at this time. This will change once authorization is in place.</p>
+
+    <h2>8. Changes to this disclosure</h2>
+    <p>We will update this disclosure as Vaulted&rsquo;s regulatory status changes. The &ldquo;Last updated&rdquo; date at the top of this page reflects the most recent revision. Material changes will be communicated to users on the waitlist by email.</p>
+
+    <div class="callout">
+      <strong>Questions?</strong> Email <a href="mailto:hello@phoenix-atlas.com">hello@phoenix-atlas.com</a>. We&rsquo;re happy to talk about Vaulted&rsquo;s roadmap and regulatory plan.
+    </div>
+
+    <hr>
+
+    <footer>
+      <p><strong>PhoenixAtlas Technologies Ltd</strong> is a company registered in England and Wales. Registered office and company number available on request pending final Companies House filing.</p>
+      <p>Vaulted is <strong>not currently authorized</strong> by the Financial Conduct Authority (FCA).</p>
+      <p>&copy; 2026 PhoenixAtlas Technologies Ltd &middot; <a href="/">Home</a> &middot; <a href="/privacy.html">Privacy</a> &middot; <a href="/terms.html">Terms</a></p>
+    </footer>
+  </div>
+
+</body>
+</html>
