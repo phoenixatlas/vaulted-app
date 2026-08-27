@@ -11,6 +11,7 @@ import { useAuth } from "@/src/lib/auth";
 import { useI18n } from "@/src/lib/i18n";
 import { colors, spacing, radius } from "@/src/lib/theme";
 import { AssetLogo } from "@/src/components/AssetLogo";
+import PreviewBanner from "@/src/components/PreviewBanner";
 import { authenticate, getCapabilities } from "@/src/lib/biometric";
 
 type Asset = {
@@ -144,6 +145,9 @@ export default function SendCrypto() {
           <View style={{ width: 26 }} />
         </View>
         <ScrollView contentContainerStyle={{ padding: spacing.xl }} keyboardShouldPersistTaps="handled">
+          <PreviewBanner
+            message="Preview mode - broadcasts run on Ethereum Sepolia testnet. On-chain sends are real but use testnet tokens with no monetary value."
+          />
           <Text style={s.label}>Asset</Text>
           <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: spacing.sm, paddingVertical: 4 }} style={{ marginBottom: spacing.lg }}>
             {assets.map((a) => (

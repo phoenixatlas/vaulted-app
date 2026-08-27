@@ -7,6 +7,7 @@ import { useAuth } from "@/src/lib/auth";
 import { startSubscriptionCheckout, syncStripeSession, cancelSubscription } from "@/src/lib/stripe";
 import { api } from "@/src/lib/api";
 import { colors, spacing, radius } from "@/src/lib/theme";
+import PreviewBanner from "@/src/components/PreviewBanner";
 
 const PERKS = [
   { icon: "shield-checkmark", title: "Multi-signature wallet", desc: "Require multiple approvals for large sends." },
@@ -76,6 +77,9 @@ export default function VaultPro() {
         <View style={{ width: 26 }} />
       </View>
       <ScrollView contentContainerStyle={{ padding: spacing.xl, paddingBottom: spacing.xxxl }}>
+        <PreviewBanner
+          message="Preview mode - Vault Pro subscription is billed LIVE via Stripe. Vaulted is not yet FCA authorized; features shown are the planned launch scope."
+        />
         <View style={s.hero}>
           <View style={s.heroIcon}>
             <Ionicons name="star" size={28} color={colors.brand} />

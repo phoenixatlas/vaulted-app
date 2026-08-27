@@ -11,6 +11,7 @@ import { useI18n } from "@/src/lib/i18n";
 import { startDepositCheckout, syncStripeSession } from "@/src/lib/stripe";
 import { useAuth } from "@/src/lib/auth";
 import { colors, spacing, radius } from "@/src/lib/theme";
+import PreviewBanner from "@/src/components/PreviewBanner";
 
 export default function Fiat() {
   const params = useLocalSearchParams<{ mode?: string }>();
@@ -79,6 +80,13 @@ export default function Fiat() {
           <View style={{ width: 26 }} />
         </View>
         <ScrollView contentContainerStyle={{ padding: spacing.xl }} keyboardShouldPersistTaps="handled">
+          <PreviewBanner
+            message={
+              mode === "deposit"
+                ? "Preview mode - card charges via Stripe are LIVE and non-refundable via app. Vaulted is not yet FCA authorized. Do not deposit funds you cannot afford to lose."
+                : "Preview mode - withdrawal rails are in integration. Requests may not settle until we go live."
+            }
+          />
           <Text style={s.bigLabel}>USD amount</Text>
           <View style={s.amountWrap}>
             <Text style={s.amountSign}>$</Text>

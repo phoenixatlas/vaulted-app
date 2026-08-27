@@ -12,6 +12,7 @@ import { colors, spacing, radius } from "@/src/lib/theme";
 import { authenticate, getCapabilities } from "@/src/lib/biometric";
 import { startRemitFundCheckout, syncStripeSession } from "@/src/lib/stripe";
 import KycStatusBanner from "@/src/components/KycStatusBanner";
+import PreviewBanner from "@/src/components/PreviewBanner";
 
 type Corridor = {
   code: string;
@@ -268,6 +269,7 @@ export default function Remit() {
             in progress ("processing") or has hit a snag ("requires_input").
             Users get progress feedback right where they'd initiate a send,
             which is exactly the moment the KYC state matters most. */}
+        <PreviewBanner />
         <KycStatusBanner />
 
         <ScrollView contentContainerStyle={{ padding: spacing.xl, paddingBottom: 120 }} keyboardShouldPersistTaps="handled">

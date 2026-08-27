@@ -11,6 +11,7 @@ import { useIconFonts } from "@/src/hooks/use-icon-fonts";
 import { AuthProvider } from "@/src/lib/auth";
 import { I18nProvider } from "@/src/lib/i18n";
 import { BiometricGate } from "@/src/components/BiometricGate";
+import PreviewAcknowledgementGate from "@/src/components/PreviewAcknowledgementGate";
 import { captureRefCodeFromUrl } from "@/src/lib/refCode";
 
 LogBox.ignoreAllLogs(true);
@@ -85,11 +86,19 @@ export default function RootLayout() {
     <GestureHandlerRootView style={{ flex: 1 }}>
       <SafeAreaProvider>
         <I18nProvider>
-          <AuthProvider>
-            <BiometricGate>
-              <Stack screenOptions={{ headerShown: false, contentStyle: { backgroundColor: "#FBF8F2" } }} />
-            </BiometricGate>
-          </AuthProvider>
+          {/*
+            PreviewAcknowledgementGate is OUTSIDE AuthProvider on purpose so
+            first-time visitors see the pre-authorization / FCA disclosures
+            BEFORE they even reach the login/register screens. Once ack'd,
+            the modal never renders again (per-device, per-disclosure-version).
+          */}
+          <PreviewAcknowledgementGate>
+            <AuthProvider>
+              <BiometricGate>
+                <Stack screenOptions={{ headerShown: false, contentStyle: { backgroundColor: "#FBF8F2" } }} />
+              </BiometricGate>
+            </AuthProvider>
+          </PreviewAcknowledgementGate>
         </I18nProvider>
       </SafeAreaProvider>
     </GestureHandlerRootView>

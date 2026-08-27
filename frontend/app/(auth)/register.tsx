@@ -11,6 +11,7 @@ import { useI18n } from "@/src/lib/i18n";
 import { colors, spacing, radius } from "@/src/lib/theme";
 import { api } from "@/src/lib/api";
 import { getPendingRefCode, clearPendingRefCode } from "@/src/lib/refCode";
+import PreviewBanner from "@/src/components/PreviewBanner";
 
 type ValidateResp = {
   valid: boolean;
@@ -76,6 +77,10 @@ export default function Register() {
           </Pressable>
           <Text style={s.title}>{t("sign_up")}</Text>
           <Text style={s.subtitle}>Your keys, your coins. Get started in seconds.</Text>
+
+          <PreviewBanner
+            message="Preview mode - by signing up you're joining Vaulted's build cohort. Live services will open once we're FCA authorized. Do not deposit funds you cannot afford to lose."
+          />
 
           {refCode && refInfo?.valid && (
             <View style={s.inviteBanner} testID="reg-invite-banner">
