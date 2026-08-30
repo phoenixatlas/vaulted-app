@@ -466,6 +466,141 @@
     .corridor-fee strong { color: var(--gold); font-weight: 700; }
 
     /* ------------------------------------------------------------------
+       VAULTED IS FOR
+       Three illustrative personas of the UK diaspora communities Vaulted
+       is being built for. Not real users - marked as archetypes in the
+       disclaimer below the cards. Uses initial-based avatars in a gold
+       circle (not stock photos) to avoid a fake-testimonial aesthetic.
+       ------------------------------------------------------------------ */
+    .personas-wrap { max-width: 1080px; margin: 0 auto; }
+    .persona-grid {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 20px;
+    }
+    .persona-card {
+      background: var(--bg-elevated);
+      border: 1px solid var(--border);
+      border-radius: 20px;
+      padding: 28px 24px;
+      display: flex;
+      flex-direction: column;
+      gap: 16px;
+      position: relative;
+      overflow: hidden;
+    }
+    .persona-card::before {
+      content: "";
+      position: absolute;
+      top: 0; left: 0; right: 0;
+      height: 3px;
+      background: var(--gradient);
+      opacity: 0.85;
+    }
+    .persona-head {
+      display: flex;
+      align-items: center;
+      gap: 14px;
+    }
+    .persona-avatar {
+      width: 52px;
+      height: 52px;
+      border-radius: 999px;
+      background: var(--gradient);
+      color: var(--bg);
+      font-family: 'Cormorant Garamond', serif;
+      font-weight: 700;
+      font-size: 22px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      letter-spacing: 0.5px;
+      flex-shrink: 0;
+    }
+    .persona-name {
+      color: var(--gold-cream);
+      font-family: 'Cormorant Garamond', serif;
+      font-size: 22px;
+      font-weight: 700;
+      line-height: 1.15;
+      letter-spacing: -0.2px;
+    }
+    .persona-role {
+      color: var(--text-secondary);
+      font-size: 12px;
+      margin-top: 2px;
+    }
+    .persona-corridor {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      background: rgba(201, 163, 91, 0.09);
+      border: 1px solid rgba(201, 163, 91, 0.28);
+      color: var(--gold-light);
+      padding: 5px 10px;
+      border-radius: 999px;
+      font-size: 11px;
+      font-weight: 600;
+      letter-spacing: 0.4px;
+      align-self: flex-start;
+    }
+    .persona-quote {
+      color: var(--text-primary);
+      font-size: 14px;
+      line-height: 1.55;
+      font-style: italic;
+    }
+    .persona-quote::before {
+      content: "\201C";
+      color: var(--gold);
+      font-family: 'Cormorant Garamond', serif;
+      font-size: 26px;
+      line-height: 0;
+      display: inline-block;
+      transform: translateY(6px);
+      margin-right: 4px;
+    }
+    .persona-bullets {
+      list-style: none;
+      padding: 0;
+      margin: 0;
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+      padding-top: 12px;
+      border-top: 1px solid var(--border);
+    }
+    .persona-bullets li {
+      display: flex;
+      align-items: flex-start;
+      gap: 8px;
+      color: var(--text-primary);
+      font-size: 13px;
+      line-height: 1.5;
+    }
+    .persona-bullets li::before {
+      content: "\2713";
+      color: var(--gold);
+      font-weight: 700;
+      flex-shrink: 0;
+      margin-top: 1px;
+    }
+    .persona-note {
+      color: var(--text-muted);
+      font-size: 11px;
+      line-height: 1.6;
+      margin-top: 28px;
+      text-align: center;
+      max-width: 720px;
+      margin-left: auto;
+      margin-right: auto;
+      padding: 0 8px;
+    }
+    @media (max-width: 900px) {
+      .persona-grid { grid-template-columns: 1fr; }
+    }
+
+    /* ------------------------------------------------------------------
        HOW IT COMPARES
        Comparison table framed as claims about Vaulted; competitor columns
        cite public information as of July 2026. Table degrades to a
@@ -827,6 +962,7 @@
       <div class="nav-links">
         <a href="#features">Features</a>
         <a href="#corridors">Corridors</a>
+        <a href="#who-its-for">Who it&rsquo;s for</a>
         <a href="#compare">Compare</a>
         <a href="#pricing">Pricing</a>
         <a href="#security">Security</a>
@@ -1003,6 +1139,79 @@
           <p class="step-desc">Pick a country &rarr; enter pounds &rarr; confirm. Vaulted will auto-pick the cheapest chain and settle in ~5&ndash;30 seconds. Recipient gets local currency to M-Pesa, mobile-money or bank. Target fees from &pound;0.50. Live once authorized.</p>
         </div>
       </div>
+    </div>
+  </section>
+
+  <!-- VAULTED IS FOR -->
+  <section id="who-its-for" style="background: var(--bg-elevated);">
+    <div class="container personas-wrap">
+      <div class="section-head">
+        <div class="section-eyebrow">Who Vaulted is for</div>
+        <h2 class="section-title">Built for the people <span class="italic">actually sending money home.</span></h2>
+        <p class="section-sub" style="margin-top: 12px;">Three archetypes of the UK diaspora Vaulted is designed to serve. Some are crypto-curious. Most just want their money to arrive faster and cheaper than the last time.</p>
+      </div>
+
+      <div class="persona-grid">
+
+        <!-- Persona 1: Kenya corridor -->
+        <div class="persona-card">
+          <div class="persona-head">
+            <div class="persona-avatar" aria-hidden="true">AK</div>
+            <div>
+              <div class="persona-name">Amina, 34</div>
+              <div class="persona-role">ICU nurse &middot; Manchester</div>
+            </div>
+          </div>
+          <span class="persona-corridor">&#127468;&#127463; UK &rarr; &#127472;&#127466; Kenya &middot; M-Pesa</span>
+          <p class="persona-quote">Every month I send &pound;300 to my mum in Nairobi. The agent takes 3%. Wise is fine but I still wait 20 minutes wondering if it landed. I don&rsquo;t care how it moves &mdash; I care that it&rsquo;s there before I hang up the phone.</p>
+          <ul class="persona-bullets">
+            <li>Pays with Apple Pay &mdash; no need to touch crypto</li>
+            <li>Direct to mum&rsquo;s M-Pesa in ~30 seconds</li>
+            <li>Target fee: 80&#37; less than her current agent</li>
+          </ul>
+        </div>
+
+        <!-- Persona 2: Nigeria corridor -->
+        <div class="persona-card">
+          <div class="persona-head">
+            <div class="persona-avatar" aria-hidden="true">CO</div>
+            <div>
+              <div class="persona-name">Chidi, 29</div>
+              <div class="persona-role">Software engineer &middot; London</div>
+            </div>
+          </div>
+          <span class="persona-corridor">&#127468;&#127463; UK &rarr; &#127475;&#127468; Nigeria &middot; Bank / mobile</span>
+          <p class="persona-quote">I already hold USDC on Base. Right now sending it to my brother means bridging, cashing out on a local exchange, then bank-transferring. That&rsquo;s four steps and a full afternoon. I want one tap.</p>
+          <ul class="persona-bullets">
+            <li>Fund directly with USDC on Base or Polygon</li>
+            <li>Skip the local-exchange cash-out entirely</li>
+            <li>Keeps custody of his own keys throughout</li>
+          </ul>
+        </div>
+
+        <!-- Persona 3: India corridor -->
+        <div class="persona-card">
+          <div class="persona-head">
+            <div class="persona-avatar" aria-hidden="true">PS</div>
+            <div>
+              <div class="persona-name">Priya, 41</div>
+              <div class="persona-role">Management consultant &middot; Birmingham</div>
+            </div>
+          </div>
+          <span class="persona-corridor">&#127468;&#127463; UK &rarr; &#127470;&#127475; India &middot; UPI / bank</span>
+          <p class="persona-quote">My father was hospitalised last winter. My family needed money in the account by the morning. Remitly Economy was three days; Express cost triple. I don&rsquo;t want to make that choice again.</p>
+          <ul class="persona-bullets">
+            <li>Card or Google Pay funding when speed matters</li>
+            <li>Target settlement to Indian bank in seconds</li>
+            <li>Encrypted chat with family for confirmation</li>
+          </ul>
+        </div>
+
+      </div>
+
+      <p class="persona-note">
+        These are <strong>illustrative personas</strong> of the diaspora communities Vaulted is being built for, not testimonials from live customers. Fees, settlement times and corridors reflect planned launch targets and will only be available once Vaulted is FCA-authorized.
+      </p>
     </div>
   </section>
 
@@ -1213,6 +1422,7 @@
           <ul>
             <li><a href="#corridors">Corridors</a></li>
             <li><a href="#features">Features</a></li>
+            <li><a href="#who-its-for">Who it&rsquo;s for</a></li>
             <li><a href="#compare">Compare</a></li>
             <li><a href="#pricing">Pricing</a></li>
             <li><a href="#security">Security</a></li>
