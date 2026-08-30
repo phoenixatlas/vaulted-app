@@ -23,9 +23,13 @@ RESEND_FROM = os.environ.get("RESEND_FROM", "Vaulted <onboarding@resend.dev>")
 RESEND_TARGET_DOMAIN = os.environ.get("RESEND_TARGET_DOMAIN", "phoenix-atlas.com")
 RESEND_TARGET_FROM = os.environ.get(
     "RESEND_TARGET_FROM", f"Vaulted <noreply@{os.environ.get('RESEND_TARGET_DOMAIN', 'phoenix-atlas.com')}>",
-)
-# Mutable at runtime - the Resend poller flips this when the target domain verifies.
+)# Mutable at runtime - the Resend poller flips this when the target domain verifies.
 _resolved_resend_from: Optional[str] = None
+
+# Support inbox — users can reply to any transactional email and reach a human.
+# Override with `RESEND_REPLY_TO` env var. Defaults to the founder's inbox for
+# now; move to a shared support alias when we scale.
+RESEND_REPLY_TO = os.environ.get("RESEND_REPLY_TO", "umar.sani@phoenix-atlas.com")
 
 # Password reset config
 PASSWORD_RESET_TOKEN_TTL_SEC = 30 * 60  # 30 minutes
@@ -47,7 +51,15 @@ async def send_email_via_resend(to: str, subject: str, html: str) -> bool:
             r = await cx.post(
                 "https://api.resend.com/emails",
                 headers={"Authorization": f"Bearer {RESEND_API_KEY}", "Content-Type": "application/json"},
-                json={"from": get_resend_from(), "to": [to], "subject": subject, "html": html},
+                json={
+                    "from": get_resend_from(),
+                    "to": [to],
+                    "subject": subject,
+                    "html": html,
+                    # Any recipient reply lands in the support inbox rather
+                    # than bouncing off the noreply@ sender.
+                    "reply_to": RESEND_REPLY_TO,
+                },
             )
             if r.status_code >= 400:
                 logger.warning("resend send failed %s: %s", r.status_code, r.text[:200])

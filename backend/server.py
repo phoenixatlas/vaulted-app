@@ -2971,6 +2971,7 @@ from routers.calls import router as calls_router
 from routers.keys import router as keys_router
 from routers.chat import router as chat_router
 from routers.multisig import router as multisig_router, _send_approval_email
+from routers.waitlist import router as waitlist_router
 api.include_router(admin_router)
 api.include_router(referrals_router)
 api.include_router(offramp_router)
@@ -2978,6 +2979,7 @@ api.include_router(calls_router)
 api.include_router(keys_router)
 api.include_router(chat_router)
 api.include_router(multisig_router)
+api.include_router(waitlist_router)
 
 # Push notifications: register-push uses raw /api/register-push (no double
 # prefix), so it's mounted directly on `app` rather than through `api`.

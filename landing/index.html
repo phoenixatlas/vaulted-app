@@ -1396,24 +1396,76 @@
     <div class="container">
       <h2>Get on the <span class="italic">waitlist</span>.</h2>
       <p>We&rsquo;ll invite you to preview Vaulted as soon as authorized services in your corridor go live. No card required. No spam. One email when we launch.</p>
-      <form class="waitlist-form" onsubmit="return handleWaitlist(event);" style="max-width: 460px; margin: 24px auto 0; display: flex; gap: 8px; flex-wrap: wrap; justify-content: center;">
-        <input type="email" name="email" required placeholder="you@example.com" aria-label="Email address" style="flex: 1 1 240px; min-width: 220px; padding: 14px 18px; border-radius: 999px; border: 1px solid var(--border); background: rgba(255,255,255,0.03); color: var(--text-primary); font-family: 'Inter', sans-serif; font-size: 15px;">
-        <button type="submit" class="btn btn-primary btn-large" style="padding: 14px 28px;">Join the waitlist &rarr;</button>
+      <form id="waitlist-form" class="waitlist-form" onsubmit="return handleWaitlist(event);" style="max-width: 460px; margin: 24px auto 0; display: flex; gap: 8px; flex-wrap: wrap; justify-content: center;">
+        <input id="waitlist-email" type="email" name="email" required placeholder="you@example.com" aria-label="Email address" style="flex: 1 1 240px; min-width: 220px; padding: 14px 18px; border-radius: 999px; border: 1px solid var(--border); background: rgba(255,255,255,0.03); color: var(--text-primary); font-family: 'Inter', sans-serif; font-size: 15px;">
+        <button id="waitlist-btn" type="submit" class="btn btn-primary btn-large" style="padding: 14px 28px;">Join the waitlist &rarr;</button>
       </form>
-      <p class="illustrative-note" style="margin-top: 14px;">By joining you agree to the <a href="/privacy.html" style="color: var(--gold-light);">privacy policy</a> and <a href="/terms.html" style="color: var(--gold-light);">terms</a>. You can unsubscribe at any time.</p>
+      <p id="waitlist-msg" role="status" aria-live="polite" style="margin-top: 12px; min-height: 20px; font-size: 14px; color: var(--gold-light); font-weight: 500;"></p>
+      <p class="illustrative-note" style="margin-top: 6px;">By joining you agree to the <a href="/privacy.html" style="color: var(--gold-light);">privacy policy</a> and <a href="/terms.html" style="color: var(--gold-light);">terms</a>. You can unsubscribe at any time.</p>
       <p style="margin-top: 32px; font-size: 12px; color: var(--text-muted);">Prefer to see the app in preview mode first? <a href="https://app.phoenix-atlas.com" style="color: var(--gold-light);">Preview the app &rarr;</a></p>
     </div>
   </section>
   <script>
-    // Simple mailto-fallback waitlist. Wire this up to a real ESP (Resend
-    // contacts / Mailchimp / ConvertKit) before going wide.
-    function handleWaitlist(e) {
+    // Waitlist form → POST /api/waitlist/join → Resend Contacts + Mongo
+    // Backend is set via WAITLIST_API_BASE at build time; falls back to
+    // the production Render URL so the same static file works on Vercel.
+    var WAITLIST_API_BASE = (window.__VAULTED_API_BASE__ || 'https://vaulted-app.onrender.com').replace(/\/+$/, '');
+
+    async function handleWaitlist(e) {
       e.preventDefault();
-      var email = e.target.email.value.trim();
+      var form = document.getElementById('waitlist-form');
+      var input = document.getElementById('waitlist-email');
+      var btn = document.getElementById('waitlist-btn');
+      var msg = document.getElementById('waitlist-msg');
+      var email = (input.value || '').trim();
       if (!email) return false;
-      window.location.href = 'mailto:hello@phoenix-atlas.com'
-        + '?subject=' + encodeURIComponent('Vaulted waitlist: ' + email)
-        + '&body=' + encodeURIComponent('Please add me to the Vaulted waitlist. Email: ' + email);
+
+      // Basic client-side email sanity (server re-validates).
+      var emailOk = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
+      if (!emailOk) {
+        msg.style.color = '#ff8a80';
+        msg.textContent = 'That doesn\u2019t look like a valid email address.';
+        return false;
+      }
+
+      btn.disabled = true;
+      var origLabel = btn.textContent;
+      btn.textContent = 'Joining\u2026';
+      msg.style.color = 'var(--gold-light)';
+      msg.textContent = '';
+
+      try {
+        var res = await fetch(WAITLIST_API_BASE + '/api/waitlist/join', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ email: email, source: 'landing' })
+        });
+        var data = {};
+        try { data = await res.json(); } catch (_) {}
+
+        if (res.ok && data && data.ok) {
+          msg.style.color = 'var(--gold-light)';
+          msg.textContent = data.already_joined
+            ? 'You\u2019re already on the list \u2014 we\u2019ll be in touch. \u2728'
+            : 'You\u2019re on the list. Check your inbox for a confirmation. \u2728';
+          input.value = '';
+        } else if (res.status === 429) {
+          msg.style.color = '#ff8a80';
+          msg.textContent = 'Slow down \u2014 one submission at a time.';
+        } else if (res.status === 400) {
+          msg.style.color = '#ff8a80';
+          msg.textContent = (data && data.detail) || 'Please check the email address.';
+        } else {
+          msg.style.color = '#ff8a80';
+          msg.textContent = 'Couldn\u2019t sign you up right now \u2014 please try again in a moment.';
+        }
+      } catch (err) {
+        msg.style.color = '#ff8a80';
+        msg.textContent = 'Network hiccup \u2014 please try again.';
+      } finally {
+        btn.disabled = false;
+        btn.textContent = origLabel;
+      }
       return false;
     }
   </script>
