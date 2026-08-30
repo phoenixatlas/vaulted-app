@@ -98,6 +98,18 @@ export default function Remit() {
   const [submitting, setSubmitting] = useState(false);
   const [err, setErr] = useState<string | null>(null);
 
+  // Kotani live sandbox quote (Kenya / M-Pesa only). Purely informational —
+  // gives users a second data point next to our own remit rate. If Kotani's
+  // number diverges > 3% we surface a subtle warning so ops can investigate
+  // stale FX. When the destination isn't KE, kotaniQuote stays null.
+  const [kotaniQuote, setKotaniQuote] = useState<{
+    kes_amount: number;
+    rate: number;
+    fee_kes: number;
+    mode: "live" | "mock";
+  } | null>(null);
+  const [kotaniQuoteLoading, setKotaniQuoteLoading] = useState(false);
+
   // Load corridor catalog once
   useEffect(() => {
     api<{ corridors: Corridor[] }>("/remit/corridors").then((d) => setCorridors(d.corridors)).catch(() => {});
@@ -125,6 +137,59 @@ export default function Remit() {
     }, 400);
     return () => clearTimeout(handle);
   }, [amount, dest, srcFiat]);
+
+  // Kotani live quote — only for Kenya destinations. Fires alongside our
+  // own quote so users see the real M-Pesa payout number. We convert the
+  // source fiat to USD approx (using our own quote's USD amount when it's
+  // ready) since Kotani's rate endpoint speaks USDC (≈ USD).
+  useEffect(() => {
+    if (dest !== "KE" || !quote?.source?.amount_usd) {
+      setKotaniQuote(null);
+      return;
+    }
+    const usdAmount = quote.source.amount_usd;
+    if (usdAmount <= 0) { setKotaniQuote(null); return; }
+    setKotaniQuoteLoading(true);
+    const handle = setTimeout(async () => {
+      try {
+        const res = await api<{
+          kotani: {
+            success: boolean;
+            data?: { fiatAmount?: number; value?: string; fee?: number; transactionAmount?: number };
+          };
+          mode: "live" | "mock";
+        }>("/offramp/mpesa/quote", {
+          method: "POST",
+          body: { amount_usd: usdAmount, to_currency: "KES" },
+        });
+        const d = res?.kotani?.data;
+        if (res?.kotani?.success && d?.fiatAmount != null) {
+          setKotaniQuote({
+            kes_amount: Number(d.fiatAmount),
+            rate: parseFloat(String(d.value ?? 0)) || 0,
+            fee_kes: Number(d.fee ?? 0),
+            mode: res.mode,
+          });
+        } else {
+          setKotaniQuote(null);
+        }
+      } catch {
+        setKotaniQuote(null);
+      } finally {
+        setKotaniQuoteLoading(false);
+      }
+    }, 600);
+    return () => clearTimeout(handle);
+  }, [dest, quote?.source?.amount_usd]);
+
+  // Compute divergence between our own quote and Kotani's number. If it's
+  // > 3%, we show a subtle warning so a user isn't surprised at settlement.
+  const kotaniDivergencePct = useMemo(() => {
+    if (dest !== "KE" || !kotaniQuote || !quote?.destination?.amount) return null;
+    const ours = quote.destination.amount;
+    if (ours <= 0) return null;
+    return ((kotaniQuote.kes_amount - ours) / ours) * 100;
+  }, [dest, kotaniQuote, quote?.destination?.amount]);
 
   const selectedCorridor = useMemo(() => corridors.find((c) => c.code === dest), [corridors, dest]);
   const isPro = !!user?.is_pro;
@@ -362,6 +427,35 @@ export default function Remit() {
                   <Text style={s.quoteMuted}>Exchange rate</Text>
                   <Text style={s.quoteVal}>1 {quote.source.currency} = {quote.fx_rate.toLocaleString(undefined, { maximumFractionDigits: 4 })} {quote.destination.currency}</Text>
                 </View>
+                {/* Kotani M-Pesa live rate — informational, KE only */}
+                {dest === "KE" && (kotaniQuoteLoading || kotaniQuote) && (
+                  <View style={s.kotaniRow} testID="remit-kotani-live-rate">
+                    <View style={{ flexDirection: "row", alignItems: "center", gap: 6, flexShrink: 1 }}>
+                      <Ionicons name="pulse" size={13} color={colors.brand} />
+                      <Text style={s.kotaniLabel} numberOfLines={1}>
+                        M-Pesa live rate
+                        {kotaniQuote?.mode === "mock" ? " · sandbox est." : kotaniQuote?.mode === "live" ? " · sandbox" : ""}
+                      </Text>
+                    </View>
+                    {kotaniQuoteLoading && !kotaniQuote ? (
+                      <ActivityIndicator size="small" color={colors.brand} />
+                    ) : kotaniQuote ? (
+                      <Text style={s.kotaniValue}>
+                        {kotaniQuote.kes_amount.toLocaleString(undefined, { maximumFractionDigits: 2 })} KES
+                      </Text>
+                    ) : null}
+                  </View>
+                )}
+                {dest === "KE" && kotaniDivergencePct != null && Math.abs(kotaniDivergencePct) > 3 && (
+                  <View style={s.kotaniDivergeBox}>
+                    <Ionicons name="information-circle-outline" size={14} color={colors.brandDeep} />
+                    <Text style={s.kotaniDivergeText}>
+                      {kotaniDivergencePct > 0
+                        ? `M-Pesa payout may be ~${kotaniDivergencePct.toFixed(1)}% higher than shown — Kotani rate refreshes at settlement.`
+                        : `M-Pesa payout may be ~${Math.abs(kotaniDivergencePct).toFixed(1)}% lower than shown — Kotani rate refreshes at settlement.`}
+                    </Text>
+                  </View>
+                )}
                 {!isFiatFunding && (
                   <View style={s.quoteRow}>
                     <Text style={s.quoteMuted}>Chain</Text>
@@ -580,6 +674,23 @@ const s = StyleSheet.create({
   quoteVal: { fontSize: 12, color: colors.onSurface, fontWeight: "600" },
   quoteLoadingText: { color: colors.onSurfaceTertiary, marginTop: 8, fontSize: 12 },
   divider: { height: 1, backgroundColor: colors.divider, marginVertical: spacing.sm },
+
+  kotaniRow: {
+    flexDirection: "row", justifyContent: "space-between", alignItems: "center",
+    paddingVertical: 6, paddingHorizontal: 8,
+    marginTop: 2, marginBottom: 2,
+    backgroundColor: "rgba(201,163,91,0.06)",
+    borderRadius: radius.sm,
+    borderLeftWidth: 2, borderLeftColor: colors.brand,
+    gap: 8,
+  },
+  kotaniLabel: { fontSize: 11, color: colors.onSurfaceSecondary, fontWeight: "600" },
+  kotaniValue: { fontSize: 12, color: colors.brandDeep, fontWeight: "700" },
+  kotaniDivergeBox: {
+    flexDirection: "row", alignItems: "flex-start", gap: 6,
+    paddingVertical: 6, paddingHorizontal: 8, marginTop: 4,
+  },
+  kotaniDivergeText: { fontSize: 10.5, color: colors.brandDeep, flex: 1, lineHeight: 14 },
 
   warnBox: { flexDirection: "row", alignItems: "flex-start", gap: 8, marginTop: spacing.md, padding: spacing.sm, backgroundColor: "rgba(201,163,91,0.10)", borderRadius: radius.md, borderWidth: 1, borderColor: "rgba(201,163,91,0.30)" },
   warnText: { color: colors.brandDeep, fontSize: 12, lineHeight: 16, flex: 1 },
