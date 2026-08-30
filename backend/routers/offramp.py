@@ -32,35 +32,72 @@ def _offramp_callback_url() -> str:
 
 async def trigger_kotani_offramp_for_remit(remit_tx: dict) -> dict:
     """Called from _apply_checkout_session for KE-destined fiat-funded
-    remits. Books the Kotani off-ramp, updates the transaction row with
-    the Kotani reference id, and audits every terminal state.
-
-    Returns a summary dict for the /stripe/sync response. Failures are
-    non-fatal — the user still sees a successful send (money charged);
-    ops can retry the off-ramp from admin dashboard.
+    remits. Executes the full Kotani v3 flow:
+      1) create (or reuse) the mobile-money customer for the recipient
+      2) request an offramp rate quote (locks in a `rateId`)
+      3) create the offramp transaction with `referenceId=remit_tx.id`
+      4) persist the Kotani `referenceId` + `escrowAddress` on the tx
+    Failures at any step are non-fatal — the Stripe payment already
+    succeeded; ops can retry the off-ramp from admin dashboard.
     """
     remit_ctx = (remit_tx.get("remit") or {})
-    if remit_ctx.get("destination_country_code") != "KE" and remit_ctx.get("destination_currency") != "KES":
+    dest_country = (remit_ctx.get("destination_country_code") or "").upper()
+    dest_currency = (remit_ctx.get("destination_currency") or "").upper()
+    if dest_country != "KE" and dest_currency != "KES":
         return {"kotani": {"skipped": True, "reason": "destination not KES/M-Pesa"}}
+
     phone = (remit_tx.get("counterparty") or "").strip()
     recipient_name = (remit_tx.get("recipient_name") or "").strip() or "Vaulted Recipient"
+    # Split recipient name best-effort for Kotani KYC fields.
+    parts = recipient_name.split(" ", 1)
+    first_name = parts[0]
+    last_name = parts[1] if len(parts) > 1 else ""
+
+    # Amount handling: Kotani wants the crypto amount we intend to send.
+    # Our remits are USD-denominated (USDC ≈ USD), so use fiat_value as the
+    # USDC amount. The remit_quote already produced a KES estimate for UX.
     src_amount_usd = float(remit_tx.get("fiat_value") or 0.0)
-    # Rough USD conversion from source fiat — we already have the tx's
-    # source in USD via the remit_quote earlier so this is a passable
-    # approximation for the off-ramp instruction.
-    kotani_res = await kotani.create_offramp(
+
+    # --- Step 1: create / find customer ---------------------------------
+    cust_res = await kotani.create_mobile_money_customer(
         phone_number=phone,
-        recipient_name=recipient_name,
-        amount_usdc=src_amount_usd,
-        estimated_kes=float(remit_ctx.get("destination_amount") or 0.0),
-        callback_url=_offramp_callback_url(),
-        country="KE",
+        country_code="KE",
+        network="MPESA",
+        first_name=first_name,
+        last_name=last_name,
+        account_name=recipient_name,
+    )
+    customer_key = kotani.extract_customer_key(cust_res)
+    if not customer_key:
+        logger.warning("[kotani] customer create failed: %s", cust_res)
+        return {"kotani": {"skipped": True, "reason": "customer create failed", "raw": cust_res}}
+
+    # --- Step 2: get a rate quote ---------------------------------------
+    rate_res = await kotani.offramp_rate(
+        from_token="USDC",
+        to_currency="KES",
+        crypto_amount=src_amount_usd,
+    )
+    rate_id = kotani.extract_rate_id(rate_res)
+    if not rate_id:
+        logger.warning("[kotani] rate quote failed: %s", rate_res)
+        return {"kotani": {"skipped": True, "reason": "rate quote failed", "raw": rate_res}}
+
+    # --- Step 3: create the offramp -------------------------------------
+    kotani_res = await kotani.create_offramp(
+        crypto_amount=src_amount_usd,
         currency="KES",
-        mobile_money_network="MPESA",
+        chain="BASE",   # Vaulted uses Base USDC by default
+        token="USDC",
+        reference_id=remit_tx["id"],
+        customer_key=customer_key,
+        rate_id=rate_id,
+        callback_url=_offramp_callback_url(),
     )
     data = (kotani_res or {}).get("data") or {}
-    ref_id = data.get("referenceId")
-    kotani_status = data.get("status", "UNKNOWN")
+    ref_id = data.get("referenceId") or remit_tx["id"]
+    kotani_status = (data.get("status") or "UNKNOWN").upper()
+    escrow_address = data.get("escrowAddress") or data.get("depositAddress")
 
     # Persist the Kotani ref on the transaction so status polls + webhook
     # correlation both work.
@@ -73,6 +110,11 @@ async def trigger_kotani_offramp_for_remit(remit_tx: dict) -> dict:
                 "mode": "live" if kotani.live_mode() else "mock",
                 "initiated_at": iso(now_utc()),
                 "callback_url": _offramp_callback_url(),
+                "customer_key": customer_key,
+                "rate_id": rate_id,
+                "escrow_address": escrow_address,
+                "fiat_currency": data.get("fiatCurrency") or "KES",
+                "fiat_amount": data.get("fiatAmount"),
             },
             # Success-status transactions: flip receipt status to "settled"
             # for mock (deterministic) — live mode waits for webhook.
@@ -93,11 +135,18 @@ async def trigger_kotani_offramp_for_remit(remit_tx: dict) -> dict:
             "phone_masked": kotani.mask_phone(phone),
             "amount_kes": remit_ctx.get("destination_amount"),
             "amount_usd": src_amount_usd,
+            "customer_key": customer_key,
+            "rate_id": rate_id,
         })
     except Exception as e:  # noqa: BLE001
         logger.warning("kotani audit_write failed: %s", e)
 
-    return {"kotani": {"reference_id": ref_id, "status": kotani_status, "mode": "live" if kotani.live_mode() else "mock"}}
+    return {"kotani": {
+        "reference_id": ref_id,
+        "status": kotani_status,
+        "mode": "live" if kotani.live_mode() else "mock",
+        "escrow_address": escrow_address,
+    }}
 
 
 @router.get("/offramp/health")
@@ -116,7 +165,7 @@ async def offramp_mpesa_quote(body: OfframpQuoteIn, user=Depends(get_current_use
     res = await kotani.offramp_rate(
         from_token="USDC",
         to_currency=body.to_currency,
-        amount_usd=body.amount_usd,
+        crypto_amount=body.amount_usd,
     )
     return {
         "kotani": res,

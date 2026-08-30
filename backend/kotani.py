@@ -1,26 +1,32 @@
-"""Kotani Pay v3 client — off-ramp USDC → KES via M-Pesa.
+"""Kotani Pay v3 client — off-ramp crypto → fiat (M-Pesa & friends).
 
 Auto-detects mock vs live mode based on `KOTANI_API_KEY`:
-- If the env var is empty, missing, or explicitly set to the sentinel
-  "MOCKED", every call returns deterministic fake data that mirrors
-  the real Kotani v3 response envelope. Nothing is billed.
+- If the env var is empty, missing, or set to a sentinel ("MOCKED",
+  "PLACEHOLDER", "REPLACE_ME", "TODO"), every call returns deterministic
+  fake data that mirrors the real Kotani v3 response envelope. Nothing is
+  billed and nothing hits Kotani's servers.
 - The moment a real key is set in /app/backend/.env and the process
-  restarts, live_mode() flips to True and every helper hits the real
-  sandbox / production endpoints.
+  restarts (or the next env re-read for lazy accessors), live_mode() flips
+  to True and every helper hits the real sandbox / production endpoints.
 
-Design notes:
-- All responses match the real `{success, message, data}` envelope
-  documented at https://documentation.kotanipay.com/v3/quickstart.
-- All amounts are decimal strings (Kotani serialises as strings to
-  avoid float rounding on their side).
-- We only implement the sub-set our remit flow needs:
-    - health()               → sanity check
-    - offramp_rate()         → GBP → KES quote (mock uses our own FX)
-    - create_offramp()       → book a KES payout to a phone number
-    - offramp_status()       → poll a single tx
-- Webhook signature verification is provided but only meaningful once
-  KOTANI_WEBHOOK_SECRET is set. Absent secret → we accept the call
-  and just log it (dev / mock mode behaviour).
+v3 Flow (as of June 2026):
+  1) POST /api/v3/customer/mobile-money   — register the recipient once
+      → returns `customer_key`
+  2) POST /api/v3/rate/offramp             — quote crypto→fiat rate
+      → returns `data.id` (`rateId`) + fiatAmount + fee etc.
+  3) POST /api/v3/offramp                  — book the disbursement
+      body: {cryptoAmount, currency, chain, token, referenceId,
+             mobileMoneyReceiver: {customerKey}, callbackUrl, rateId}
+      → returns `data.referenceId` + `escrowAddress` (where the customer
+        must send crypto). Kotani POSTs terminal state to `callbackUrl`.
+  4) GET /api/v3/offramp/:referenceId      — poll a single tx
+
+Docs (verified 2026-06):
+  - https://documentation.kotanipay.com/v3/quickstart
+  - https://documentation.kotanipay.com/v3/flows/offramp-flow
+  - https://documentation.kotanipay.com/v3/api-reference/rates/offramp-rate
+  - https://documentation.kotanipay.com/v3/api-reference/offramp/create
+  - https://documentation.kotanipay.com/v3/api-reference/customers/mobile-money/create
 
 Env vars (all optional; sensible sandbox defaults):
     KOTANI_API_KEY           — bearer token. Absent → mock mode.
@@ -55,7 +61,7 @@ logger = logging.getLogger("vaulted.kotani")
 # a real key. Treated identically to an empty key.
 _MOCK_SENTINELS = {"", "MOCKED", "PLACEHOLDER", "REPLACE_ME", "TODO"}
 
-_TIMEOUT = httpx.Timeout(15.0, connect=8.0)
+_TIMEOUT = httpx.Timeout(20.0, connect=8.0)
 
 
 def _api_key() -> str:
@@ -101,9 +107,17 @@ def mask_phone(phone: str) -> str:
 # envelope so that swapping to live mode requires zero downstream changes.
 
 def _mock_reference_id() -> str:
-    """Kotani ref-id format is a UUID; we prefix with 'kp_mock_' so audit
+    """Kotani ref-id is a UUID; we prefix with 'kp_mock_' so audit
     grepping can differentiate mock vs live rows after go-live."""
     return "kp_mock_" + uuid.uuid4().hex[:20]
+
+
+def _mock_customer_key() -> str:
+    return "cust_mock_" + uuid.uuid4().hex[:16]
+
+
+def _mock_rate_id() -> str:
+    return "rate_mock_" + uuid.uuid4().hex[:16]
 
 
 def _mock_health() -> dict:
@@ -114,70 +128,93 @@ def _mock_health() -> dict:
     }
 
 
-def _mock_offramp_rate(from_token: str, to_currency: str, amount_usd: float) -> dict:
-    """Approximate GBP → KES using the same conservative FX Vaulted uses
-    elsewhere (matches compliance module rate at 0.80 for GBP→USD).
-    Real Kotani rates fluctuate ~2% either side."""
-    # Approximate market rates (Q3 2026 avg)
-    RATE_TABLE = {
-        "KES": 143.5,   # 1 USD ≈ 143.5 KES
-        "GHS": 15.8,
-        "NGN": 1585.0,
-        "UGX": 3720.0,
-        "TZS": 2610.0,
-        "ZAR": 18.4,
-    }
-    rate = RATE_TABLE.get(to_currency.upper(), 100.0)
-    kotani_spread = 0.008  # 0.8% spread — realistic for sandbox
-    effective_rate = round(rate * (1 - kotani_spread), 4)
-    fiat_amount = round(amount_usd * effective_rate, 2)
+def _mock_create_customer(payload: dict) -> dict:
     return {
         "success": True,
-        "message": "Rate quote (mocked)",
+        "message": "Customer has been successfully created (mocked)",
         "data": {
-            "fromToken": from_token,
-            "fromAmount": f"{amount_usd:.6f}",
-            "toCurrency": to_currency.upper(),
-            "toAmount": f"{fiat_amount:.2f}",
-            "rate": str(effective_rate),
-            "spread": str(kotani_spread),
-            "quoteExpiresAt": _now_iso(),
+            "phone_number": payload.get("phone_number", ""),
+            "country_code": payload.get("country_code", "KE"),
+            "id": _mock_customer_key(),
+            "network": payload.get("network", "MPESA"),
+            "customer_key": _mock_customer_key(),
+            "account_name": payload.get("account_name") or (
+                (payload.get("first_name", "") + " " + payload.get("last_name", "")).strip()
+                or "Mock Recipient"
+            ),
+            "integrator": "vaulted-mock",
+            "first_name": payload.get("first_name", ""),
+            "last_name": payload.get("last_name", ""),
+            "_mock": True,
+        },
+    }
+
+
+# Rate table: 1 USDC (≈ 1 USD) → fiat. Approximate Q3 2026 market rates.
+_MOCK_RATE_TABLE = {
+    "KES": 143.5,
+    "GHS": 15.8,
+    "NGN": 1585.0,
+    "UGX": 3720.0,
+    "TZS": 2610.0,
+    "ZAR": 18.4,
+    "EUR": 0.92,
+    "GBP": 0.79,
+    "USD": 1.0,
+}
+
+
+def _mock_offramp_rate(from_token: str, to_currency: str, crypto_amount: float) -> dict:
+    rate = _MOCK_RATE_TABLE.get(to_currency.upper(), 100.0)
+    spread = 0.008  # 0.8% — realistic sandbox spread
+    effective_rate = round(rate * (1 - spread), 4)
+    fiat_amount = round(crypto_amount * effective_rate, 2)
+    fee = round(fiat_amount * 0.02, 2)  # 2% fee mock
+    return {
+        "success": True,
+        "message": "Available exchange rate. (mocked)",
+        "data": {
+            "id": _mock_rate_id(),
+            "from": from_token.upper(),
+            "to": to_currency.upper(),
+            "value": str(effective_rate),
+            "cryptoAmount": crypto_amount,
+            "fiatAmount": fiat_amount,
+            "transactionAmount": round(fiat_amount - fee, 2),
+            "fee": fee,
+            "walletDebitAmount": fiat_amount,
             "_mock": True,
         },
     }
 
 
 def _mock_create_offramp(payload: dict) -> dict:
-    ref = _mock_reference_id()
+    ref = payload.get("referenceId") or _mock_reference_id()
     return {
         "success": True,
-        "message": "Offramp created (mocked)",
+        "message": "Offramp has been successfully created (mocked)",
         "data": {
             "referenceId": ref,
             "status": "PENDING",
-            "depositAddress": "0xMOCKescrow0000000000000000000000000000000",
-            "network": payload.get("chain") or "USDC_BASE",
-            "fromToken": payload.get("token") or "USDC",
-            "fromAmount": payload.get("amount"),
-            "toCurrency": payload.get("currency") or "KES",
-            "toAmount": payload.get("estimatedFiatAmount"),
-            "recipient": {
-                "phoneNumber": mask_phone(payload.get("phoneNumber", "")),
-                "network": payload.get("mobileMoneyNetwork") or "MPESA",
-                "country": payload.get("country") or "KE",
-            },
-            "callbackUrl": payload.get("callbackUrl"),
-            "createdAt": _now_iso(),
+            "onchainStatus": "AWAITING_DEPOSIT",
+            "escrowAddress": "0xMOCKescrow0000000000000000000000000000000",
+            "senderAddress": payload.get("senderAddress") or "",
+            "cryptoAmount": payload.get("cryptoAmount"),
+            "fiatAmount": None,
+            "fiatCurrency": payload.get("currency", "KES"),
+            "chain": payload.get("chain", "BASE"),
+            "token": payload.get("token", "USDC"),
+            "rate": {},
+            "usingIntegratedWallet": False,
+            "created_at": _now_iso(),
+            "updated_at": _now_iso(),
             "_mock": True,
-            "_note": "Simulated: no crypto will be transferred, no KES delivered.",
+            "_note": "Simulated: no crypto will be transferred, no fiat delivered.",
         },
     }
 
 
 def _mock_offramp_status(reference_id: str) -> dict:
-    # Mock progresses PENDING → SUCCESS after 8 seconds since ref was minted.
-    # We can't inspect real time from a static ref, so always return SUCCESS
-    # for mock refs older than "now" — effectively immediate settlement in dev.
     status = "SUCCESS" if reference_id.startswith("kp_mock_") else "PENDING"
     return {
         "success": True,
@@ -185,12 +222,12 @@ def _mock_offramp_status(reference_id: str) -> dict:
         "data": {
             "referenceId": reference_id,
             "status": status,
-            "toCurrency": "KES",
-            "toAmount": "8650.89",
+            "onchainStatus": "CONFIRMED" if status == "SUCCESS" else "AWAITING_DEPOSIT",
+            "fiatCurrency": "KES",
+            "fiatAmount": 8650.89,
             "settledAt": _now_iso() if status == "SUCCESS" else None,
             "receipt": {
                 "mpesaReceipt": "MPESA-MOCK-" + reference_id[-8:].upper() if status == "SUCCESS" else None,
-                "smsSentTo": "+254•••••••••",
             },
             "_mock": True,
         },
@@ -198,26 +235,41 @@ def _mock_offramp_status(reference_id: str) -> dict:
 
 
 # ---- Live HTTP calls -------------------------------------------------------
+def _headers() -> dict:
+    return {
+        "Authorization": f"Bearer {_api_key()}",
+        "Content-Type": "application/json",
+    }
+
+
 async def _get(path: str, params: dict | None = None) -> dict:
     url = f"{_base_url()}{path}"
-    headers = {"Authorization": f"Bearer {_api_key()}", "Content-Type": "application/json"}
     async with httpx.AsyncClient(timeout=_TIMEOUT) as cx:
-        r = await cx.get(url, headers=headers, params=params or {})
-        if r.status_code >= 400:
-            logger.warning("[kotani] GET %s -> %s: %s", path, r.status_code, r.text[:200])
-            return {"success": False, "message": f"http {r.status_code}", "data": r.json() if r.headers.get("content-type", "").startswith("application/json") else {"raw": r.text[:400]}}
-        return r.json()
+        r = await cx.get(url, headers=_headers(), params=params or {})
+        return _envelope(r, "GET", path)
 
 
 async def _post(path: str, body: dict) -> dict:
     url = f"{_base_url()}{path}"
-    headers = {"Authorization": f"Bearer {_api_key()}", "Content-Type": "application/json"}
     async with httpx.AsyncClient(timeout=_TIMEOUT) as cx:
-        r = await cx.post(url, headers=headers, json=body)
-        if r.status_code >= 400:
-            logger.warning("[kotani] POST %s -> %s: %s", path, r.status_code, r.text[:200])
-            return {"success": False, "message": f"http {r.status_code}", "data": r.json() if r.headers.get("content-type", "").startswith("application/json") else {"raw": r.text[:400]}}
-        return r.json()
+        r = await cx.post(url, headers=_headers(), json=body)
+        return _envelope(r, "POST", path)
+
+
+def _envelope(r: httpx.Response, method: str, path: str) -> dict:
+    ctype = (r.headers.get("content-type") or "").lower()
+    is_json = ctype.startswith("application/json")
+    if r.status_code >= 400:
+        logger.warning("[kotani] %s %s -> %s: %s", method, path, r.status_code, r.text[:300])
+        return {
+            "success": False,
+            "message": f"http {r.status_code}",
+            "data": (r.json() if is_json else {"raw": r.text[:600]}),
+        }
+    if not is_json:
+        # Kotani always returns JSON on 2xx; defensively parse.
+        return {"success": True, "message": "ok", "data": {"raw": r.text[:600]}}
+    return r.json()
 
 
 # ---- Public API (async, mock-aware) ---------------------------------------
@@ -227,51 +279,138 @@ async def health() -> dict:
     return await _get("/health")
 
 
+# --- Customers -------------------------------------------------------------
+# Kotani country codes are ISO-2 (KE, GH, NG, ...). Networks are enums —
+# for Kenya use MPESA; Ghana MTN/AIRTEL/VODAFONE; Nigeria depends.
+def _default_network_for_country(country_code: str) -> str:
+    cc = (country_code or "").upper()[:2]
+    return {
+        "KE": "MPESA",
+        "GH": "MTN",
+        "NG": "MTN",
+        "UG": "MTN",
+        "TZ": "VODACOM",
+        "ZM": "MTN",
+    }.get(cc, "MPESA")
+
+
+async def create_mobile_money_customer(
+    *,
+    phone_number: str,
+    country_code: str = "KE",
+    network: Optional[str] = None,
+    first_name: str = "",
+    last_name: str = "",
+    account_name: Optional[str] = None,
+    email: Optional[str] = None,
+) -> dict:
+    """Register a mobile money recipient on Kotani. Idempotency: Kotani
+    dedupes on phone_number within an integrator; a second call with the
+    same phone typically returns the existing record (or a 400 that we
+    treat as "already exists" — caller can handle by re-fetching).
+    """
+    payload = {
+        "phone_number": phone_number,
+        "country_code": country_code.upper(),
+        "network": (network or _default_network_for_country(country_code)).upper(),
+    }
+    if account_name:
+        payload["account_name"] = account_name
+    if first_name:
+        payload["first_name"] = first_name
+    if last_name:
+        payload["last_name"] = last_name
+    if email:
+        payload["email"] = email
+
+    if not live_mode():
+        return _mock_create_customer(payload)
+    return await _post("/api/v3/customer/mobile-money", payload)
+
+
+def extract_customer_key(customer_res: dict) -> Optional[str]:
+    """Pull the customer_key from a Kotani customer response (or None)."""
+    data = (customer_res or {}).get("data") or {}
+    return (
+        data.get("customer_key")
+        or data.get("customerKey")
+        or data.get("id")
+    )
+
+
+# --- Rates -----------------------------------------------------------------
+# Real endpoint: POST /api/v3/rate/offramp
+# Body: {from, to, cryptoAmount, source}
+# Returns: {data: {id, from, to, value, cryptoAmount, fiatAmount, fee, ...}}
 async def offramp_rate(
     *,
     from_token: str = "USDC",
     to_currency: str = "KES",
-    amount_usd: float,
+    crypto_amount: float,
+    source: str = "crypto",
 ) -> dict:
-    """Ask Kotani for a live GBP-equivalent KES rate for a USDC amount.
-    In mock mode we compute it locally with a realistic spread so quotes
-    look plausible on the frontend."""
+    """Ask Kotani for a live crypto→fiat rate quote. `data.id` is the
+    `rateId` we then pass to `create_offramp` — lock-in-then-book pattern.
+    """
+    body = {
+        "from": from_token.upper(),
+        "to": to_currency.upper(),
+        "cryptoAmount": crypto_amount,
+        "source": source,
+    }
     if not live_mode():
-        return _mock_offramp_rate(from_token, to_currency, amount_usd)
-    return await _get(
-        "/api/v3/rates/offramp-rate",
-        params={"fromToken": from_token, "toCurrency": to_currency.upper(), "fromAmount": f"{amount_usd:.6f}"},
-    )
+        return _mock_offramp_rate(from_token, to_currency, crypto_amount)
+    return await _post("/api/v3/rate/offramp", body)
 
 
+def extract_rate_id(rate_res: dict) -> Optional[str]:
+    """Pull the rateId (data.id) from an offramp_rate response."""
+    data = (rate_res or {}).get("data") or {}
+    return data.get("id") or data.get("rateId")
+
+
+def extract_fiat_amount(rate_res: dict) -> Optional[float]:
+    data = (rate_res or {}).get("data") or {}
+    val = data.get("fiatAmount") or data.get("transactionAmount")
+    try:
+        return float(val) if val is not None else None
+    except Exception:  # noqa: BLE001
+        return None
+
+
+# --- Offramp (create + status) --------------------------------------------
+# Real endpoint: POST /api/v3/offramp
+# Body: {cryptoAmount, currency, chain, token, referenceId,
+#        mobileMoneyReceiver:{customerKey}, callbackUrl, rateId, senderAddress?}
 async def create_offramp(
     *,
-    phone_number: str,
-    recipient_name: str,
-    amount_usdc: float,
-    estimated_kes: float,
+    crypto_amount: float,
+    currency: str,           # target fiat (KES, GHS, ...)
+    chain: str,              # ETHEREUM, BASE, CELO, SOLANA, STELLAR, ...
+    token: str,              # USDC, USDT, ...
+    reference_id: str,       # our tx.id — becomes the correlator
+    customer_key: str,       # from create_mobile_money_customer
+    rate_id: str,            # from offramp_rate
     callback_url: str,
-    chain: str = "USDC_BASE",
-    country: str = "KE",
-    currency: str = "KES",
-    mobile_money_network: str = "MPESA",
+    sender_address: Optional[str] = None,
 ) -> dict:
-    """Create an off-ramp transaction: USDC → M-Pesa KES.
-
-    Returns Kotani envelope with `data.referenceId` — persist that in the
-    remit transaction record so webhook + status-poll can correlate."""
+    """Create an off-ramp transaction. Returns Kotani envelope with
+    `data.referenceId` (echo of ours) and `data.escrowAddress` — the
+    on-chain address the customer must fund.
+    """
     payload = {
-        "phoneNumber": phone_number,
-        "recipientName": recipient_name,
-        "amount": f"{amount_usdc:.6f}",
-        "token": "USDC",
-        "chain": chain,
-        "country": country,
-        "currency": currency,
-        "mobileMoneyNetwork": mobile_money_network,
-        "estimatedFiatAmount": f"{estimated_kes:.2f}",
+        "cryptoAmount": crypto_amount,
+        "currency": currency.upper(),
+        "chain": chain.upper(),
+        "token": token.upper(),
+        "referenceId": reference_id,
+        "mobileMoneyReceiver": {"customerKey": customer_key},
         "callbackUrl": callback_url,
+        "rateId": rate_id,
     }
+    if sender_address:
+        payload["senderAddress"] = sender_address
+
     if not live_mode():
         return _mock_create_offramp(payload)
     return await _post("/api/v3/offramp", payload)
@@ -292,18 +431,12 @@ def verify_webhook_signature(payload: bytes, signature_header: Optional[str]) ->
     """
     secret = _webhook_secret()
     if not secret:
-        # No secret configured — Kotani sends payload unsigned per docs
-        # (delivery mode differs based on dashboard config).
+        # No secret configured — Kotani sends payload unsigned per docs.
         return True
     if not signature_header:
         logger.warning("[kotani-webhook] missing X-Kotani-Signature header")
         return False
-    expected = hmac.new(
-        secret.encode(),
-        payload,
-        hashlib.sha256,
-    ).hexdigest()
-    # Constant-time compare
+    expected = hmac.new(secret.encode(), payload, hashlib.sha256).hexdigest()
     return hmac.compare_digest(expected, signature_header.strip())
 
 
