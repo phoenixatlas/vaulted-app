@@ -98,14 +98,16 @@ export default function Remit() {
   const [submitting, setSubmitting] = useState(false);
   const [err, setErr] = useState<string | null>(null);
 
-  // Kotani live sandbox quote (Kenya / M-Pesa only). Purely informational —
-  // gives users a second data point next to our own remit rate. If Kotani's
-  // number diverges > 3% we surface a subtle warning so ops can investigate
-  // stale FX. When the destination isn't KE, kotaniQuote stays null.
+  // Kotani live sandbox quote (Kenya / M-Pesa + Ghana / Mobile Money).
+  // Purely informational — gives users a second data point next to our own
+  // remit rate. If Kotani's number diverges > 3% we surface a subtle warning
+  // so ops can investigate stale FX. When the destination isn't a Kotani
+  // corridor, kotaniQuote stays null.
   const [kotaniQuote, setKotaniQuote] = useState<{
-    kes_amount: number;
+    fiat_amount: number;
+    currency: string;
     rate: number;
-    fee_kes: number;
+    fee: number;
     mode: "live" | "mock";
   } | null>(null);
   const [kotaniQuoteLoading, setKotaniQuoteLoading] = useState(false);
@@ -138,12 +140,21 @@ export default function Remit() {
     return () => clearTimeout(handle);
   }, [amount, dest, srcFiat]);
 
-  // Kotani live quote — only for Kenya destinations. Fires alongside our
-  // own quote so users see the real M-Pesa payout number. We convert the
-  // source fiat to USD approx (using our own quote's USD amount when it's
-  // ready) since Kotani's rate endpoint speaks USDC (≈ USD).
+  // Kotani live quote — supported destinations only. Fires alongside our
+  // own quote so users see the real payout number from Kotani's engine. We
+  // pass the USD amount (Kotani speaks USDC ≈ USD) and let it convert to
+  // the destination currency. Add new corridors here as Kotani enables them.
+  //   KE → KES (M-Pesa) · GH → GHS (MTN / AirtelTigo / Vodafone MoMo)
+  const kotaniConfig = useMemo(() => {
+    const map: Record<string, { currency: string; label: string; network: string }> = {
+      KE: { currency: "KES", label: "M-Pesa live rate", network: "M-Pesa" },
+      GH: { currency: "GHS", label: "Mobile Money live rate", network: "MTN / Vodafone MoMo" },
+    };
+    return map[dest] || null;
+  }, [dest]);
+
   useEffect(() => {
-    if (dest !== "KE" || !quote?.source?.amount_usd) {
+    if (!kotaniConfig || !quote?.source?.amount_usd) {
       setKotaniQuote(null);
       return;
     }
@@ -160,14 +171,15 @@ export default function Remit() {
           mode: "live" | "mock";
         }>("/offramp/mpesa/quote", {
           method: "POST",
-          body: { amount_usd: usdAmount, to_currency: "KES" },
+          body: { amount_usd: usdAmount, to_currency: kotaniConfig.currency },
         });
         const d = res?.kotani?.data;
         if (res?.kotani?.success && d?.fiatAmount != null) {
           setKotaniQuote({
-            kes_amount: Number(d.fiatAmount),
+            fiat_amount: Number(d.fiatAmount),
+            currency: kotaniConfig.currency,
             rate: parseFloat(String(d.value ?? 0)) || 0,
-            fee_kes: Number(d.fee ?? 0),
+            fee: Number(d.fee ?? 0),
             mode: res.mode,
           });
         } else {
@@ -180,16 +192,19 @@ export default function Remit() {
       }
     }, 600);
     return () => clearTimeout(handle);
-  }, [dest, quote?.source?.amount_usd]);
+  }, [dest, kotaniConfig, quote?.source?.amount_usd]);
 
   // Compute divergence between our own quote and Kotani's number. If it's
   // > 3%, we show a subtle warning so a user isn't surprised at settlement.
   const kotaniDivergencePct = useMemo(() => {
-    if (dest !== "KE" || !kotaniQuote || !quote?.destination?.amount) return null;
+    if (!kotaniConfig || !kotaniQuote || !quote?.destination?.amount) return null;
+    // Only compare when the currencies actually match (they always will
+    // when Kotani returned the currency we asked for, but be defensive).
+    if (kotaniQuote.currency !== quote.destination.currency) return null;
     const ours = quote.destination.amount;
     if (ours <= 0) return null;
-    return ((kotaniQuote.kes_amount - ours) / ours) * 100;
-  }, [dest, kotaniQuote, quote?.destination?.amount]);
+    return ((kotaniQuote.fiat_amount - ours) / ours) * 100;
+  }, [kotaniConfig, kotaniQuote, quote?.destination?.amount, quote?.destination?.currency]);
 
   const selectedCorridor = useMemo(() => corridors.find((c) => c.code === dest), [corridors, dest]);
   const isPro = !!user?.is_pro;
@@ -202,9 +217,11 @@ export default function Remit() {
   const addrPlaceholder = isFiatFunding
     ? dest === "KE"
       ? "M-Pesa phone (e.g. +254 712 345 678)"
-      : dest === "GB"
-        ? "Sort code + account number, or IBAN"
-        : "Account number, IBAN, or mobile-money phone"
+      : dest === "GH"
+        ? "Mobile Money phone (e.g. +233 24 123 4567)"
+        : dest === "GB"
+          ? "Sort code + account number, or IBAN"
+          : "Account number, IBAN, or mobile-money phone"
     : quote?.chain?.chain === "XRP"
       ? "r... recipient XRP address"
       : quote?.chain?.chain === "XLM"
@@ -427,13 +444,13 @@ export default function Remit() {
                   <Text style={s.quoteMuted}>Exchange rate</Text>
                   <Text style={s.quoteVal}>1 {quote.source.currency} = {quote.fx_rate.toLocaleString(undefined, { maximumFractionDigits: 4 })} {quote.destination.currency}</Text>
                 </View>
-                {/* Kotani M-Pesa live rate — informational, KE only */}
-                {dest === "KE" && (kotaniQuoteLoading || kotaniQuote) && (
+                {/* Kotani live rate — informational, KE + GH corridors */}
+                {kotaniConfig && (kotaniQuoteLoading || kotaniQuote) && (
                   <View style={s.kotaniRow} testID="remit-kotani-live-rate">
                     <View style={{ flexDirection: "row", alignItems: "center", gap: 6, flexShrink: 1 }}>
                       <Ionicons name="pulse" size={13} color={colors.brand} />
                       <Text style={s.kotaniLabel} numberOfLines={1}>
-                        M-Pesa live rate
+                        {kotaniConfig.label}
                         {kotaniQuote?.mode === "mock" ? " · sandbox est." : kotaniQuote?.mode === "live" ? " · sandbox" : ""}
                       </Text>
                     </View>
@@ -441,18 +458,18 @@ export default function Remit() {
                       <ActivityIndicator size="small" color={colors.brand} />
                     ) : kotaniQuote ? (
                       <Text style={s.kotaniValue}>
-                        {kotaniQuote.kes_amount.toLocaleString(undefined, { maximumFractionDigits: 2 })} KES
+                        {kotaniQuote.fiat_amount.toLocaleString(undefined, { maximumFractionDigits: 2 })} {kotaniQuote.currency}
                       </Text>
                     ) : null}
                   </View>
                 )}
-                {dest === "KE" && kotaniDivergencePct != null && Math.abs(kotaniDivergencePct) > 3 && (
+                {kotaniConfig && kotaniDivergencePct != null && Math.abs(kotaniDivergencePct) > 3 && (
                   <View style={s.kotaniDivergeBox}>
                     <Ionicons name="information-circle-outline" size={14} color={colors.brandDeep} />
                     <Text style={s.kotaniDivergeText}>
                       {kotaniDivergencePct > 0
-                        ? `M-Pesa payout may be ~${kotaniDivergencePct.toFixed(1)}% higher than shown — Kotani rate refreshes at settlement.`
-                        : `M-Pesa payout may be ~${Math.abs(kotaniDivergencePct).toFixed(1)}% lower than shown — Kotani rate refreshes at settlement.`}
+                        ? `${kotaniConfig.network} payout may be ~${kotaniDivergencePct.toFixed(1)}% higher than shown — Kotani rate refreshes at settlement.`
+                        : `${kotaniConfig.network} payout may be ~${Math.abs(kotaniDivergencePct).toFixed(1)}% lower than shown — Kotani rate refreshes at settlement.`}
                     </Text>
                   </View>
                 )}
@@ -583,7 +600,7 @@ export default function Remit() {
                 onChangeText={setAddr}
                 autoCapitalize="none"
                 autoCorrect={false}
-                keyboardType={dest === "KE" || dest === "NG" ? "phone-pad" : "default"}
+                keyboardType={dest === "KE" || dest === "NG" || dest === "GH" ? "phone-pad" : "default"}
                 placeholder={addrPlaceholder}
                 placeholderTextColor={colors.onSurfaceTertiary}
                 style={s.input}
