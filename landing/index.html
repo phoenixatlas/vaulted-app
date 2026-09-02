@@ -1398,6 +1398,17 @@
       <p>We&rsquo;ll invite you to preview Vaulted as soon as authorized services in your corridor go live. No card required. No spam. One email when we launch.</p>
       <form id="waitlist-form" class="waitlist-form" onsubmit="return handleWaitlist(event);" style="max-width: 460px; margin: 24px auto 0; display: flex; gap: 8px; flex-wrap: wrap; justify-content: center;">
         <input id="waitlist-email" type="email" name="email" required placeholder="you@example.com" aria-label="Email address" style="flex: 1 1 240px; min-width: 220px; padding: 14px 18px; border-radius: 999px; border: 1px solid var(--border); background: rgba(255,255,255,0.03); color: var(--text-primary); font-family: 'Inter', sans-serif; font-size: 15px;">
+        <select id="waitlist-corridor" name="corridor" aria-label="Where are you sending money to?" style="flex: 1 1 240px; min-width: 220px; padding: 14px 18px; border-radius: 999px; border: 1px solid var(--border); background: rgba(255,255,255,0.03); color: var(--text-primary); font-family: 'Inter', sans-serif; font-size: 15px; appearance: none; -webkit-appearance: none;">
+          <option value="" disabled selected>Where are you sending money to?</option>
+          <option value="KE">🇰🇪 Kenya (M-Pesa)</option>
+          <option value="GH">🇬🇭 Ghana (Mobile Money)</option>
+          <option value="NG">🇳🇬 Nigeria</option>
+          <option value="UG">🇺🇬 Uganda</option>
+          <option value="TZ">🇹🇿 Tanzania</option>
+          <option value="ZM">🇿🇲 Zambia</option>
+          <option value="ZA">🇿🇦 South Africa</option>
+          <option value="XX">Other / Coming soon</option>
+        </select>
         <button id="waitlist-btn" type="submit" class="btn btn-primary btn-large" style="padding: 14px 28px;">Join the waitlist &rarr;</button>
       </form>
       <p id="waitlist-msg" role="status" aria-live="polite" style="margin-top: 12px; min-height: 20px; font-size: 14px; color: var(--gold-light); font-weight: 500;"></p>
@@ -1413,11 +1424,12 @@
 
     async function handleWaitlist(e) {
       e.preventDefault();
-      var form = document.getElementById('waitlist-form');
       var input = document.getElementById('waitlist-email');
+      var corridorEl = document.getElementById('waitlist-corridor');
       var btn = document.getElementById('waitlist-btn');
       var msg = document.getElementById('waitlist-msg');
       var email = (input.value || '').trim();
+      var corridor = (corridorEl && corridorEl.value ? corridorEl.value : '').trim();
       if (!email) return false;
 
       // Basic client-side email sanity (server re-validates).
@@ -1425,6 +1437,11 @@
       if (!emailOk) {
         msg.style.color = '#ff8a80';
         msg.textContent = 'That doesn\u2019t look like a valid email address.';
+        return false;
+      }
+      if (!corridor) {
+        msg.style.color = '#ff8a80';
+        msg.textContent = 'Please pick a destination so we can invite you at launch.';
         return false;
       }
 
@@ -1438,7 +1455,7 @@
         var res = await fetch(WAITLIST_API_BASE + '/api/waitlist/join', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ email: email, source: 'landing' })
+          body: JSON.stringify({ email: email, corridor: corridor, source: 'landing' })
         });
         var data = {};
         try { data = await res.json(); } catch (_) {}
@@ -1449,6 +1466,7 @@
             ? 'You\u2019re already on the list \u2014 we\u2019ll be in touch. \u2728'
             : 'You\u2019re on the list. Check your inbox for a confirmation. \u2728';
           input.value = '';
+          if (corridorEl) corridorEl.selectedIndex = 0;
         } else if (res.status === 429) {
           msg.style.color = '#ff8a80';
           msg.textContent = 'Slow down \u2014 one submission at a time.';
