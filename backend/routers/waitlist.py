@@ -143,7 +143,7 @@ _CONFIRMATION_HTML = """\
   <hr style="border: none; border-top: 1px solid #EAE5D8; margin: 32px 0 16px;">
   <p style="font-size: 12px; color: #999; text-align: center; margin: 0;">
     Questions? Reply to this email — a human will get back to you.<br>
-    Phoenix Atlas Ltd · UK Company No. registered<br>
+    Phoenix-Atlas Technologies Ltd · UK Company No. 17432346<br>
     <a href="https://app.phoenix-atlas.com/risk-disclosure.html" style="color: #C9A35B;">Cryptoasset risk disclosure</a>
   </p>
 </div>
