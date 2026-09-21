@@ -54,6 +54,140 @@ async def admin_compliance_health(_admin=Depends(require_admin)):
 
 
 # ============================================================================
+# ADMIN — Kotani Pay sandbox health probe
+# ============================================================================
+# Real-time introspection of the Kotani off-ramp integration: mode
+# (live/mock), endpoint the SDK is pointed at, and — critically — which of
+# the four service surfaces are actually enabled on the integrator
+# account. Kotani gates services individually on the dashboard side
+# (`integratorEnabled` flags per service), so a valid API key doesn't
+# imply every call will succeed. This endpoint probes each surface with a
+# harmless request and reports back so we can see the gate flip
+# server-side the moment Kotani support enables it.
+@router.get("/admin/kotani/health")
+async def admin_kotani_health(_admin=Depends(require_admin)):
+    """Probe Kotani sandbox surfaces and report per-service health so
+    operators can eyeball what's actually enabled without SSH-ing in."""
+    # Import inside the handler so a missing kotani module never breaks
+    # the whole admin router at boot.
+    import kotani
+
+    diagnostic = kotani.diagnostic_info()
+    checked_at = iso(now_utc())
+
+    async def _probe_health() -> dict:
+        try:
+            r = await kotani.health()
+            return {
+                "ok": bool(r.get("success", True)),
+                "status_code": 200,
+                "detail": (r.get("data") or {}).get("status") or r.get("message"),
+            }
+        except Exception as e:  # noqa: BLE001
+            return {"ok": False, "status_code": None, "detail": f"exception: {type(e).__name__}: {str(e)[:200]}"}
+
+    async def _probe_rate() -> dict:
+        """A rate quote is safe / non-mutating — pings USDC→KES for $1."""
+        try:
+            r = await kotani.offramp_rate(from_token="USDC", to_currency="KES", crypto_amount=1.0)
+            if r.get("success"):
+                data = r.get("data") or {}
+                return {
+                    "ok": True,
+                    "detail": f"1 USDC ≈ {data.get('fiatAmount')} KES (rate={data.get('value')})",
+                }
+            # Extract inner error for 403 propagation via kotani._envelope
+            inner = (r.get("data") or {})
+            return {
+                "ok": False,
+                "detail": inner.get("message") or r.get("message") or "unknown",
+                "error_code": inner.get("error_code"),
+                "service": (inner.get("data") or {}).get("service"),
+                "integrator_enabled": (inner.get("data") or {}).get("integratorEnabled"),
+            }
+        except Exception as e:  # noqa: BLE001
+            return {"ok": False, "detail": f"exception: {type(e).__name__}: {str(e)[:200]}"}
+
+    async def _probe_customer_create() -> dict:
+        """Attempt to (idempotently) register the +254 sandbox test number.
+        Kotani docs list +254712345678 as a safe sandbox recipient. If the
+        service isn't enabled we get the specific error string we're
+        watching for; if it succeeds we get a customer_key."""
+        try:
+            r = await kotani.create_mobile_money_customer(
+                phone_number="+254712345678",
+                country_code="KE",
+                network="MPESA",
+                first_name="Vaulted",
+                last_name="HealthProbe",
+                account_name="Vaulted Health Probe",
+            )
+            if r.get("success"):
+                return {
+                    "ok": True,
+                    "detail": f"customer_key {kotani.extract_customer_key(r)}",
+                }
+            inner = (r.get("data") or {})
+            return {
+                "ok": False,
+                "detail": inner.get("message") or r.get("message") or "unknown",
+                "error_code": inner.get("error_code"),
+                "service": (inner.get("data") or {}).get("service"),
+                "integrator_enabled": (inner.get("data") or {}).get("integratorEnabled"),
+            }
+        except Exception as e:  # noqa: BLE001
+            return {"ok": False, "detail": f"exception: {type(e).__name__}: {str(e)[:200]}"}
+
+    health_res = await _probe_health()
+    rate_res = await _probe_rate()
+    customer_res = await _probe_customer_create()
+
+    # Overall readiness gate: all four v3 surfaces must be green before
+    # we can flip the app off of mock mode in production. We don't probe
+    # `create_offramp` in health because it would mutate real Kotani state
+    # (mint a session) — we infer from `customer_create` succeeding that
+    # `offramp` is in the same permission group.
+    overall_ready = health_res["ok"] and rate_res["ok"] and customer_res["ok"]
+
+    # Persist a rolling history of probes so admins can see when the gate
+    # flipped (Kotani doesn't email you when they enable a service).
+    row = {
+        "checked_at": checked_at,
+        "mode": diagnostic.get("mode"),
+        "overall_ready": overall_ready,
+        "health": health_res,
+        "rate_quote": rate_res,
+        "customer_create": customer_res,
+    }
+    try:
+        await db.kotani_health_probes.insert_one(row)
+        # Keep only last 50 probes to avoid unbounded growth.
+        count = await db.kotani_health_probes.count_documents({})
+        if count > 50:
+            oldest = await db.kotani_health_probes.find({}, {"_id": 1}).sort("checked_at", 1).limit(count - 50).to_list(length=count - 50)
+            if oldest:
+                await db.kotani_health_probes.delete_many({"_id": {"$in": [o["_id"] for o in oldest]}})
+    except Exception as e:  # noqa: BLE001
+        logger.warning("kotani_health_probes insert failed: %s", e)
+
+    # Get the last 5 probes for a mini history strip in the UI.
+    history_cursor = db.kotani_health_probes.find({}, {"_id": 0}).sort("checked_at", -1).limit(5)
+    history = await history_cursor.to_list(length=5)
+
+    return {
+        "diagnostic": diagnostic,
+        "overall_ready": overall_ready,
+        "probes": {
+            "health": health_res,
+            "rate_quote": rate_res,
+            "customer_create": customer_res,
+        },
+        "history": history,
+        "checked_at": checked_at,
+    }
+
+
+# ============================================================================
 # MANUAL EDD (Enhanced Due Diligence) — admin-triggered KYC approval
 # ============================================================================
 # Stripe Identity's automated face-match / document-check algorithms can't
