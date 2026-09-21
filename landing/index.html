@@ -457,6 +457,21 @@
       padding: 4px 10px; border-radius: 999px;
     }
     .corridor-country { font-size: 17px; font-weight: 700; color: var(--gold-cream); margin-bottom: 4px; }
+    .live-rate-badge {
+      display: inline-block;
+      font-size: 9px;
+      font-weight: 700;
+      letter-spacing: 1.2px;
+      text-transform: uppercase;
+      color: var(--gold);
+      background: rgba(201,163,91,0.12);
+      border: 1px solid rgba(201,163,91,0.35);
+      border-radius: 999px;
+      padding: 2px 8px;
+      margin-left: 8px;
+      vertical-align: middle;
+      white-space: nowrap;
+    }
     .corridor-currency { font-size: 12px; color: var(--text-muted); letter-spacing: 1.5px; text-transform: uppercase; margin-bottom: 18px; }
     .corridor-example {
       background: rgba(10, 8, 7, 0.55);
@@ -992,12 +1007,15 @@
         <a class="btn btn-ghost btn-large" href="https://app.phoenix-atlas.com">Preview the app</a>
       </div>
       <div class="hero-chips">
-        <div class="chip">&#127477;&#127472; Kenya &middot; KES</div>
+        <div class="chip">&#127472;&#127466; Kenya &middot; KES</div>
+        <div class="chip">&#127468;&#127469; Ghana &middot; GHS</div>
+        <div class="chip">&#127481;&#127487; Tanzania &middot; TZS</div>
+        <div class="chip">&#127487;&#127474; Zambia &middot; ZMW</div>
+        <div class="chip">&#127482;&#127468; Uganda &middot; UGX</div>
         <div class="chip">&#127475;&#127468; Nigeria &middot; NGN</div>
         <div class="chip">&#127470;&#127475; India &middot; INR</div>
         <div class="chip">🇵🇭 Philippines · PHP</div>
         <div class="chip">🇸🇳 Senegal · XOF</div>
-        <div class="chip">🇬🇭 Ghana · GHS</div>
         <div class="chip">🇲🇽 Mexico · MXN</div>
       </div>
     </div>
@@ -1008,15 +1026,43 @@
     <div class="container">
       <div class="corridors-hero">
         <div class="section-eyebrow">Planned corridors</div>
-        <div class="corridor-headline">Sending money to <span class="italic">eight countries</span>, once we&rsquo;re live.</div>
-        <p class="section-sub">Fiat-first UX. Enter pounds, dollars or euros &mdash; recipient gets their local currency. Vaulted will auto-pick the cheapest chain (XLM, XRP, or USDC on Polygon / Base / Arbitrum) so you never pay Ethereum L1 gas. Amounts below are <strong>illustrative examples</strong>, not live quotes.</p>
+        <div class="corridor-headline">Sending money to <span class="italic">eleven countries</span>, once we&rsquo;re live.</div>
+        <p class="section-sub">Fiat-first UX. Enter pounds, dollars or euros &mdash; recipient gets their local currency. Vaulted will auto-pick the cheapest chain (XLM, XRP, or USDC on Polygon / Base / Arbitrum) so you never pay Ethereum L1 gas. Four East / Central African rails (Kenya, Ghana, Tanzania, Zambia) already return <strong>live rates from our off-ramp partner&rsquo;s sandbox</strong>; the remaining seven come online as we complete their local licensing. Amounts below are <strong>illustrative examples</strong>, not live quotes.</p>
       </div>
       <div class="corridors-grid">
         <a class="corridor-card" href="https://app.phoenix-atlas.com">
           <div class="corridor-top"><span class="corridor-flag">🇰🇪</span><span class="corridor-eta">~30 sec</span></div>
-          <div class="corridor-country">Kenya</div>
+          <div class="corridor-country">Kenya <span class="live-rate-badge">Live sandbox rate</span></div>
           <div class="corridor-currency">KES · via M-Pesa (Phase C)</div>
           <div class="corridor-example">£50 <span class="arrow">→</span> <span class="receive">~8,631 KES</span></div>
+          <div class="corridor-fee">Fee <strong>£0.75</strong> · Free tier: 3 sends / month</div>
+        </a>
+        <a class="corridor-card" href="https://app.phoenix-atlas.com">
+          <div class="corridor-top"><span class="corridor-flag">🇬🇭</span><span class="corridor-eta">~30 sec</span></div>
+          <div class="corridor-country">Ghana <span class="live-rate-badge">Live sandbox rate</span></div>
+          <div class="corridor-currency">GHS · via MTN / Vodafone MoMo (Phase C)</div>
+          <div class="corridor-example">£50 <span class="arrow">→</span> <span class="receive">~761 GHS</span></div>
+          <div class="corridor-fee">Fee <strong>£0.75</strong> · Free tier: 3 sends / month</div>
+        </a>
+        <a class="corridor-card" href="https://app.phoenix-atlas.com">
+          <div class="corridor-top"><span class="corridor-flag">🇹🇿</span><span class="corridor-eta">~30 sec</span></div>
+          <div class="corridor-country">Tanzania <span class="live-rate-badge">Live sandbox rate</span></div>
+          <div class="corridor-currency">TZS · Vodacom / Airtel / Tigo (Phase C)</div>
+          <div class="corridor-example">£50 <span class="arrow">→</span> <span class="receive">~162,946 TZS</span></div>
+          <div class="corridor-fee">Fee <strong>£0.75</strong> · Free tier: 3 sends / month</div>
+        </a>
+        <a class="corridor-card" href="https://app.phoenix-atlas.com">
+          <div class="corridor-top"><span class="corridor-flag">🇿🇲</span><span class="corridor-eta">~30 sec</span></div>
+          <div class="corridor-country">Zambia <span class="live-rate-badge">Live sandbox rate</span></div>
+          <div class="corridor-currency">ZMW · MTN / Airtel MoMo (Phase C)</div>
+          <div class="corridor-example">£50 <span class="arrow">→</span> <span class="receive">~1,209 ZMW</span></div>
+          <div class="corridor-fee">Fee <strong>£0.75</strong> · Free tier: 3 sends / month</div>
+        </a>
+        <a class="corridor-card" href="https://app.phoenix-atlas.com">
+          <div class="corridor-top"><span class="corridor-flag">🇺🇬</span><span class="corridor-eta">~1 min</span></div>
+          <div class="corridor-country">Uganda</div>
+          <div class="corridor-currency">UGX · MTN / Airtel Money (Phase C)</div>
+          <div class="corridor-example">£50 <span class="arrow">→</span> <span class="receive">~233,618 UGX</span></div>
           <div class="corridor-fee">Fee <strong>£0.75</strong> · Free tier: 3 sends / month</div>
         </a>
         <a class="corridor-card" href="https://app.phoenix-atlas.com">
@@ -1052,13 +1098,6 @@
           <div class="corridor-country">Côte d'Ivoire</div>
           <div class="corridor-currency">XOF · Wave / Orange Money</div>
           <div class="corridor-example">£50 <span class="arrow">→</span> <span class="receive">~40,158 XOF</span></div>
-          <div class="corridor-fee">Fee <strong>£0.75</strong> · Free tier: 3 sends / month</div>
-        </a>
-        <a class="corridor-card" href="https://app.phoenix-atlas.com">
-          <div class="corridor-top"><span class="corridor-flag">🇬🇭</span><span class="corridor-eta">~30 sec</span></div>
-          <div class="corridor-country">Ghana</div>
-          <div class="corridor-currency">GHS · MoMo (Phase C)</div>
-          <div class="corridor-example">£50 <span class="arrow">→</span> <span class="receive">~1,008 GHS</span></div>
           <div class="corridor-fee">Fee <strong>£0.75</strong> · Free tier: 3 sends / month</div>
         </a>
         <a class="corridor-card" href="https://app.phoenix-atlas.com">
@@ -1231,7 +1270,7 @@
       <div class="section-head">
         <div class="section-eyebrow">How it compares</div>
         <h2 class="section-title">Built for both crowds. <span class="italic">Priced for people.</span></h2>
-        <p class="section-sub" style="margin-top: 12px;">Vaulted&rsquo;s planned launch pricing next to today&rsquo;s alternatives for a &pound;50 GBP &rarr; KES send to Kenya. Competitor figures are drawn from public rate cards as of July 2026 and can change &mdash; check their sites before comparing.</p>
+        <p class="section-sub" style="margin-top: 12px;">Vaulted&rsquo;s planned launch pricing next to today&rsquo;s alternatives for a &pound;50 send to any of our four African mobile-money corridors (Kenya, Ghana, Tanzania, Zambia). Competitor figures are drawn from public rate cards as of July 2026 and can change &mdash; check their sites before comparing.</p>
       </div>
 
       <table class="compare-table" role="table" aria-label="Vaulted compared to Wise, Remitly, and sending via a crypto exchange">
@@ -1246,14 +1285,14 @@
         </thead>
         <tbody>
           <tr>
-            <td class="row-label" data-brand="Feature">Typical fee &pound;50 &rarr; KES</td>
+            <td class="row-label" data-brand="Feature">Typical fee for a &pound;50 send<br>(East Africa mobile money)</td>
             <td class="vaulted-col" data-brand="Vaulted">Target <strong>from &pound;0.50</strong></td>
             <td data-brand="Wise">&pound;0.70&ndash;&pound;1.50</td>
             <td data-brand="Remitly">&pound;1.99&ndash;&pound;3.99</td>
             <td data-brand="Crypto exchange">&pound;3&ndash;&pound;10+ (multi-step)</td>
           </tr>
           <tr>
-            <td class="row-label" data-brand="Feature">Typical settlement to M-Pesa</td>
+            <td class="row-label" data-brand="Feature">Typical settlement to mobile money<br>(M-Pesa &middot; MoMo &middot; Vodacom &middot; Airtel)</td>
             <td class="vaulted-col" data-brand="Vaulted">Target <strong>~30 seconds</strong></td>
             <td data-brand="Wise">Minutes to hours</td>
             <td data-brand="Remitly">Minutes (Express) &middot; 3&ndash;5 days (Economy)</td>
@@ -1296,7 +1335,7 @@
           </tr>
           <tr>
             <td class="row-label" data-brand="Feature">Planned corridors</td>
-            <td class="vaulted-col" data-brand="Vaulted">8 (KE, NG, GH, CI, SN, IN, PH, MX)</td>
+            <td class="vaulted-col" data-brand="Vaulted"><strong>4 African rails live in sandbox</strong> (KE, GH, TZ, ZM) &middot; 7 more in build (UG, NG, CI, SN, IN, PH, MX)</td>
             <td data-brand="Wise">80+ countries</td>
             <td data-brand="Remitly">170+ countries</td>
             <td data-brand="Crypto exchange">Anywhere you can find a local off-ramp</td>
@@ -1312,7 +1351,7 @@
       </table>
 
       <p class="compare-note">
-        Fees quoted are typical retail rates for a &pound;50 GBP &rarr; KES M-Pesa send as advertised on each provider&rsquo;s public rate card in July 2026. Actual fees, FX margins, and settlement times vary by day, corridor, funding method, and account type. Vaulted&rsquo;s figures are <strong>planned launch targets</strong> and subject to change; live pricing will only be available once FCA-authorized. Comparisons are for illustrative purposes only and do not constitute an endorsement or criticism of any other service.
+        Fees quoted are typical retail rates for a &pound;50 send from GBP to mobile-money accounts across our four live-rate African corridors (Kenya M-Pesa, Ghana MoMo, Tanzania Vodacom/Airtel/Tigo, Zambia MTN/Airtel), as advertised on each provider&rsquo;s public rate card in July 2026. Actual fees, FX margins, and settlement times vary by day, corridor, funding method, and account type. Vaulted&rsquo;s figures are <strong>planned launch targets</strong> and subject to change; live pricing will only be available once FCA-authorized. Comparisons are for illustrative purposes only and do not constitute an endorsement or criticism of any other service.
       </p>
     </div>
   </section>
