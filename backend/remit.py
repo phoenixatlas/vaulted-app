@@ -34,12 +34,15 @@ logger = logging.getLogger("vaulted.remit")
 # volume and existing (or imminent) crypto off-ramp presence.
 CORRIDORS: dict[str, dict] = {
     "KE": {"country": "Kenya", "currency": "KES", "flag": "🇰🇪", "receive_via": "M-Pesa (via partner)", "eta": "~30s"},
+    "GH": {"country": "Ghana", "currency": "GHS", "flag": "🇬🇭", "receive_via": "MoMo (via partner)", "eta": "~30s"},
+    "TZ": {"country": "Tanzania", "currency": "TZS", "flag": "🇹🇿", "receive_via": "Vodacom / Airtel / Tigo (via partner)", "eta": "~30s"},
+    "ZM": {"country": "Zambia", "currency": "ZMW", "flag": "🇿🇲", "receive_via": "MTN / Airtel MoMo (via partner)", "eta": "~30s"},
+    "UG": {"country": "Uganda", "currency": "UGX", "flag": "🇺🇬", "receive_via": "MTN / Airtel Money (via partner)", "eta": "~1min"},
     "NG": {"country": "Nigeria", "currency": "NGN", "flag": "🇳🇬", "receive_via": "Bank transfer (via partner)", "eta": "~1min"},
     "IN": {"country": "India", "currency": "INR", "flag": "🇮🇳", "receive_via": "UPI / bank (via partner)", "eta": "~1min"},
     "PH": {"country": "Philippines", "currency": "PHP", "flag": "🇵🇭", "receive_via": "GCash / bank (via partner)", "eta": "~1min"},
     "SN": {"country": "Senegal", "currency": "XOF", "flag": "🇸🇳", "receive_via": "Wave / Orange Money (via partner)", "eta": "~30s"},
     "CI": {"country": "Côte d'Ivoire", "currency": "XOF", "flag": "🇨🇮", "receive_via": "Wave / Orange Money (via partner)", "eta": "~30s"},
-    "GH": {"country": "Ghana", "currency": "GHS", "flag": "🇬🇭", "receive_via": "MoMo (via partner)", "eta": "~30s"},
     "MX": {"country": "Mexico", "currency": "MXN", "flag": "🇲🇽", "receive_via": "SPEI / bank (via partner)", "eta": "~1min"},
 }
 

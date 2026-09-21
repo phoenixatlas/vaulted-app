@@ -144,11 +144,25 @@ export default function Remit() {
   // own quote so users see the real payout number from Kotani's engine. We
   // pass the USD amount (Kotani speaks USDC ≈ USD) and let it convert to
   // the destination currency. Add new corridors here as Kotani enables them.
-  //   KE → KES (M-Pesa) · GH → GHS (MTN / AirtelTigo / Vodafone MoMo)
+  //
+  // Sandbox status (Sep 2026):
+  //   KE / KES · M-Pesa                   → LIVE
+  //   GH / GHS · MTN/Vodafone MoMo        → LIVE
+  //   TZ / TZS · Vodacom / Airtel / Tigo  → LIVE
+  //   ZM / ZMW · MTN / Airtel MoMo        → LIVE
+  //   UG / UGX · MTN / Airtel Money       → placeholder (pending Kotani "OFFRAMP UG" flag)
+  //   NG / NGN · Bank transfer            → placeholder (pending Kotani "OFFRAMP NG" flag)
+  // Placeholder corridors silently render nothing until Kotani flips the
+  // service flag — the `!success` branch sets kotaniQuote to null, so no
+  // stale/half-rendered row is ever shown.
   const kotaniConfig = useMemo(() => {
     const map: Record<string, { currency: string; label: string; network: string }> = {
       KE: { currency: "KES", label: "M-Pesa live rate", network: "M-Pesa" },
       GH: { currency: "GHS", label: "Mobile Money live rate", network: "MTN / Vodafone MoMo" },
+      TZ: { currency: "TZS", label: "Mobile Money live rate", network: "Vodacom / Airtel / Tigo" },
+      ZM: { currency: "ZMW", label: "Mobile Money live rate", network: "MTN / Airtel Money" },
+      UG: { currency: "UGX", label: "Mobile Money live rate", network: "MTN / Airtel Money" },
+      NG: { currency: "NGN", label: "Bank transfer live rate", network: "Bank transfer" },
     };
     return map[dest] || null;
   }, [dest]);
@@ -219,9 +233,15 @@ export default function Remit() {
       ? "M-Pesa phone (e.g. +254 712 345 678)"
       : dest === "GH"
         ? "Mobile Money phone (e.g. +233 24 123 4567)"
-        : dest === "GB"
-          ? "Sort code + account number, or IBAN"
-          : "Account number, IBAN, or mobile-money phone"
+        : dest === "TZ"
+          ? "Mobile Money phone (e.g. +255 71 234 5678)"
+          : dest === "ZM"
+            ? "Mobile Money phone (e.g. +260 97 123 4567)"
+            : dest === "UG"
+              ? "Mobile Money phone (e.g. +256 77 123 4567)"
+              : dest === "GB"
+                ? "Sort code + account number, or IBAN"
+                : "Account number, IBAN, or mobile-money phone"
     : quote?.chain?.chain === "XRP"
       ? "r... recipient XRP address"
       : quote?.chain?.chain === "XLM"
@@ -600,7 +620,7 @@ export default function Remit() {
                 onChangeText={setAddr}
                 autoCapitalize="none"
                 autoCorrect={false}
-                keyboardType={dest === "KE" || dest === "NG" || dest === "GH" ? "phone-pad" : "default"}
+                keyboardType={["KE", "NG", "GH", "TZ", "ZM", "UG"].includes(dest) ? "phone-pad" : "default"}
                 placeholder={addrPlaceholder}
                 placeholderTextColor={colors.onSurfaceTertiary}
                 style={s.input}
