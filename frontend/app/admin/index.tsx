@@ -48,9 +48,24 @@ type KotaniHealth = {
   checked_at: string;
 };
 
+type WaitlistStats = {
+  total: number;
+  by_corridor: Record<string, number>;
+  breakdown: { corridor: string; corridor_name: string; count: number }[];
+  corridors: Record<string, string>;
+};
+
+// Country-code → flag emoji. Kept in sync with the landing dropdown so the
+// admin dashboard reads the same as the acquisition surface.
+const CORRIDOR_FLAGS: Record<string, string> = {
+  KE: "🇰🇪", GH: "🇬🇭", NG: "🇳🇬", UG: "🇺🇬",
+  TZ: "🇹🇿", ZM: "🇿🇲", ZA: "🇿🇦", XX: "🌐",
+};
+
 export default function AdminHome() {
   const router = useRouter();
   const [health, setHealth] = useState<KotaniHealth | null>(null);
+  const [waitlist, setWaitlist] = useState<WaitlistStats | null>(null);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [err, setErr] = useState<string | null>(null);
@@ -58,8 +73,15 @@ export default function AdminHome() {
   const load = useCallback(async () => {
     setErr(null);
     try {
-      const r = await api<KotaniHealth>("/admin/kotani/health");
-      setHealth(r);
+      // Fire both in parallel — one slow endpoint shouldn't block the other.
+      const [h, w] = await Promise.all([
+        api<KotaniHealth>("/admin/kotani/health").catch((e) => { throw e; }),
+        // Waitlist stats is optional — a 500 here shouldn't blank the whole
+        // page, so we swallow and render null if it fails.
+        api<WaitlistStats>("/admin/waitlist/stats").catch(() => null),
+      ]);
+      setHealth(h);
+      setWaitlist(w);
     } catch (e: any) {
       // 403 usually = your account isn't in ADMIN_EMAILS on this environment.
       setErr(e?.message || "Failed to load admin health");
@@ -184,6 +206,9 @@ export default function AdminHome() {
           ) : null}
         </View>
 
+        {/* Waitlist stats card */}
+        <WaitlistCard stats={waitlist} loading={loading} />
+
         {/* Quick links */}
         <View style={s.card}>
           <Text style={s.cardTitle}>Tools</Text>
@@ -242,6 +267,108 @@ function Chip({ label, bad }: { label: string; bad?: boolean }) {
   return (
     <View style={[s.chip, bad && s.chipBad]}>
       <Text style={[s.chipText, bad && s.chipTextBad]}>{label}</Text>
+    </View>
+  );
+}
+
+// WaitlistCard — corridor breakdown of the marketing waitlist. Renders a
+// "how many joined and where do they want to send to" glanceable summary.
+// Bars are relative to the largest corridor so a small waitlist still fills
+// the card visually. Empty state is friendly (no signups yet).
+function WaitlistCard({
+  stats, loading,
+}: {
+  stats: WaitlistStats | null;
+  loading: boolean;
+}) {
+  if (loading && !stats) {
+    return (
+      <View style={s.card}>
+        <View style={s.cardHeaderRow}>
+          <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
+            <Ionicons name="people-outline" size={18} color={colors.brand} />
+            <Text style={s.cardTitle}>Waitlist</Text>
+          </View>
+        </View>
+        <View style={s.loadingBox}>
+          <ActivityIndicator color={colors.brand} />
+          <Text style={s.loadingText}>Loading signups…</Text>
+        </View>
+      </View>
+    );
+  }
+  if (!stats) return null;  // Fetch failed silently (non-admin, etc.)
+
+  // Sort by count descending, then alphabetically for stability.
+  const rows = [...stats.breakdown].sort((a, b) => {
+    if (b.count !== a.count) return b.count - a.count;
+    return a.corridor.localeCompare(b.corridor);
+  });
+  const maxCount = rows[0]?.count || 1;
+
+  return (
+    <View style={s.card}>
+      <View style={s.cardHeaderRow}>
+        <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
+          <Ionicons name="people-outline" size={18} color={colors.brand} />
+          <Text style={s.cardTitle}>Waitlist</Text>
+        </View>
+        <View style={s.totalPill}>
+          <Text style={s.totalPillText}>{stats.total} total</Text>
+        </View>
+      </View>
+
+      {stats.total === 0 ? (
+        <View style={s.emptyBox}>
+          <Ionicons name="sparkles-outline" size={24} color={colors.onSurfaceTertiary} />
+          <Text style={s.emptyText}>No signups yet. Share the landing to fill this up.</Text>
+        </View>
+      ) : (
+        <View style={{ gap: 8 }}>
+          {rows.map((row) => (
+            <CorridorBar
+              key={row.corridor}
+              code={row.corridor}
+              name={row.corridor_name}
+              count={row.count}
+              max={maxCount}
+              total={stats.total}
+            />
+          ))}
+        </View>
+      )}
+    </View>
+  );
+}
+
+function CorridorBar({
+  code, name, count, max, total,
+}: {
+  code: string;
+  name: string;
+  count: number;
+  max: number;
+  total: number;
+}) {
+  const pct = max > 0 ? (count / max) * 100 : 0;
+  const shareOfTotal = total > 0 ? (count / total) * 100 : 0;
+  const flag = CORRIDOR_FLAGS[code] || "🌐";
+  return (
+    <View>
+      <View style={s.corridorRow}>
+        <View style={{ flexDirection: "row", alignItems: "center", gap: 6, flexShrink: 1 }}>
+          <Text style={s.corridorFlag}>{flag}</Text>
+          <Text style={s.corridorName} numberOfLines={1}>{name}</Text>
+          <Text style={s.corridorCode}>{code}</Text>
+        </View>
+        <View style={{ flexDirection: "row", alignItems: "baseline", gap: 6 }}>
+          <Text style={s.corridorCount}>{count}</Text>
+          <Text style={s.corridorPct}>· {shareOfTotal.toFixed(0)}%</Text>
+        </View>
+      </View>
+      <View style={s.barTrack}>
+        <View style={[s.barFill, { width: `${Math.max(4, pct)}%` }]} />
+      </View>
     </View>
   );
 }
@@ -350,4 +477,38 @@ const s = StyleSheet.create({
   },
   toolTitle: { fontSize: 14, fontWeight: "600", color: colors.onSurface },
   toolSub: { fontSize: 11, color: colors.onSurfaceSecondary, marginTop: 2 },
+
+  // Waitlist card
+  totalPill: {
+    paddingHorizontal: 10, paddingVertical: 4,
+    borderRadius: radius.pill,
+    backgroundColor: colors.brand + "18",
+  },
+  totalPillText: { fontSize: 11, color: colors.brand, fontWeight: "700", letterSpacing: 0.3 },
+  emptyBox: {
+    alignItems: "center", gap: 8, paddingVertical: spacing.md,
+  },
+  emptyText: { fontSize: 12, color: colors.onSurfaceSecondary, textAlign: "center" },
+
+  corridorRow: {
+    flexDirection: "row", justifyContent: "space-between", alignItems: "center",
+    marginBottom: 4, gap: 8,
+  },
+  corridorFlag: { fontSize: 14 },
+  corridorName: { fontSize: 12.5, color: colors.onSurface, fontWeight: "600", flexShrink: 1 },
+  corridorCode: {
+    fontSize: 9.5, color: colors.onSurfaceTertiary,
+    fontFamily: "Menlo", letterSpacing: 0.5,
+  },
+  corridorCount: { fontSize: 13, color: colors.onSurface, fontWeight: "700" },
+  corridorPct: { fontSize: 10, color: colors.onSurfaceSecondary },
+  barTrack: {
+    height: 5, borderRadius: 3, overflow: "hidden",
+    backgroundColor: colors.divider,
+  },
+  barFill: {
+    height: "100%",
+    backgroundColor: colors.brand,
+    borderRadius: 3,
+  },
 });

@@ -339,7 +339,7 @@ try:  # avoid a hard import at module top so a missing admin dep doesn't
     # break the whole router — the endpoint just won't register.
     from deps import require_admin
 
-    @router.get("/waitlist/stats")
+    @router.get("/admin/waitlist/stats")
     async def waitlist_stats(_=Depends(require_admin)):
         """Corridor breakdown of the waitlist. Admin-only."""
         total = await db.waitlist.count_documents({})
