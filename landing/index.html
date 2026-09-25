@@ -1057,6 +1057,7 @@
         <a href="#who-its-for">Who it&rsquo;s for</a>
         <a href="#reverse">Reverse</a>
         <a href="#compare">Compare</a>
+        <a href="#invest">Investors</a>
         <a href="#pricing">Pricing</a>
         <a href="#security">Security</a>
         <a class="btn btn-launch" href="https://app.phoenix-atlas.com">Preview app &rarr;</a>
@@ -1074,6 +1075,9 @@
         <a class="btn btn-primary btn-large" href="#waitlist">Join the waitlist &rarr;</a>
         <a class="btn btn-ghost btn-large" href="https://app.phoenix-atlas.com">Preview the app</a>
       </div>
+      <p style="margin-top: 14px; font-size: 12px; color: var(--text-muted);">
+        Investor or payment-bank partner? <a href="#invest" style="color: var(--gold-light); text-decoration: underline;">Get the reverse-corridor one-pager (PDF)</a>.
+      </p>
       <div class="hero-chips">
         <div class="chip">&#127472;&#127466; Kenya &middot; KES</div>
         <div class="chip">&#127468;&#127469; Ghana &middot; GHS</div>
@@ -1598,6 +1602,111 @@
       <p style="margin-top: 32px; font-size: 12px; color: var(--text-muted);">Prefer to see the app in preview mode first? <a href="https://app.phoenix-atlas.com" style="color: var(--gold-light);">Preview the app &rarr;</a></p>
     </div>
   </section>
+
+  <!-- INVESTOR / PARTNER ONE-PAGER — email-gated PDF download -->
+  <section id="invest" style="background: linear-gradient(180deg, var(--bg-elevated) 0%, var(--bg-primary) 100%); padding: 80px 20px;">
+    <div class="container" style="max-width: 780px; text-align: center;">
+      <div class="section-eyebrow" style="color: var(--gold);">For Investors &amp; Partners</div>
+      <h2 style="font-size: 32px; line-height: 1.2; color: var(--text-primary); margin-bottom: 12px;">The reverse-corridor <span class="italic" style="font-family: 'Cormorant Garamond', serif; color: var(--gold-light);">unit economics</span>.</h2>
+      <p style="color: var(--text-secondary); font-size: 15px; line-height: 1.6; max-width: 620px; margin: 0 auto 28px;">
+        A one-page PDF with the full waterfall: what a &pound;1,000 send from Africa to the UK actually costs, what Vaulted keeps, and what we&rsquo;re raising / offering as a white-label to African payment banks. Real live-rate corridors (Kenya &amp; South Africa) already running today.
+      </p>
+
+      <div class="investor-card" style="background: linear-gradient(160deg, rgba(201,163,91,0.10) 0%, var(--bg-card) 100%); border: 1px solid rgba(201,163,91,0.32); border-radius: 24px; padding: 32px 28px; text-align: left; max-width: 640px; margin: 0 auto;">
+        <div id="investor-form-wrap">
+          <form id="investor-form" onsubmit="return handleInvestor(event);">
+            <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 12px;">
+              <label style="display: flex; flex-direction: column; gap: 6px; font-size: 12px; color: var(--text-muted); font-weight: 600;">
+                Full name
+                <input id="inv-name" type="text" required placeholder="Jane Doe" style="padding: 12px 14px; border-radius: 10px; border: 1px solid var(--border); background: rgba(255,255,255,0.03); color: var(--text-primary); font-family: 'Inter', sans-serif; font-size: 14px;">
+              </label>
+              <label style="display: flex; flex-direction: column; gap: 6px; font-size: 12px; color: var(--text-muted); font-weight: 600;">
+                Work email
+                <input id="inv-email" type="email" required placeholder="you@fund.com" style="padding: 12px 14px; border-radius: 10px; border: 1px solid var(--border); background: rgba(255,255,255,0.03); color: var(--text-primary); font-family: 'Inter', sans-serif; font-size: 14px;">
+              </label>
+              <label style="display: flex; flex-direction: column; gap: 6px; font-size: 12px; color: var(--text-muted); font-weight: 600;">
+                Firm / Company
+                <input id="inv-company" type="text" placeholder="Acme Partners" style="padding: 12px 14px; border-radius: 10px; border: 1px solid var(--border); background: rgba(255,255,255,0.03); color: var(--text-primary); font-family: 'Inter', sans-serif; font-size: 14px;">
+              </label>
+              <label style="display: flex; flex-direction: column; gap: 6px; font-size: 12px; color: var(--text-muted); font-weight: 600;">
+                Role
+                <select id="inv-role" style="padding: 12px 14px; border-radius: 10px; border: 1px solid var(--border); background: rgba(255,255,255,0.03); color: var(--text-primary); font-family: 'Inter', sans-serif; font-size: 14px; appearance: none; -webkit-appearance: none;">
+                  <option value="">Choose one</option>
+                  <option>VC / Angel</option>
+                  <option>Family Office</option>
+                  <option>Payment Bank / PSP</option>
+                  <option>Corporate Development</option>
+                  <option>Journalist / Analyst</option>
+                  <option>Other</option>
+                </select>
+              </label>
+            </div>
+            <label style="display: block; margin-top: 14px; font-size: 12px; color: var(--text-muted); font-weight: 600;">
+              Anything specific you&rsquo;d like to explore? <span style="color: var(--text-muted); font-weight: 400;">(optional)</span>
+              <textarea id="inv-note" rows="2" placeholder="e.g. white-label integration for our Nigeria on-ramp, capacity check, timing for Phase 2..." style="width: 100%; margin-top: 6px; padding: 12px 14px; border-radius: 10px; border: 1px solid var(--border); background: rgba(255,255,255,0.03); color: var(--text-primary); font-family: 'Inter', sans-serif; font-size: 13px; resize: vertical;"></textarea>
+            </label>
+            <button id="inv-btn" type="submit" class="btn btn-primary btn-large" style="margin-top: 18px; width: 100%; padding: 14px 28px;">
+              Get the one-pager (PDF) &rarr;
+            </button>
+            <p style="margin-top: 12px; font-size: 11px; color: var(--text-muted); text-align: center;">We&rsquo;ll email a copy plus open the PDF in your browser. No cold outreach, just a follow-up if you reply. <a href="/privacy.html" style="color: var(--gold-light);">Privacy</a>.</p>
+          </form>
+        </div>
+        <div id="investor-done" style="display: none; text-align: center; padding: 16px;">
+          <div style="width: 48px; height: 48px; margin: 0 auto 14px; border-radius: 999px; background: rgba(201,163,91,0.15); display: flex; align-items: center; justify-content: center;">
+            <span style="color: var(--gold); font-size: 22px;">✓</span>
+          </div>
+          <div style="font-size: 18px; font-weight: 700; color: var(--gold-cream); margin-bottom: 6px;">Your one-pager is ready.</div>
+          <div style="font-size: 13px; color: var(--text-secondary); margin-bottom: 20px;">A copy has been emailed to you. It should have downloaded automatically &mdash; if not, use the button below.</div>
+          <a id="inv-download-btn" href="#" target="_blank" rel="noopener" class="btn btn-primary" style="padding: 12px 24px;">Open the PDF &rarr;</a>
+          <div style="margin-top: 20px; font-size: 12px; color: var(--text-muted);">Reply to the email to book a 20-min walkthrough of the live sandbox.</div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <script>
+    // Investor one-pager form → POST /api/investor/onepager/request →
+    // signed download URL. Same API base as the waitlist form.
+    async function handleInvestor(e) {
+      e.preventDefault();
+      var btn = document.getElementById('inv-btn');
+      var name = (document.getElementById('inv-name').value || '').trim();
+      var email = (document.getElementById('inv-email').value || '').trim();
+      var company = (document.getElementById('inv-company').value || '').trim();
+      var role = (document.getElementById('inv-role').value || '').trim();
+      var note = (document.getElementById('inv-note').value || '').trim();
+      if (!email || !name) return false;
+      var orig = btn.textContent;
+      btn.disabled = true;
+      btn.textContent = 'Building your PDF\u2026';
+      try {
+        var res = await fetch(WAITLIST_API_BASE + '/api/investor/onepager/request', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ email: email, name: name, company: company, role: role, note: note, source: 'landing-investor' })
+        });
+        if (!res.ok) throw new Error('Server returned ' + res.status);
+        var body = await res.json();
+        var url = WAITLIST_API_BASE + body.download_url;
+        // Trigger the download in a new tab (works even in Safari)
+        var w = window.open(url, '_blank');
+        if (!w) {
+          // Popup blocked; use the "Open the PDF" button as fallback
+          location.href = url;
+        }
+        // Reveal the success state and stash the URL on the "Open the PDF" button
+        document.getElementById('investor-form-wrap').style.display = 'none';
+        var done = document.getElementById('investor-done');
+        done.style.display = 'block';
+        document.getElementById('inv-download-btn').href = url;
+      } catch (err) {
+        btn.disabled = false;
+        btn.textContent = orig;
+        alert('Could not build your PDF right now — please try again in a moment, or email invest@phoenix-atlas.com.');
+      }
+      return false;
+    }
+  </script>
   <script>
     // Waitlist form → POST /api/waitlist/join → Resend Contacts + Mongo
     // Backend defaults to the Emergent-hosted production API which has

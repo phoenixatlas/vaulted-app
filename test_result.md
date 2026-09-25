@@ -767,3 +767,56 @@ agent_communication:
       Also try: p1-inbound-verify@example.com (seeded during smoke).
       Report to /app/test_reports/iteration_23.json.
 
+
+
+  - agent: "main"
+    message: |
+      ITERATION 24 — Investor One-Pager (email-gated PDF).
+
+      Ships a reportlab-generated single-page A4 investor one-pager
+      summarising the reverse-corridor unit economics, gated behind an
+      email form. Captures the lead into db.investor_leads (Mongo) plus
+      a dedicated "Vaulted Investor Leads" Resend audience, then emails
+      the PDF as an attachment with a "Book a walkthrough" CTA.
+
+      New endpoints:
+        POST /api/investor/onepager/request  (public; body: name/email/company/role/note)
+        GET  /api/investor/onepager/download?token=<hmac-signed>  (public with token gate, 24h TTL)
+        GET  /api/admin/investor/leads       (admin only)
+
+      New/updated files:
+        - /app/backend/onepager.py (NEW: reportlab PDF builder)
+        - /app/backend/routers/investor.py (NEW: 3 endpoints)
+        - /app/backend/server.py (register router)
+        - /app/backend/requirements.txt (add reportlab==4.2.5)
+        - /app/frontend/app/admin/index.tsx (InvestorLeadsCard component)
+        - /app/landing/index.html (#invest section + hero teaser + nav link)
+
+      Verified locally:
+        - POST request → 200 with download_url + expires_at
+        - GET download with valid token → 200, 6.3KB PDF, %PDF- header
+        - GET with invalid token → 403
+        - Repeat request same email → downloads counter incremented in Mongo
+        - PDF visual check: single page, no cut-offs, unit economics
+          waterfall renders correctly (£1,000 → £954.25 recipient,
+          £20.75 CM = 96.5%)
+
+      Please verify (backend only):
+        1. POST /api/investor/onepager/request happy path with all fields
+           → 200 {ok:true, download_url, expires_at ~= now+24h}.
+        2. POST with only email + name → 200.
+        3. POST with invalid email → 422.
+        4. POST twice same email → second call returns already_requested:true;
+           db.investor_leads.downloads counter for that email increments.
+        5. GET /api/investor/onepager/download without token → 422.
+        6. GET with tampered token (valid payload, wrong signature) → 403.
+        7. GET with valid token → 200, Content-Type: application/pdf,
+           body starts with b'%PDF-', size > 3KB.
+        8. GET with expired token (mint one with expiry in the past using
+           the same HMAC signer + JWT_SECRET) → 403.
+        9. GET /api/admin/investor/leads without admin auth → 403.
+       10. Regression: /api/waitlist/join and /api/remit/reverse/quote
+           unchanged; all iteration-23 bi-directional flows still pass.
+
+      Credentials: smoketest@vaulted.app / test1234.
+      Report to /app/test_reports/iteration_24.json.

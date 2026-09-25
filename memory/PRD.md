@@ -53,3 +53,10 @@ MONGO_URL, DB_NAME=vaulted, JWT_SECRET, STRIPE_API_KEY (live, rotated), STRIPE_W
 - **Live Kotani sandbox rates**: KE ✓ · ZA ✓ · NG (estimated — Kotani onramp NG enablement pending) · GH (estimated)
 - **Waitlist**: Segmented by direction (inbound/outbound) → separate Resend Audiences per corridor+direction
 - **UI**: `/remit` direction toggle · `<ReverseRemitPanel />` · landing page `#reverse` section
+
+## 📄 Investor One-Pager (Q3 2026 — email-gated PDF)
+- **Generator**: `/app/backend/onepager.py` (reportlab, single A4 page, 6.3KB output, waitlist metrics pulled live from Mongo)
+- **Endpoints**: `POST /api/investor/onepager/request` (public, returns HMAC-signed download URL, 24h TTL), `GET /api/investor/onepager/download?token=` (public with token), `GET /api/admin/investor/leads` (admin only)
+- **Landing**: `#invest` section (name/email/firm/role/note form) + hero teaser link + nav link
+- **Resend**: Auto-creates "Vaulted Investor Leads" audience; sends follow-up email with PDF attached
+- **Admin**: `<InvestorLeadsCard />` on `/admin` — total leads, repeat visitors, top companies, 5 most recent

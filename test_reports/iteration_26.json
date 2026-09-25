@@ -1,0 +1,35 @@
+{
+  "summary": "Iteration 26 — Investor one-pager backend suite (11 tests) passes 100%. Covered POST /api/investor/onepager/request (full fields, minimal fields, invalid-email 422, repeat-email increments downloads counter + returns already_requested:true), GET /api/investor/onepager/download (missing token 422, tampered-signature 403 with expired-or-invalid message, valid-token streams application/pdf starting with %PDF- and >3KB, expired-token minted with real JWT_SECRET returns 403), admin leads endpoint returns 401/403 without auth (ADMIN_EMAILS unset), and regressions on POST /api/waitlist/join (direction=inbound echoed) and POST /api/remit/reverse/quote (NG source_amount=100000 → GBP destination.amount > 0). Directly verified in Mongo that db.investor_leads.downloads increments from 1 → 2 on the second identical request.",
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [],
+    "react_native_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_iteration26_investor_onepager.py",
+    "/app/test_reports/pytest/iter26_results.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "routers/investor.py onepager_request always $inc downloads, including on first submission — this matches the spec ('second response.downloads counter increments by 1') so first-submission count starts at 1, not 0. Confirmed behaviour, but if analytics ever wants 'downloads=actual PDF fetches only', consider moving the $inc into the /download handler exclusively (currently both endpoints $inc, so a first-submit-then-download flow lands at 2).",
+    "onepager_request kicks off asyncio.create_task(_bg) for Resend + email — non-fatal but any exception in _bg is only logged; consider a small retry/queue if lead-followup delivery becomes revenue-critical.",
+    "Frontend must prefix download_url with EXPO_BACKEND_URL (backend returns a relative path). Not a bug — just a client-side reminder."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_iteration26_investor_onepager.py"
+  ],
+  "success_rate": {
+    "backend": "100% (11/11)",
+    "frontend": "not tested (backend-only request)"
+  },
+  "seed_data_creation": "Test-created investor_leads docs use TEST_ prefixed / random-uuid emails on example.com throwaway domain — safe to leave in db.investor_leads. Real Resend followups may fire for these (fire-and-forget), but example.com is a reserved TLD so they bounce silently.",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "Investor one-pager endpoints are fully green. The signed-token scheme in /app/backend/routers/investor.py (_sign_token / _verify_token) uses base64url-no-padding for {payload}.{mac}; test_iteration26 mints expired tokens directly using JWT_SECRET from backend/.env. If ADMIN_EMAILS becomes configured, add an authed positive test for /api/admin/investor/leads (assert total, top_companies list, and one TEST_-prefixed row).",
+  "rca_of_issue": "Only test-script issue encountered: initial regression payload used source_code — the /api/remit/reverse/quote schema requires source_country. Fixed the test payload; endpoint itself works correctly."
+}

@@ -53,6 +53,26 @@ type WaitlistStats = {
   by_corridor: Record<string, number>;
   breakdown: { corridor: string; corridor_name: string; count: number }[];
   corridors: Record<string, string>;
+  by_direction?: { outbound: number; inbound: number };
+  matrix?: { corridor: string; corridor_name: string; direction: string; count: number }[];
+};
+
+type InvestorLead = {
+  email: string;
+  name?: string;
+  company?: string;
+  role?: string;
+  note?: string;
+  first_seen_at?: string;
+  last_seen_at?: string;
+  downloads?: number;
+};
+
+type InvestorLeadsResp = {
+  total: number;
+  total_repeat_visitors: number;
+  top_companies: { company: string; count: number }[];
+  leads: InvestorLead[];
 };
 
 // Country-code → flag emoji. Kept in sync with the landing dropdown so the
@@ -66,6 +86,7 @@ export default function AdminHome() {
   const router = useRouter();
   const [health, setHealth] = useState<KotaniHealth | null>(null);
   const [waitlist, setWaitlist] = useState<WaitlistStats | null>(null);
+  const [investors, setInvestors] = useState<InvestorLeadsResp | null>(null);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [err, setErr] = useState<string | null>(null);
@@ -73,15 +94,18 @@ export default function AdminHome() {
   const load = useCallback(async () => {
     setErr(null);
     try {
-      // Fire both in parallel — one slow endpoint shouldn't block the other.
-      const [h, w] = await Promise.all([
+      // Fire all three in parallel — one slow endpoint shouldn't block the others.
+      const [h, w, inv] = await Promise.all([
         api<KotaniHealth>("/admin/kotani/health").catch((e) => { throw e; }),
         // Waitlist stats is optional — a 500 here shouldn't blank the whole
         // page, so we swallow and render null if it fails.
         api<WaitlistStats>("/admin/waitlist/stats").catch(() => null),
+        // Investor leads is also optional.
+        api<InvestorLeadsResp>("/admin/investor/leads").catch(() => null),
       ]);
       setHealth(h);
       setWaitlist(w);
+      setInvestors(inv);
     } catch (e: any) {
       // 403 usually = your account isn't in ADMIN_EMAILS on this environment.
       setErr(e?.message || "Failed to load admin health");
@@ -208,6 +232,9 @@ export default function AdminHome() {
 
         {/* Waitlist stats card */}
         <WaitlistCard stats={waitlist} loading={loading} />
+
+        {/* Investor leads card */}
+        <InvestorLeadsCard data={investors} loading={loading} />
 
         {/* Quick links */}
         <View style={s.card}>
@@ -373,6 +400,103 @@ function CorridorBar({
   );
 }
 
+// InvestorLeadsCard — captured leads from the "Get the one-pager" form on
+// the landing page. Shows total, repeat visitors (2+ downloads), top
+// company breakdown, and the 5 most recent leads with role + note preview.
+function InvestorLeadsCard({
+  data,
+  loading,
+}: {
+  data: InvestorLeadsResp | null;
+  loading: boolean;
+}) {
+  if (loading && !data) {
+    return (
+      <View style={s.card}>
+        <Text style={s.cardTitle}>Investor leads</Text>
+        <Text style={s.subtle}>Loading…</Text>
+      </View>
+    );
+  }
+  if (!data) {
+    return (
+      <View style={s.card}>
+        <Text style={s.cardTitle}>Investor leads</Text>
+        <Text style={s.subtle}>Unavailable (endpoint returned an error).</Text>
+      </View>
+    );
+  }
+  const recent = (data.leads || []).slice(0, 5);
+  return (
+    <View style={s.card}>
+      <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginBottom: 4 }}>
+        <Text style={s.cardTitle}>Investor leads</Text>
+        <View style={{ flexDirection: "row", gap: 6 }}>
+          <View style={s.pill}><Text style={s.pillText}>{data.total} total</Text></View>
+          {data.total_repeat_visitors > 0 && (
+            <View style={[s.pill, { backgroundColor: colors.brandTertiary, borderColor: colors.brand }]}>
+              <Text style={[s.pillText, { color: colors.brandDeep }]}>{data.total_repeat_visitors} repeat</Text>
+            </View>
+          )}
+        </View>
+      </View>
+      <Text style={s.subtle}>
+        PDF downloads from the &ldquo;For Investors&rdquo; section on phoenix-atlas.com. Repeat visitors = 2+ downloads.
+      </Text>
+
+      {data.total === 0 ? (
+        <Text style={[s.subtle, { marginTop: spacing.md }]}>
+          No leads yet — share phoenix-atlas.com/#invest with your first prospect.
+        </Text>
+      ) : (
+        <>
+          {/* Top companies */}
+          {data.top_companies.length > 0 && (
+            <View style={{ marginTop: spacing.md, marginBottom: spacing.sm }}>
+              <Text style={s.microLabel}>TOP COMPANIES</Text>
+              <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 6, marginTop: 6 }}>
+                {data.top_companies.map((c, i) => (
+                  <View key={c.company + i} style={s.companyChip}>
+                    <Text style={s.companyChipName}>{c.company}</Text>
+                    <Text style={s.companyChipCount}>{c.count}</Text>
+                  </View>
+                ))}
+              </View>
+            </View>
+          )}
+
+          {/* Recent leads */}
+          <View style={{ marginTop: spacing.md }}>
+            <Text style={s.microLabel}>MOST RECENT</Text>
+            {recent.map((lead) => (
+              <View key={lead.email} style={s.leadRow}>
+                <View style={{ flex: 1, minWidth: 0 }}>
+                  <Text style={s.leadName} numberOfLines={1}>
+                    {lead.name || lead.email}
+                    {lead.role ? <Text style={s.leadRole}>{"  ·  "}{lead.role}</Text> : null}
+                  </Text>
+                  <Text style={s.leadEmail} numberOfLines={1}>
+                    {lead.company ? `${lead.company} · ` : ""}{lead.email}
+                  </Text>
+                  {lead.note ? (
+                    <Text style={s.leadNote} numberOfLines={2}>&ldquo;{lead.note}&rdquo;</Text>
+                  ) : null}
+                </View>
+                {(lead.downloads || 0) > 1 && (
+                  <View style={s.leadBadge}>
+                    <Text style={s.leadBadgeText}>×{lead.downloads}</Text>
+                  </View>
+                )}
+              </View>
+            ))}
+          </View>
+        </>
+      )}
+    </View>
+  );
+}
+
+
 const s = StyleSheet.create({
   container: { flex: 1, backgroundColor: colors.background },
   header: {
@@ -511,4 +635,43 @@ const s = StyleSheet.create({
     backgroundColor: colors.brand,
     borderRadius: 3,
   },
+
+  // InvestorLeadsCard extras
+  pill: {
+    paddingHorizontal: 10, paddingVertical: 4,
+    borderRadius: radius.pill,
+    borderWidth: 1, borderColor: colors.border,
+    backgroundColor: colors.surfaceSecondary,
+  },
+  pillText: { fontSize: 10, fontWeight: "700", color: colors.onSurface, letterSpacing: 0.3 },
+  subtle: { fontSize: 12, color: colors.onSurfaceSecondary, lineHeight: 16 },
+  microLabel: {
+    fontSize: 10, letterSpacing: 1.1,
+    color: colors.onSurfaceTertiary, fontWeight: "700",
+  },
+  companyChip: {
+    flexDirection: "row", alignItems: "center", gap: 6,
+    paddingHorizontal: 10, paddingVertical: 5,
+    borderRadius: radius.pill,
+    backgroundColor: colors.brandTertiary,
+    borderWidth: 1, borderColor: "rgba(201,163,91,0.35)",
+  },
+  companyChipName: { fontSize: 11, color: colors.onSurface, fontWeight: "600" },
+  companyChipCount: { fontSize: 10, color: colors.brandDeep, fontWeight: "700" },
+  leadRow: {
+    flexDirection: "row", alignItems: "center", gap: 8,
+    paddingVertical: 10,
+    borderTopWidth: StyleSheet.hairlineWidth,
+    borderTopColor: colors.divider,
+  },
+  leadName: { fontSize: 13, color: colors.onSurface, fontWeight: "700" },
+  leadRole: { color: colors.onSurfaceSecondary, fontWeight: "500", fontSize: 12 },
+  leadEmail: { fontSize: 11, color: colors.onSurfaceSecondary, marginTop: 1 },
+  leadNote: { fontSize: 11, color: colors.onSurfaceTertiary, marginTop: 4, fontStyle: "italic", lineHeight: 15 },
+  leadBadge: {
+    paddingHorizontal: 8, paddingVertical: 3,
+    borderRadius: radius.pill,
+    backgroundColor: colors.brand,
+  },
+  leadBadgeText: { fontSize: 10, fontWeight: "800", color: "#0F0B08" },
 });

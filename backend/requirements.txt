@@ -17,6 +17,7 @@ botocore==1.43.33
 cbor2==5.9.0
 certifi==2026.6.17
 cffi==2.0.0
+chardet==7.6.0
 charset-normalizer==3.4.7
 ckzg==2.1.7
 click==8.4.1
@@ -31,6 +32,7 @@ ecdsa==0.19.2
 ECPy==1.2.5
 ed25519-blake2b-fork==1.4.2
 email-validator==2.3.0
+emergentintegrations==0.2.0
 eth-account==0.13.7
 eth-hash==0.8.0
 eth-keyfile==0.8.1
@@ -74,6 +76,7 @@ jsonalias==0.1.1
 jsonschema==4.26.0
 jsonschema-specifications==2025.9.1
 librt==0.11.0
+litellm @ https://customer-assets.emergentagent.com/internal-asset/library/litellm-1.80.0-py3-none-any.whl#sha256=adf398c513273de9341f61822296c6b2145f7f2dc4a69daf3ac04829f5bde3f8
 markdown-it-py==4.2.0
 MarkupSafe==3.0.3
 mccabe==0.7.0
@@ -122,6 +125,7 @@ pytoniq-core-fork==0.1.48
 PyYAML==6.0.3
 referencing==0.37.0
 regex==2026.5.9
+reportlab==4.2.5
 requests==2.34.2
 requests-oauthlib==2.0.0
 requests-sse==0.5.3
