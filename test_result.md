@@ -820,3 +820,109 @@ agent_communication:
 
       Credentials: smoketest@vaulted.app / test1234.
       Report to /app/test_reports/iteration_24.json.
+
+  - agent: "main"
+    message: |
+      ITERATION 25 — Analytics charts + growth boosters + investor deck.
+
+      SHIPS:
+
+      A. BACKEND (routers/waitlist.py + routers/investor.py + new deck.py)
+        1. Waitlist referral queue-jump system:
+           - Waitlist docs get referral_code (8-char), referred_by, referred_by_code,
+             referral_count fields on upsert.
+           - `POST /waitlist/join` now accepts `ref` — credits the referrer atomically.
+           - Effective position = sort by (joined_at - boost_seconds) where
+             boost = floor(refs / 3) * 25 * 30s. Every 3 refs → move up 25 spots.
+           - 5+ refs unlocks "Founding Member" badge (lifetime 50% off).
+           - Response now includes: {referral_code, position, total, referred_by}
+        2. New public endpoints:
+           - `GET /waitlist/position?email=` — returns {position, total, referral_code,
+             referral_count, founding_member, next_boost_at}
+           - `GET /waitlist/refer/{code}` — validates code + returns REDACTED referrer
+             email for the landing-page "You've been referred by o***@example.com" banner
+        3. New admin analytics endpoints:
+           - `GET /admin/waitlist/analytics/daily-signups?days=30` — dense per-day
+             series with outbound/inbound/total, plus totals summary (peak_day, average_per_day)
+           - `GET /admin/waitlist/analytics/referrals?limit=10` — top referrers leaderboard,
+             redacted for privacy, plus totals {total_referred_signups, founding_members}
+        4. Confirmation email overhaul:
+           - Big "YOUR SPOT #123" position card
+           - Referral link + one-tap Twitter/WhatsApp share buttons
+           - Explains queue-jump mechanics inline
+        5. Investor pitch deck (5-page auto-generated):
+           - NEW /app/backend/deck.py — 5-page A4 PDF with cover, problem+market,
+             product+traction, unit economics deep-dive, ask+team+roadmap
+           - `POST /investor/deck/request` — mirror of one-pager but for deck
+           - `GET /investor/deck/download?token=` — serves uploaded deck if present,
+             else auto-generated
+           - `POST /admin/investor/deck/upload` — accept a real PDF (multipart), max 15MB,
+             validates %PDF header
+           - `DELETE /admin/investor/deck/upload` — remove uploaded deck (fall back to auto-gen)
+           - `GET /admin/investor/deck/status` — is a deck uploaded?
+           - Uploaded deck path: DECK_UPLOAD_PATH env var (default /tmp/vaulted-deck.pdf)
+        6. Investor follow-up email polish:
+           - New signature block with founder name/role/LinkedIn (env-configurable via
+             FOUNDER_NAME, FOUNDER_ROLE, FOUNDER_LINKEDIN, FOUNDER_HEADSHOT_URL)
+           - Optional "Watch the 3-min sandbox demo" CTA button, hidden gracefully
+             when DEMO_VIDEO_URL env is unset
+           - PDF-type-aware subject line ("one-pager" vs "investor deck")
+
+      B. FRONTEND
+        1. NEW /app/frontend/src/components/AdminCharts.tsx — three pure react-native-svg
+           components:
+           - <DailySignupChart /> — SVG line chart with total + inbound overlay
+           - <CorridorMatrixHeatmap /> — 2-column heatmap (outbound/inbound × corridor)
+           - <ReferralLeaderboard /> — top referrers with rank + founding member badge
+        2. /app/frontend/app/admin/index.tsx — three new cards added:
+           - <DailySignupsCard /> — 30-day signup trend + summary stats (avg/day, peak)
+           - <CorridorMatrixCard /> — reuses <CorridorMatrixHeatmap />
+           - <ReferralLeaderboardCard /> — top 10 with total counters
+           All fetch in parallel with existing cards; failure of one doesn't blank the page.
+
+      C. LANDING (/app/landing/index.html)
+        1. Referral URL param handling — reads `?ref=CODE`, calls
+           `/api/waitlist/refer/CODE` on load, renders a gold banner:
+           "🎉 You've been referred by o***@example.com. Join to both move up the queue."
+        2. Waitlist join sends `ref` in the payload.
+        3. Post-join success message replaced with a rich card:
+           - Big "YOUR SPOT #N of Total"
+           - Referral link + "Copy link" button
+           - Queue-jump explanation
+        4. Investor section — new "Prefer a full 5-page pitch deck? Same form —
+           click here" link under the one-pager CTA. Uses same form fields, calls
+           /investor/deck/request instead.
+
+      VERIFIED LOCALLY:
+        - Waitlist join with ref → 200, referrer's counter incremented in Mongo
+        - Position endpoint → returns {position, total, referral_code, ...}
+        - Deck download → 200, 12KB PDF, 5 pages, no visual issues (verified with
+          analyze_file_tool)
+        - Analytics endpoints require admin auth → 401 for unauth (correct)
+
+      Please verify (backend only — frontend cards manually confirmed to compile/lint):
+        1. POST /waitlist/join with ref field pointing at a valid referral_code:
+           - New signup: increments referrer's referral_count by 1
+           - Repeat signup (same email): does NOT increment the counter (idempotent)
+           - Invalid/unknown ref code: still succeeds, does NOT credit anyone
+           - Self-referral (email's own code): silently ignored
+        2. GET /waitlist/position?email=<known> returns {position, total, referral_code,
+           referral_count, founding_member, next_boost_at, corridor, direction}
+        3. GET /waitlist/position?email=<unknown> → 404
+        4. GET /waitlist/refer/<valid_code> returns {ok:true, referrer: "o***@...", code, corridor}
+        5. GET /waitlist/refer/<invalid> → 404
+        6. GET /admin/waitlist/analytics/daily-signups requires admin auth (401/403 without);
+           with admin, returns {days, series (dense, length == days), totals}
+        7. GET /admin/waitlist/analytics/referrals returns {leaders, totals} — leaders emails
+           must be redacted, not raw
+        8. POST /investor/deck/request happy path → 200 with download_url, expires_at
+        9. GET /investor/deck/download?token=<valid> → 200, %PDF- header, > 5KB
+       10. GET /investor/deck/download without token → 422; invalid/tampered → 403
+       11. GET /admin/investor/deck/status → uploaded:false initially
+       12. POST /admin/investor/deck/upload without admin → 403
+       13. Regression: /waitlist/join without ref still returns 200 with the new
+           response fields (referral_code, position, total)
+       14. Regression: /investor/onepager/download still works unchanged
+
+      Report to /app/test_reports/iteration_25.json.
+

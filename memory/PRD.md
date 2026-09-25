@@ -54,9 +54,21 @@ MONGO_URL, DB_NAME=vaulted, JWT_SECRET, STRIPE_API_KEY (live, rotated), STRIPE_W
 - **Waitlist**: Segmented by direction (inbound/outbound) → separate Resend Audiences per corridor+direction
 - **UI**: `/remit` direction toggle · `<ReverseRemitPanel />` · landing page `#reverse` section
 
-## 📄 Investor One-Pager (Q3 2026 — email-gated PDF)
-- **Generator**: `/app/backend/onepager.py` (reportlab, single A4 page, 6.3KB output, waitlist metrics pulled live from Mongo)
-- **Endpoints**: `POST /api/investor/onepager/request` (public, returns HMAC-signed download URL, 24h TTL), `GET /api/investor/onepager/download?token=` (public with token), `GET /api/admin/investor/leads` (admin only)
-- **Landing**: `#invest` section (name/email/firm/role/note form) + hero teaser link + nav link
-- **Resend**: Auto-creates "Vaulted Investor Leads" audience; sends follow-up email with PDF attached
-- **Admin**: `<InvestorLeadsCard />` on `/admin` — total leads, repeat visitors, top companies, 5 most recent
+## 📄 Investor One-Pager + Deck (Q3 2026)
+- **One-pager**: `/app/backend/onepager.py` (single A4, 6.3KB, live waitlist metrics)
+- **Deck**: `/app/backend/deck.py` (5-page A4, 12KB, auto-generated; admin can upload real PDF via `POST /admin/investor/deck/upload` to override)
+- **Endpoints**: `POST /investor/onepager/request` · `POST /investor/deck/request` · `GET /investor/{onepager,deck}/download?token=` · `GET /admin/investor/leads` · `POST/DELETE/GET /admin/investor/deck/{upload,status}`
+- **Landing**: `#invest` section with dual CTAs (one-pager + deck link) + hero teaser
+- **Resend**: Auto-creates "Vaulted Investor Leads" audience; follow-up email includes founder signature block + optional demo video CTA (env-configurable)
+
+## 🚀 Growth Boosters (Q3 2026)
+- **Referral queue-jump**: Every 3 referrals moves referrer up 25 spots. 5+ refs unlocks "Founding Member" badge (lifetime 50% off).
+- **Landing referral banner**: `?ref=CODE` → validates + shows "You've been referred by o***@example.com" banner
+- **Post-signup card**: Shows "YOUR SPOT #N of Total" + one-tap copy referral link + share buttons
+- **Confirmation email**: Big position card + referral link + Twitter/WhatsApp share buttons
+
+## 📊 Admin Analytics (Q3 2026)
+- **Daily signups chart**: 30-day dense series with total + inbound overlay (SVG line chart via react-native-svg)
+- **Corridor matrix heatmap**: Outbound × inbound × 7 corridors, brand-gold intensity = demand
+- **Referral leaderboard**: Top 10 referrers (redacted emails) + founding members count
+- **Investor leads card**: Total + repeat visitors + top companies + 5 most recent

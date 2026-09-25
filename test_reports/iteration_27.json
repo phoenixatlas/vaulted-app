@@ -1,0 +1,37 @@
+{
+  "summary": "Iteration 27 — Referral queue-jump + admin analytics + investor deck backend suite (22 tests) passes 100% on runnable cases (20 passed, 2 skipped for ADMIN_EMAILS-unset admin positive path — accepted by spec). Verified: /waitlist/join with valid ref bumps referrer's referral_count by exactly 1 (confirmed via /waitlist/position before/after); repeat same-email+same-ref returns already_joined:true and does NOT double-increment; invalid ref code (ZZZZZZZZ) returns 200 with referred_by:null and no counter changes anywhere; self-referral yields no increment; missing ref field still returns referral_code+position+total. /waitlist/position returns full field set incl. founding_member (bool), next_boost_at (int), corridor, direction — 404 for unknown email, 400 for malformed. /waitlist/refer/{code} returns redacted referrer (contains '*' and '@') on happy path, 404 on unknown code. Admin analytics endpoints correctly return 401/403 without auth; positive admin path skipped because smoketest is not in ADMIN_EMAILS (matches spec). Investor deck: /deck/request happy path returns {ok, download_url:/api/investor/deck/download?token=..., expires_at, is_official_deck:false}; download without token→422, tampered signature→403, valid token→200 application/pdf starting with %PDF- and >5KB (auto-generated 5-page deck confirmed rendering). Admin deck status + upload both return 401/403 unauth. Regressions: /investor/onepager/request still 200 with expected shape; /remit/reverse/quote NG 100000 GBP still returns populated destination.amount.",
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [],
+    "react_native_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_iteration27_growth_and_deck.py",
+    "/app/test_reports/pytest/iter27_results.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "routers/waitlist.py `_compute_position` runs an aggregation on every /waitlist/position call — fine for launch scale but consider adding an index on `joined_at` and possibly caching computed positions per corridor at higher volumes.",
+    "routers/waitlist.py `_last_seen_by_ip` is an in-memory dict — rate limit is per-process, so with multiple uvicorn workers a client could get 2x the effective rate. Non-blocking for MVP; note for production hardening (Redis-backed limiter).",
+    "routers/investor.py `admin_upload_deck` writes to DECK_UPLOAD_PATH=/tmp/vaulted-deck.pdf by default — /tmp is ephemeral in most PaaS containers. Ensure a persistent disk is mounted in production and DECK_UPLOAD_PATH is set accordingly (already flagged in the module docstring, worth surfacing in deploy runbook).",
+    "routers/investor.py `deck_download` handler $inc's deck_downloads on every fetch — same double-count concern flagged in iter26 (request also $incs). Consider consolidating so download counter reflects actual PDF fetches only.",
+    "routers/waitlist.py `waitlist_daily_signups` — great dense-series design; consider capping `days` in the OpenAPI schema (Query(..., le=180)) rather than only in-body so bad clients get 422 instead of clamping."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_iteration27_growth_and_deck.py"
+  ],
+  "success_rate": {
+    "backend": "100% of runnable (20/20 passed, 2 skipped by design)",
+    "frontend": "not tested (backend-only request)"
+  },
+  "seed_data_creation": "Test-created docs use TEST_-prefixed random emails on example.com — safe to leave in db.waitlist / db.investor_leads. Rate-limit sleeps (~5.2s per /waitlist/join) added between calls to respect per-IP rate limit.",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "Iter27 endpoints (referral queue-jump, admin analytics, investor deck) fully green. If ADMIN_EMAILS ever gets configured with smoketest@vaulted.app, the two skipped tests (test_daily_signups_with_admin, test_referrals_with_admin) will run automatically and verify positive-path shape. Deck upload/download uses same HMAC scheme as one-pager (_sign_token/_verify_token in routers/investor.py) — JWT_SECRET fallback in deps.py is 'vaulted-dev-secret-change-me' (used by test to mint expired tokens). /waitlist/join is rate-limited at 5s per IP in-memory — any future integration tests must sleep between calls or spread requests across IPs.",
+  "rca_of_issue": "No bugs found."
+}

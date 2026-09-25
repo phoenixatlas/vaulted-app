@@ -33,7 +33,9 @@ from __future__ import annotations
 
 import asyncio
 import re
+import secrets
 import time
+from datetime import datetime, timedelta, timezone
 from typing import Optional
 
 import httpx
@@ -44,6 +46,122 @@ from deps import db, iso, logger, now_utc
 from emails import RESEND_API_KEY, send_email_via_resend
 
 router = APIRouter()
+
+
+# ---- Referral queue-jump mechanics --------------------------------------
+# Every successful referral gives the *referrer* a queue-boost equivalent
+# to moving up N positions. We implement this by subtracting `boost_seconds`
+# from their effective join time when computing position — so somebody
+# joining right now with 10 prior referrals appears above people who
+# joined an hour ago with none. This is O(1) per lookup once we've cached
+# the total waitlist size.
+REFERRAL_BOOST_INTERVAL = 3            # every N successful refs...
+REFERRAL_BOOST_SPOTS = 25              # ...moves them up 25 spots
+FOUNDING_MEMBER_THRESHOLD = 5          # ≥5 refs → "Founding Member" badge
+
+# Rough calibration: assume ~1 signup / 30 sec average during launch push,
+# so 25 spots ≈ 12.5 minutes of virtual head-start. Tune post-launch once
+# we have real signup velocity data.
+_SPOT_TO_SECONDS = 30
+
+
+def _referral_boost_seconds(referral_count: int) -> int:
+    """Convert a referral count into seconds of virtual head-start."""
+    if referral_count <= 0:
+        return 0
+    tiers = referral_count // REFERRAL_BOOST_INTERVAL
+    return tiers * REFERRAL_BOOST_SPOTS * _SPOT_TO_SECONDS
+
+
+def _generate_referral_code() -> str:
+    """8-char URL-safe referral code. Collision-safe up to millions of users."""
+    return secrets.token_urlsafe(6).replace("-", "").replace("_", "")[:8].upper()
+
+
+async def _mint_referral_code_for(email: str) -> str:
+    """Idempotent: return the user's existing code or create+persist a new one."""
+    doc = await db.waitlist.find_one({"email": email}, {"_id": 0, "referral_code": 1})
+    if doc and doc.get("referral_code"):
+        return doc["referral_code"]
+    # Retry a few times on the ~1-in-a-trillion collision case.
+    for _ in range(4):
+        code = _generate_referral_code()
+        clash = await db.waitlist.find_one({"referral_code": code}, {"_id": 1})
+        if not clash:
+            await db.waitlist.update_one(
+                {"email": email},
+                {"$set": {"referral_code": code}},
+            )
+            return code
+    # Give up gracefully — the caller can re-mint next time.
+    return _generate_referral_code()
+
+
+async def _compute_position(email: str) -> tuple[int, int]:
+    """Return (position, total) for a given waitlist member.
+
+    Position is 1-indexed. Position accounts for referral boost — a member
+    with 3 refs is 25 slots ahead of where their joined_at alone would put them.
+    Runs a single Mongo count against their `effective_joined_at`.
+    """
+    doc = await db.waitlist.find_one(
+        {"email": email},
+        {"_id": 0, "joined_at": 1, "referral_count": 1},
+    )
+    if not doc:
+        total = await db.waitlist.count_documents({})
+        return (total + 1, total)
+
+    total = await db.waitlist.count_documents({})
+    joined_at = doc.get("joined_at")
+    if not joined_at:
+        return (total, total)
+
+    ref_count = int(doc.get("referral_count") or 0)
+    boost_s = _referral_boost_seconds(ref_count)
+
+    # Turn joined_at (ISO string) into datetime for effective calculation
+    try:
+        joined_dt = datetime.fromisoformat(joined_at.replace("Z", "+00:00"))
+    except Exception:
+        return (total, total)
+    effective_dt = joined_dt - timedelta(seconds=boost_s)
+
+    # Count everybody whose effective_joined_at is strictly earlier.
+    # For members without a cached effective time, fall back to joined_at
+    # (equivalent to boost=0). This aggregation is O(N) but N ≤ 100k for
+    # launch. We can add an index later.
+    pipeline = [
+        {"$addFields": {
+            "_ref_count": {"$ifNull": ["$referral_count", 0]},
+            "_joined_dt": {"$toDate": "$joined_at"},
+        }},
+        # boost_seconds = floor(ref/3) * 25 * 30 = ref/3 * 750
+        {"$addFields": {
+            "_effective_dt": {
+                "$dateSubtract": {
+                    "startDate": "$_joined_dt",
+                    "unit": "second",
+                    "amount": {
+                        "$multiply": [
+                            {"$floor": {"$divide": ["$_ref_count", REFERRAL_BOOST_INTERVAL]}},
+                            REFERRAL_BOOST_SPOTS * _SPOT_TO_SECONDS,
+                        ],
+                    },
+                },
+            },
+        }},
+        {"$match": {"_effective_dt": {"$lt": effective_dt}}},
+        {"$count": "ahead"},
+    ]
+    try:
+        rows = [r async for r in db.waitlist.aggregate(pipeline)]
+        ahead = int(rows[0]["ahead"]) if rows else 0
+    except Exception as e:  # noqa: BLE001
+        logger.warning("[waitlist] position aggregate failed, using joined_at fallback: %s", e)
+        ahead = await db.waitlist.count_documents({"joined_at": {"$lt": joined_at}})
+
+    return (ahead + 1, total)
 
 # ---- Corridor catalogue ---------------------------------------------------
 # Keep in sync with the landing page `<select>` and the KOTANI_CORRIDORS
@@ -241,7 +359,10 @@ async def _add_resend_contact(email: str, source: str, corridor: str, direction:
 _CONFIRMATION_SUBJECT = "You're on the Vaulted waitlist ✨"
 
 
-def _confirmation_html(corridor: str, direction: str = "outbound") -> str:
+def _confirmation_html(
+    corridor: str, direction: str = "outbound",
+    referral_code: str = "", position: int = 0, total: int = 0,
+) -> str:
     """Corridor + direction personalized confirmation email. The subject
     and shell are constant; only the corridor line + intro varies."""
     corridor_line = ""
@@ -262,6 +383,53 @@ def _confirmation_html(corridor: str, direction: str = "outbound") -> str:
                 f'<strong>UK/EU \u2192 {CORRIDORS.get(corridor, corridor)}</strong> corridor '
                 f'\u2014 you\u2019ll be the first to know when we go live there.</p>'
             )
+
+    # Position block — only render if we have real numbers.
+    position_block = ""
+    if position > 0 and total > 0:
+        position_block = (
+            '<div style="text-align: center; margin: 20px 0 8px;">'
+            '<div style="display: inline-block; padding: 14px 24px; border-radius: 14px; background: #0F0B08; color: #F5EDDF;">'
+            '<div style="font-size: 11px; color: #C9A35B; letter-spacing: 1.2px; font-weight: 700; margin-bottom: 4px;">YOUR SPOT</div>'
+            f'<div style="font-size: 28px; font-weight: 800; letter-spacing: -0.5px;">#{position:,}</div>'
+            f'<div style="font-size: 11px; color: #C9A35B; opacity: 0.75; margin-top: 4px;">of {total:,} on the list</div>'
+            '</div>'
+            '</div>'
+        )
+
+    # Referral / skip-the-queue block.
+    referral_block = ""
+    if referral_code:
+        share_url = f"https://phoenix-atlas.com/?ref={referral_code}"
+        # Pre-baked, URL-encoded share intents for one-tap sharing.
+        share_text = (
+            "Just joined the Vaulted waitlist \u2014 UK\u2194Africa remittance in ~2 min. "
+            "Skip the queue with my link:"
+        )
+        # Simple URL-encode fallback (we don't have urllib here in template)
+        # These are static strings so hand-encoding is safe.
+        tweet_intent = (
+            "https://twitter.com/intent/tweet?url=" + share_url.replace(":", "%3A").replace("/", "%2F").replace("?", "%3F").replace("=", "%3D")
+            + "&text=" + share_text.replace(" ", "+").replace("\u2014", "%E2%80%94").replace("\u2194", "%E2%86%94")
+        )
+        wa_intent = "https://wa.me/?text=" + (share_text + " " + share_url).replace(" ", "%20").replace(":", "%3A").replace("/", "%2F").replace("?", "%3F").replace("=", "%3D")
+        referral_block = (
+            '<div style="background: linear-gradient(135deg, #FBF7EE 0%, #F5EDDF 100%); border-radius: 14px; padding: 20px; margin: 24px 0; border: 1px solid rgba(201,163,91,0.4);">'
+            '<p style="margin: 0 0 8px; font-size: 15px; font-weight: 700; color: #0F0B08;">\U0001F680 Skip the queue.</p>'
+            '<p style="margin: 0 0 14px; font-size: 13px; line-height: 1.6; color: #4A4238;">'
+            f'Every <strong>{REFERRAL_BOOST_INTERVAL} friends</strong> who join with your link moves you up <strong>{REFERRAL_BOOST_SPOTS} spots</strong>. Get <strong>{FOUNDING_MEMBER_THRESHOLD}</strong> and unlock a <strong>Founding Member</strong> badge (lifetime 50% off Vaulted fees).'
+            '</p>'
+            '<div style="background: white; padding: 12px 14px; border-radius: 10px; border: 1px dashed #C9A35B; margin-bottom: 14px; text-align: center;">'
+            '<div style="font-size: 10px; letter-spacing: 1.2px; color: #8A6D2E; font-weight: 700; margin-bottom: 4px;">YOUR REFERRAL LINK</div>'
+            f'<a href="{share_url}" style="font-family: \'SF Mono\', Menlo, monospace; font-size: 13px; color: #0F0B08; text-decoration: none; font-weight: 600; word-break: break-all;">phoenix-atlas.com/?ref={referral_code}</a>'
+            '</div>'
+            '<div style="text-align: center;">'
+            f'<a href="{tweet_intent}" style="display: inline-block; padding: 10px 18px; background: #0F0B08; color: white; text-decoration: none; border-radius: 999px; font-size: 12px; font-weight: 700; margin: 0 4px 6px;">Share on X</a>'
+            f'<a href="{wa_intent}" style="display: inline-block; padding: 10px 18px; background: #25D366; color: white; text-decoration: none; border-radius: 999px; font-size: 12px; font-weight: 700; margin: 0 4px 6px;">Share on WhatsApp</a>'
+            '</div>'
+            '</div>'
+        )
+
     return (
         '<div style="font-family: -apple-system, BlinkMacSystemFont, \'Segoe UI\', Roboto, sans-serif; max-width: 560px; margin: 0 auto; padding: 24px; color: #1a1a1a;">'
         '<div style="text-align: center; padding: 32px 0 24px;">'
@@ -272,6 +440,8 @@ def _confirmation_html(corridor: str, direction: str = "outbound") -> str:
         '<p style="color: #666; margin: 0; font-size: 14px;">Thanks for signing up \u2014 we\u2019ll be in touch.</p>'
         f'{corridor_line}'
         '</div>'
+        f'{position_block}'
+        f'{referral_block}'
         '<div style="background: #FAF7F1; border-radius: 12px; padding: 20px; margin: 24px 0; border-left: 3px solid #C9A35B;">'
         '<p style="margin: 0 0 12px; font-size: 15px; line-height: 1.6;"><strong>What happens next?</strong></p>'
         '<ul style="margin: 0; padding-left: 20px; font-size: 14px; line-height: 1.7; color: #333;">'
@@ -296,9 +466,15 @@ def _confirmation_html(corridor: str, direction: str = "outbound") -> str:
     )
 
 
-async def _send_confirmation_email(email: str, corridor: str, direction: str = "outbound") -> None:
+async def _send_confirmation_email(
+    email: str, corridor: str, direction: str = "outbound",
+    referral_code: str = "", position: int = 0, total: int = 0,
+) -> None:
     try:
-        await send_email_via_resend(email, _CONFIRMATION_SUBJECT, _confirmation_html(corridor, direction))
+        await send_email_via_resend(
+            email, _CONFIRMATION_SUBJECT,
+            _confirmation_html(corridor, direction, referral_code, position, total),
+        )
     except Exception as e:  # noqa: BLE001
         logger.warning("[waitlist] confirmation email failed for %s: %s", email, e)
 
@@ -309,6 +485,7 @@ class WaitlistJoinIn(BaseModel):
     corridor: Optional[str] = Field(default=None, max_length=2)
     direction: Optional[str] = Field(default=None, max_length=16)
     source: Optional[str] = Field(default="landing", max_length=40)
+    ref: Optional[str] = Field(default=None, max_length=16, description="Referral code from the URL")
 
 
 _EMAIL_RE = re.compile(r"^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}$")
@@ -345,12 +522,46 @@ async def waitlist_join(body: WaitlistJoinIn, request: Request):
         "last_ip": ip,
         "last_user_agent": ua,
     }
-    doc_setoninsert = {"joined_at": now}
+    doc_setoninsert = {"joined_at": now, "referral_count": 0}
     await db.waitlist.update_one(
         {"email": email},
         {"$set": doc_set, "$setOnInsert": doc_setoninsert},
         upsert=True,
     )
+
+    # Mint (or reuse) the user's own referral code so we can hand it back
+    # in the response for the "share to skip the queue" CTA in the email.
+    referral_code = await _mint_referral_code_for(email)
+
+    # Handle inbound referral: if a valid `ref` was passed AND this is a
+    # NEW signup, increment the referrer's counter. We don't award boost
+    # for re-submits (an existing email hitting refresh) or self-referrals.
+    referred_by = None
+    if body.ref and not already_joined:
+        ref_code = body.ref.strip().upper()[:16]
+        if ref_code and ref_code != referral_code:
+            referrer = await db.waitlist.find_one(
+                {"referral_code": ref_code},
+                {"_id": 0, "email": 1, "referral_count": 1},
+            )
+            if referrer and referrer.get("email") != email:
+                referred_by = referrer["email"]
+                await db.waitlist.update_one(
+                    {"email": email},
+                    {"$set": {"referred_by": referred_by, "referred_by_code": ref_code}},
+                )
+                # Bump referrer's counter atomically. Their queue-boost is
+                # recomputed on-the-fly next time _compute_position runs.
+                await db.waitlist.update_one(
+                    {"email": referred_by},
+                    {"$inc": {"referral_count": 1}},
+                )
+                logger.info("[waitlist] referral credited to=%s from=%s", referred_by, email)
+
+    # Compute position for the email response — happens AFTER the referrer
+    # bump so their new position is reflected if they're the same signup
+    # (edge case, but correct).
+    position, total = await _compute_position(email)
 
     # Background: Resend audience add + confirmation email. Only fire once
     # per email — a re-submit with the same corridor+direction should be a
@@ -363,21 +574,28 @@ async def waitlist_join(body: WaitlistJoinIn, request: Request):
         or prev_direction != direction
     )
     if should_process:
-        asyncio.create_task(_add_and_confirm(email, source, corridor, direction))
+        asyncio.create_task(_add_and_confirm(email, source, corridor, direction, referral_code, position, total))
 
     logger.info(
-        "[waitlist] joined email=%s corridor=%s direction=%s source=%s already=%s",
-        email, corridor, direction, source, already_joined,
+        "[waitlist] joined email=%s corridor=%s direction=%s source=%s already=%s pos=%d/%d ref_by=%s",
+        email, corridor, direction, source, already_joined, position, total, referred_by or "-",
     )
     return {
         "ok": True,
         "already_joined": already_joined,
         "corridor": corridor,
         "direction": direction,
+        "referral_code": referral_code,
+        "position": position,
+        "total": total,
+        "referred_by": referred_by,
     }
 
 
-async def _add_and_confirm(email: str, source: str, corridor: str, direction: str = "outbound") -> None:
+async def _add_and_confirm(
+    email: str, source: str, corridor: str, direction: str = "outbound",
+    referral_code: str = "", position: int = 0, total: int = 0,
+) -> None:
     """Background task — Resend contact add + confirmation email."""
     contact_id = await _add_resend_contact(email, source, corridor, direction)
     if contact_id:
@@ -388,7 +606,58 @@ async def _add_and_confirm(email: str, source: str, corridor: str, direction: st
             )
         except Exception as e:  # noqa: BLE001
             logger.warning("[waitlist] persist resend_contact_id failed: %s", e)
-    await _send_confirmation_email(email, corridor, direction)
+    await _send_confirmation_email(email, corridor, direction, referral_code, position, total)
+
+
+# ---- Position + referral lookup endpoints -------------------------------
+@router.get("/waitlist/position")
+async def waitlist_position(email: str):
+    """Public lookup — returns {position, total, referral_code, referral_count,
+    founding_member} for an existing email. Used by the confirmation-email
+    "view your spot" link and any post-signup landing page state.
+    """
+    if not email or not _EMAIL_RE.match(email.lower()):
+        raise HTTPException(status_code=400, detail="Invalid email")
+    doc = await db.waitlist.find_one(
+        {"email": email.lower()},
+        {"_id": 0, "referral_code": 1, "referral_count": 1, "corridor": 1, "direction": 1},
+    )
+    if not doc:
+        raise HTTPException(status_code=404, detail="Not on the waitlist yet")
+    position, total = await _compute_position(email.lower())
+    ref_count = int(doc.get("referral_count") or 0)
+    return {
+        "email": email.lower(),
+        "position": position,
+        "total": total,
+        "referral_code": doc.get("referral_code"),
+        "referral_count": ref_count,
+        "founding_member": ref_count >= FOUNDING_MEMBER_THRESHOLD,
+        "next_boost_at": REFERRAL_BOOST_INTERVAL - (ref_count % REFERRAL_BOOST_INTERVAL),
+        "corridor": doc.get("corridor"),
+        "direction": doc.get("direction"),
+    }
+
+
+@router.get("/waitlist/refer/{code}")
+async def waitlist_referral_lookup(code: str):
+    """Public — validates a referral code and returns the (redacted) referrer's
+    identity. Powers the landing-page banner: "You've been referred by o***@example.com,
+    join now and both of you move up the queue."
+    """
+    code = (code or "").strip().upper()[:16]
+    if not code:
+        raise HTTPException(status_code=400, detail="Invalid code")
+    doc = await db.waitlist.find_one(
+        {"referral_code": code}, {"_id": 0, "email": 1, "corridor": 1}
+    )
+    if not doc:
+        raise HTTPException(status_code=404, detail="Code not found")
+    email = doc["email"]
+    # Redact for privacy: "o***@example.com"
+    local, _, domain = email.partition("@")
+    redacted = f"{local[0]}{'*' * max(2, len(local) - 1)}@{domain}" if local else email
+    return {"ok": True, "referrer": redacted, "code": code, "corridor": doc.get("corridor")}
 
 
 # ---- Admin stats ----------------------------------------------------------
@@ -459,6 +728,123 @@ try:  # avoid a hard import at module top so a missing admin dep doesn't
             "breakdown": breakdown,
             "matrix": matrix,
             "corridors": CORRIDORS,
+        }
+
+    @router.get("/admin/waitlist/analytics/daily-signups")
+    async def waitlist_daily_signups(
+        _=Depends(require_admin),
+        days: int = 30,
+    ):
+        """Daily signup counts for the last `days` days. Returns a dense
+        series (every day filled with 0 for gaps) so the admin chart can
+        just draw the line without client-side gap-filling.
+        """
+        days = max(1, min(days, 180))
+        since = now_utc() - timedelta(days=days - 1)
+        # Truncate to start-of-day for a clean bucket boundary.
+        since_day = since.replace(hour=0, minute=0, second=0, microsecond=0)
+
+        pipeline = [
+            {"$addFields": {"_dt": {"$toDate": "$joined_at"}}},
+            {"$match": {"_dt": {"$gte": since_day}}},
+            {"$group": {
+                "_id": {
+                    "y": {"$year": "$_dt"},
+                    "m": {"$month": "$_dt"},
+                    "d": {"$dayOfMonth": "$_dt"},
+                    "direction": {"$ifNull": ["$direction", "outbound"]},
+                },
+                "count": {"$sum": 1},
+            }},
+        ]
+        raw: dict[str, dict[str, int]] = {}
+        try:
+            async for row in db.waitlist.aggregate(pipeline):
+                _id = row.get("_id") or {}
+                key = f"{_id.get('y', 0):04d}-{_id.get('m', 0):02d}-{_id.get('d', 0):02d}"
+                dir_key = _id.get("direction") or "outbound"
+                bucket = raw.setdefault(key, {"outbound": 0, "inbound": 0, "total": 0})
+                cnt = int(row.get("count", 0))
+                bucket[dir_key] = bucket.get(dir_key, 0) + cnt
+                bucket["total"] = bucket["outbound"] + bucket["inbound"]
+        except Exception as e:  # noqa: BLE001
+            logger.warning("[waitlist] daily signups aggregate failed: %s", e)
+
+        # Dense fill: every day from since_day to today, even if zero.
+        series: list[dict] = []
+        for i in range(days):
+            day_dt = since_day + timedelta(days=i)
+            key = day_dt.strftime("%Y-%m-%d")
+            bucket = raw.get(key) or {"outbound": 0, "inbound": 0, "total": 0}
+            series.append({
+                "date": key,
+                "outbound": bucket.get("outbound", 0),
+                "inbound": bucket.get("inbound", 0),
+                "total": bucket.get("total", 0),
+            })
+
+        # Roll-up metrics
+        total_signups = sum(p["total"] for p in series)
+        peak = max((p["total"] for p in series), default=0)
+        peak_day = next((p["date"] for p in series if p["total"] == peak and peak > 0), None)
+
+        return {
+            "days": days,
+            "series": series,
+            "totals": {
+                "signups": total_signups,
+                "outbound": sum(p["outbound"] for p in series),
+                "inbound": sum(p["inbound"] for p in series),
+                "peak_day": peak_day,
+                "peak_count": peak,
+                "average_per_day": round(total_signups / days, 1),
+            },
+        }
+
+    @router.get("/admin/waitlist/analytics/referrals")
+    async def waitlist_referral_leaderboard(_=Depends(require_admin), limit: int = 10):
+        """Top referrers on the waitlist. Powers a leaderboard card on /admin.
+
+        Returns emails redacted for privacy (o***@example.com style) — the
+        admin can still tell who's who by matching against Resend but the
+        raw list isn't exposed if the /admin dashboard is ever screenshotted.
+        """
+        limit = max(1, min(limit, 100))
+        cursor = db.waitlist.find(
+            {"referral_count": {"$gt": 0}},
+            {"_id": 0, "email": 1, "referral_count": 1, "corridor": 1, "referral_code": 1},
+        ).sort("referral_count", -1).limit(limit)
+
+        leaders = []
+        async for row in cursor:
+            email = row.get("email") or ""
+            local, _, domain = email.partition("@")
+            redacted = f"{local[0]}{'*' * max(2, len(local) - 1)}@{domain}" if local else email
+            ref_count = int(row.get("referral_count") or 0)
+            leaders.append({
+                "email_redacted": redacted,
+                "email_hash": local[:2] + domain[:3],  # for stable UI keying
+                "referral_count": ref_count,
+                "corridor": row.get("corridor"),
+                "referral_code": row.get("referral_code"),
+                "founding_member": ref_count >= FOUNDING_MEMBER_THRESHOLD,
+            })
+
+        # Aggregate totals
+        total_referred = await db.waitlist.count_documents({"referred_by": {"$exists": True}})
+        founding_count = await db.waitlist.count_documents(
+            {"referral_count": {"$gte": FOUNDING_MEMBER_THRESHOLD}}
+        )
+
+        return {
+            "leaders": leaders,
+            "totals": {
+                "total_referred_signups": total_referred,
+                "founding_members": founding_count,
+                "boost_interval": REFERRAL_BOOST_INTERVAL,
+                "boost_spots": REFERRAL_BOOST_SPOTS,
+                "founding_threshold": FOUNDING_MEMBER_THRESHOLD,
+            },
         }
 except ImportError:
     pass

@@ -1567,6 +1567,7 @@
     <div class="container">
       <h2>Get on the <span class="italic">waitlist</span>.</h2>
       <p>We&rsquo;ll invite you to preview Vaulted as soon as authorized services in your corridor go live. No card required. No spam. One email when we launch.</p>
+      <div id="referral-banner" style="display: none;"></div>
       <form id="waitlist-form" class="waitlist-form" onsubmit="return handleWaitlist(event);" style="max-width: 480px; margin: 24px auto 0; display: flex; gap: 8px; flex-wrap: wrap; justify-content: center;">
         <!-- Direction toggle: outbound (UK→Africa) or inbound (Africa→UK/EU) -->
         <div id="direction-toggle" role="tablist" style="flex: 1 1 100%; display: flex; gap: 6px; padding: 4px; background: rgba(255,255,255,0.04); border: 1px solid var(--border); border-radius: 999px; margin-bottom: 4px;">
@@ -1649,6 +1650,7 @@
               Get the one-pager (PDF) &rarr;
             </button>
             <p style="margin-top: 12px; font-size: 11px; color: var(--text-muted); text-align: center;">We&rsquo;ll email a copy plus open the PDF in your browser. No cold outreach, just a follow-up if you reply. <a href="/privacy.html" style="color: var(--gold-light);">Privacy</a>.</p>
+          <p style="margin-top: 6px; font-size: 12px; color: var(--text-muted); text-align: center;">Prefer a full <a href="#" onclick="return requestDeck(event);" style="color: var(--gold-light); text-decoration: underline; font-weight: 600;">5-page pitch deck</a> instead? Same form &mdash; fill above and click here.</p>
           </form>
         </div>
         <div id="investor-done" style="display: none; text-align: center; padding: 16px;">
@@ -1668,6 +1670,12 @@
     // Investor one-pager form → POST /api/investor/onepager/request →
     // signed download URL. Same API base as the waitlist form.
     async function handleInvestor(e) {
+      return await _investorSubmit(e, 'onepager');
+    }
+    async function requestDeck(e) {
+      return await _investorSubmit(e, 'deck');
+    }
+    async function _investorSubmit(e, kind) {
       e.preventDefault();
       var btn = document.getElementById('inv-btn');
       var name = (document.getElementById('inv-name').value || '').trim();
@@ -1675,34 +1683,34 @@
       var company = (document.getElementById('inv-company').value || '').trim();
       var role = (document.getElementById('inv-role').value || '').trim();
       var note = (document.getElementById('inv-note').value || '').trim();
-      if (!email || !name) return false;
+      if (!email || !name) {
+        alert('Please fill in your name and work email above first.');
+        return false;
+      }
       var orig = btn.textContent;
       btn.disabled = true;
-      btn.textContent = 'Building your PDF\u2026';
+      btn.textContent = kind === 'deck' ? 'Building your deck\u2026' : 'Building your PDF\u2026';
+      var endpoint = kind === 'deck' ? '/api/investor/deck/request' : '/api/investor/onepager/request';
       try {
-        var res = await fetch(WAITLIST_API_BASE + '/api/investor/onepager/request', {
+        var res = await fetch(WAITLIST_API_BASE + endpoint, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ email: email, name: name, company: company, role: role, note: note, source: 'landing-investor' })
+          body: JSON.stringify({ email: email, name: name, company: company, role: role, note: note, source: 'landing-investor-' + kind })
         });
         if (!res.ok) throw new Error('Server returned ' + res.status);
         var body = await res.json();
         var url = WAITLIST_API_BASE + body.download_url;
-        // Trigger the download in a new tab (works even in Safari)
         var w = window.open(url, '_blank');
-        if (!w) {
-          // Popup blocked; use the "Open the PDF" button as fallback
-          location.href = url;
-        }
-        // Reveal the success state and stash the URL on the "Open the PDF" button
+        if (!w) { location.href = url; }
         document.getElementById('investor-form-wrap').style.display = 'none';
         var done = document.getElementById('investor-done');
         done.style.display = 'block';
         document.getElementById('inv-download-btn').href = url;
+        document.getElementById('inv-download-btn').textContent = kind === 'deck' ? 'Open the deck →' : 'Open the PDF →';
       } catch (err) {
         btn.disabled = false;
         btn.textContent = orig;
-        alert('Could not build your PDF right now — please try again in a moment, or email invest@phoenix-atlas.com.');
+        alert('Could not build your ' + (kind === 'deck' ? 'deck' : 'one-pager') + ' right now — please try again in a moment, or email invest@phoenix-atlas.com.');
       }
       return false;
     }
@@ -1717,6 +1725,36 @@
     // (phoenix-atlas.com + any preview subdomain) or the browser will
     // reject preflights and users will see "Network hiccup".
     var WAITLIST_API_BASE = (window.__VAULTED_API_BASE__ || 'https://multi-sig-vault.emergent.host').replace(/\/+$/, '');
+
+    // Track ref code from ?ref=CODE URL param → validate → show banner on
+    // the waitlist form to signal social proof + explain the reward.
+    var REFERRAL_CODE = (function () {
+      try {
+        var params = new URLSearchParams(window.location.search);
+        var raw = params.get('ref');
+        return raw ? raw.trim().toUpperCase().slice(0, 16) : '';
+      } catch (_) { return ''; }
+    })();
+
+    async function hydrateReferralBanner() {
+      if (!REFERRAL_CODE) return;
+      try {
+        var res = await fetch(WAITLIST_API_BASE + '/api/waitlist/refer/' + encodeURIComponent(REFERRAL_CODE));
+        if (!res.ok) return;
+        var body = await res.json();
+        if (!body.ok) return;
+        var host = document.getElementById('referral-banner');
+        if (!host) return;
+        var referrer = body.referrer || 'a friend';
+        host.innerHTML =
+          '<div style="background: linear-gradient(135deg, var(--gold) 0%, var(--gold-deep) 100%); color: #0F0B08; padding: 12px 18px; border-radius: 12px; font-size: 13px; font-weight: 700; text-align: center; margin: 12px auto 20px; max-width: 480px;">' +
+          '\u{1F389} You&rsquo;ve been referred by <span style="text-decoration: underline;">' + referrer + '</span>. ' +
+          'Join to both move up the queue.' +
+          '</div>';
+        host.style.display = 'block';
+      } catch (_) {}
+    }
+    document.addEventListener('DOMContentLoaded', hydrateReferralBanner);
 
     // Track current direction for the corridor filter + POST body.
     var CURRENT_DIRECTION = 'outbound';
@@ -1802,6 +1840,7 @@
             corridor: corridor,
             direction: CURRENT_DIRECTION,
             source: CURRENT_DIRECTION === 'inbound' ? 'landing-reverse' : 'landing',
+            ref: REFERRAL_CODE || undefined,
           })
         });
         var data = {};
@@ -1809,9 +1848,35 @@
 
         if (res.ok && data && data.ok) {
           msg.style.color = 'var(--gold-light)';
-          msg.textContent = data.already_joined
-            ? 'You\u2019re already on the list \u2014 we\u2019ll be in touch. \u2728'
-            : 'You\u2019re on the list. Check your inbox for a confirmation. \u2728';
+          // Build a richer success message with position + share link
+          var pos = data.position;
+          var total = data.total;
+          var refCode = data.referral_code;
+          var shareLink = refCode ? 'https://phoenix-atlas.com/?ref=' + refCode : '';
+          var greeting = data.already_joined
+            ? 'You\u2019re already on the list \u2014 we\u2019ll be in touch.'
+            : 'You\u2019re on the list. Check your inbox for a confirmation.';
+          if (pos && total) {
+            msg.innerHTML =
+              '<div style="text-align:center;">' +
+                '<div style="font-size: 15px; font-weight: 700; color: var(--gold-light); margin-bottom: 8px;">' +
+                  greeting + ' \u2728' +
+                '</div>' +
+                '<div style="display: inline-block; padding: 10px 18px; background: #0F0B08; border-radius: 12px; border: 1px solid rgba(201,163,91,0.35); margin-bottom: 10px;">' +
+                  '<div style="font-size: 11px; color: var(--gold); letter-spacing: 1.2px; font-weight: 700; margin-bottom: 4px;">YOUR SPOT</div>' +
+                  '<div style="font-size: 26px; font-weight: 800; color: var(--gold-cream); letter-spacing: -0.5px;">#' + pos.toLocaleString() + '</div>' +
+                  '<div style="font-size: 10px; color: var(--gold); opacity: 0.75; margin-top: 4px;">of ' + total.toLocaleString() + '</div>' +
+                '</div>' +
+                (shareLink ?
+                  '<div style="font-size: 12px; color: var(--text-secondary); margin-top: 10px;">' +
+                    'Skip the queue \u2014 every 3 referrals moves you up 25 spots.<br>' +
+                    '<code style="background: rgba(201,163,91,0.1); padding: 6px 10px; border-radius: 8px; margin-top: 8px; display: inline-block; font-size: 12px; color: var(--gold-cream);">' + shareLink + '</code>' +
+                    '<button onclick="navigator.clipboard && navigator.clipboard.writeText(\'' + shareLink + '\').then(function(){this.textContent=\'Copied!\'}.bind(this))" style="margin-left: 8px; padding: 6px 12px; background: var(--gold); color: #0F0B08; border: 0; border-radius: 999px; font-size: 11px; font-weight: 700; cursor: pointer;">Copy link</button>' +
+                  '</div>' : '') +
+              '</div>';
+          } else {
+            msg.textContent = greeting + ' \u2728';
+          }
           input.value = '';
           if (corridorEl) corridorEl.selectedIndex = 0;
         } else if (res.status === 429) {

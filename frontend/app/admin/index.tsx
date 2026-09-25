@@ -20,6 +20,7 @@ import { useRouter } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
 import { api } from "@/src/lib/api";
 import { colors, spacing, radius } from "@/src/lib/theme";
+import { DailySignupChart, CorridorMatrixHeatmap, ReferralLeaderboard } from "@/src/components/AdminCharts";
 
 type Probe = {
   ok: boolean;
@@ -75,6 +76,36 @@ type InvestorLeadsResp = {
   leads: InvestorLead[];
 };
 
+type DailySignupsResp = {
+  days: number;
+  series: { date: string; outbound: number; inbound: number; total: number }[];
+  totals: {
+    signups: number;
+    outbound: number;
+    inbound: number;
+    peak_day: string | null;
+    peak_count: number;
+    average_per_day: number;
+  };
+};
+
+type ReferralsResp = {
+  leaders: {
+    email_redacted: string;
+    email_hash: string;
+    referral_count: number;
+    corridor?: string;
+    founding_member: boolean;
+  }[];
+  totals: {
+    total_referred_signups: number;
+    founding_members: number;
+    boost_interval: number;
+    boost_spots: number;
+    founding_threshold: number;
+  };
+};
+
 // Country-code → flag emoji. Kept in sync with the landing dropdown so the
 // admin dashboard reads the same as the acquisition surface.
 const CORRIDOR_FLAGS: Record<string, string> = {
@@ -87,6 +118,8 @@ export default function AdminHome() {
   const [health, setHealth] = useState<KotaniHealth | null>(null);
   const [waitlist, setWaitlist] = useState<WaitlistStats | null>(null);
   const [investors, setInvestors] = useState<InvestorLeadsResp | null>(null);
+  const [dailySignups, setDailySignups] = useState<DailySignupsResp | null>(null);
+  const [referrals, setReferrals] = useState<ReferralsResp | null>(null);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [err, setErr] = useState<string | null>(null);
@@ -94,18 +127,18 @@ export default function AdminHome() {
   const load = useCallback(async () => {
     setErr(null);
     try {
-      // Fire all three in parallel — one slow endpoint shouldn't block the others.
-      const [h, w, inv] = await Promise.all([
+      const [h, w, inv, daily, refs] = await Promise.all([
         api<KotaniHealth>("/admin/kotani/health").catch((e) => { throw e; }),
-        // Waitlist stats is optional — a 500 here shouldn't blank the whole
-        // page, so we swallow and render null if it fails.
         api<WaitlistStats>("/admin/waitlist/stats").catch(() => null),
-        // Investor leads is also optional.
         api<InvestorLeadsResp>("/admin/investor/leads").catch(() => null),
+        api<DailySignupsResp>("/admin/waitlist/analytics/daily-signups?days=30").catch(() => null),
+        api<ReferralsResp>("/admin/waitlist/analytics/referrals?limit=10").catch(() => null),
       ]);
       setHealth(h);
       setWaitlist(w);
       setInvestors(inv);
+      setDailySignups(daily);
+      setReferrals(refs);
     } catch (e: any) {
       // 403 usually = your account isn't in ADMIN_EMAILS on this environment.
       setErr(e?.message || "Failed to load admin health");
@@ -232,6 +265,15 @@ export default function AdminHome() {
 
         {/* Waitlist stats card */}
         <WaitlistCard stats={waitlist} loading={loading} />
+
+        {/* Daily signup trend card */}
+        <DailySignupsCard data={dailySignups} loading={loading} />
+
+        {/* Corridor × direction matrix card */}
+        <CorridorMatrixCard stats={waitlist} loading={loading} />
+
+        {/* Referral leaderboard card */}
+        <ReferralLeaderboardCard data={referrals} loading={loading} />
 
         {/* Investor leads card */}
         <InvestorLeadsCard data={investors} loading={loading} />
@@ -402,6 +444,141 @@ function CorridorBar({
 
 // InvestorLeadsCard — captured leads from the "Get the one-pager" form on
 // the landing page. Shows total, repeat visitors (2+ downloads), top
+
+// DailySignupsCard — Line chart of daily waitlist signups over the last 30 days.
+// Includes totals summary + peak day.
+function DailySignupsCard({
+  data,
+  loading,
+}: {
+  data: DailySignupsResp | null;
+  loading: boolean;
+}) {
+  if (loading && !data) {
+    return (
+      <View style={s.card}>
+        <Text style={s.cardTitle}>Daily signups</Text>
+        <Text style={s.subtle}>Loading…</Text>
+      </View>
+    );
+  }
+  if (!data) {
+    return (
+      <View style={s.card}>
+        <Text style={s.cardTitle}>Daily signups</Text>
+        <Text style={s.subtle}>Unavailable.</Text>
+      </View>
+    );
+  }
+  const { series, totals } = data;
+  const peakLabel = totals.peak_day
+    ? new Date(totals.peak_day).toLocaleDateString(undefined, { month: "short", day: "numeric" })
+    : "—";
+  return (
+    <View style={s.card}>
+      <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginBottom: 4 }}>
+        <Text style={s.cardTitle}>Daily signups</Text>
+        <View style={s.pill}>
+          <Text style={s.pillText}>Last {data.days} days</Text>
+        </View>
+      </View>
+      <Text style={s.subtle}>Waitlist signups per day, split by direction. Inbound = Africa &rarr; UK/EU.</Text>
+
+      {/* Summary row */}
+      <View style={s.miniStatsRow}>
+        <View style={s.miniStat}>
+          <Text style={s.miniStatNum}>{totals.signups}</Text>
+          <Text style={s.miniStatLabel}>total</Text>
+        </View>
+        <View style={s.miniStat}>
+          <Text style={s.miniStatNum}>{totals.average_per_day}</Text>
+          <Text style={s.miniStatLabel}>/day avg</Text>
+        </View>
+        <View style={s.miniStat}>
+          <Text style={s.miniStatNum}>{totals.peak_count}</Text>
+          <Text style={s.miniStatLabel}>peak · {peakLabel}</Text>
+        </View>
+      </View>
+
+      <View style={{ alignItems: "center", marginTop: spacing.md }}>
+        <DailySignupChart series={series} height={160} width={320} />
+      </View>
+    </View>
+  );
+}
+
+// CorridorMatrixCard — Heatmap-style breakdown of corridor × direction.
+function CorridorMatrixCard({
+  stats,
+  loading,
+}: {
+  stats: WaitlistStats | null;
+  loading: boolean;
+}) {
+  if (loading && !stats) {
+    return (
+      <View style={s.card}>
+        <Text style={s.cardTitle}>Corridor breakdown</Text>
+        <Text style={s.subtle}>Loading…</Text>
+      </View>
+    );
+  }
+  if (!stats || !stats.matrix) {
+    return (
+      <View style={s.card}>
+        <Text style={s.cardTitle}>Corridor breakdown</Text>
+        <Text style={s.subtle}>No data yet.</Text>
+      </View>
+    );
+  }
+  return (
+    <View style={s.card}>
+      <Text style={s.cardTitle}>Corridor breakdown</Text>
+      <Text style={s.subtle}>
+        Signups per corridor per direction. Darker cell = more demand. Ideal for investor calls to show live corridor pull.
+      </Text>
+      <View style={{ marginTop: spacing.md }}>
+        <CorridorMatrixHeatmap matrix={stats.matrix} corridors={stats.corridors} />
+      </View>
+    </View>
+  );
+}
+
+// ReferralLeaderboardCard — Top referrers + Founding Members count.
+function ReferralLeaderboardCard({
+  data,
+  loading,
+}: {
+  data: ReferralsResp | null;
+  loading: boolean;
+}) {
+  if (loading && !data) {
+    return (
+      <View style={s.card}>
+        <Text style={s.cardTitle}>Referral leaderboard</Text>
+        <Text style={s.subtle}>Loading…</Text>
+      </View>
+    );
+  }
+  if (!data) {
+    return (
+      <View style={s.card}>
+        <Text style={s.cardTitle}>Referral leaderboard</Text>
+        <Text style={s.subtle}>Unavailable.</Text>
+      </View>
+    );
+  }
+  return (
+    <View style={s.card}>
+      <Text style={s.cardTitle}>Referral leaderboard</Text>
+      <Text style={s.subtle}>
+        Top waitlist referrers. Every {data.totals.boost_interval} refs moves them up {data.totals.boost_spots} spots; {data.totals.founding_threshold}+ unlocks the Founding Member badge.
+      </Text>
+      <ReferralLeaderboard leaders={data.leaders} totals={data.totals} />
+    </View>
+  );
+}
+
 // company breakdown, and the 5 most recent leads with role + note preview.
 function InvestorLeadsCard({
   data,
@@ -674,4 +851,18 @@ const s = StyleSheet.create({
     backgroundColor: colors.brand,
   },
   leadBadgeText: { fontSize: 10, fontWeight: "800", color: "#0F0B08" },
+
+  // DailySignupsCard mini stats row
+  miniStatsRow: {
+    flexDirection: "row",
+    gap: 12,
+    marginTop: spacing.md,
+    padding: 10,
+    backgroundColor: colors.surfaceSecondary,
+    borderRadius: radius.md,
+    borderWidth: 1, borderColor: colors.border,
+  },
+  miniStat: { flex: 1, alignItems: "center" },
+  miniStatNum: { fontSize: 18, fontWeight: "800", color: colors.onSurface, letterSpacing: -0.5 },
+  miniStatLabel: { fontSize: 10, color: colors.onSurfaceSecondary, marginTop: 2, letterSpacing: 0.3, textAlign: "center" },
 });
