@@ -188,6 +188,37 @@ def _mock_offramp_rate(from_token: str, to_currency: str, crypto_amount: float) 
     }
 
 
+def _mock_onramp_rate(from_currency: str, to_token: str, fiat_amount: float) -> dict:
+    """Mock reverse-direction rate: fiat → crypto.
+
+    Uses the same rate table but INVERTS the quote so that
+    fiat_amount / rate == crypto_amount. Adds a slightly higher
+    spread (1.0%) because on-ramps in African corridors typically
+    carry a wider FX margin than off-ramps.
+    """
+    rate = _MOCK_RATE_TABLE.get(from_currency.upper(), 100.0)
+    spread = 0.010  # 1.0% — realistic on-ramp spread
+    # Effective rate the user gets = market rate + spread against them
+    effective_rate = round(rate * (1 + spread), 4)
+    crypto_amount = round(fiat_amount / effective_rate, 6) if effective_rate else 0.0
+    fee = round(fiat_amount * 0.025, 2)  # 2.5% on-ramp mobile-money fee
+    return {
+        "success": True,
+        "message": "Available on-ramp exchange rate. (mocked)",
+        "data": {
+            "id": _mock_rate_id(),
+            "from": from_currency.upper(),
+            "to": to_token.upper(),
+            "value": str(effective_rate),
+            "fiatAmount": fiat_amount,
+            "cryptoAmount": crypto_amount,
+            "transactionAmount": round(fiat_amount - fee, 2),
+            "fee": fee,
+            "_mock": True,
+        },
+    }
+
+
 def _mock_create_offramp(payload: dict) -> dict:
     ref = payload.get("referenceId") or _mock_reference_id()
     return {
@@ -372,6 +403,52 @@ def extract_rate_id(rate_res: dict) -> Optional[str]:
 def extract_fiat_amount(rate_res: dict) -> Optional[float]:
     data = (rate_res or {}).get("data") or {}
     val = data.get("fiatAmount") or data.get("transactionAmount")
+    try:
+        return float(val) if val is not None else None
+    except Exception:  # noqa: BLE001
+        return None
+
+
+# --- On-ramp rate (reverse-corridor: African fiat → stablecoin) -----------
+# Real endpoint: GET /api/v3/rates/onramp-rate  (per Kotani docs, 2026-06)
+# Some Kotani deployments also expose POST /api/v3/rate/onramp — we try
+# POST first (mirrors the offramp flow) and fall back to GET on 404. This
+# absorbs the historical inconsistency in Kotani's public docs and keeps
+# our contract identical regardless of which endpoint the sandbox exposes.
+async def onramp_rate(
+    *,
+    from_currency: str = "NGN",
+    to_token: str = "USDC",
+    fiat_amount: float,
+    chain: str = "POLYGON",
+) -> dict:
+    """Ask Kotani for a live fiat→crypto rate quote for reverse corridors
+    (Nigeria/Kenya/Ghana/South Africa users buying stablecoin with mobile
+    money or bank transfer).
+
+    Note: Kotani's rate endpoint does NOT accept a `chain` param (chain is
+    only needed at on-ramp creation time). We keep it in the function
+    signature for symmetry with `offramp_rate` and to future-proof if
+    Kotani adds it later.
+
+    Returns Kotani's envelope with `data.value` (effective rate),
+    `data.fiatAmount` (input), `data.cryptoAmount` (output), `data.fee`.
+    """
+    body = {
+        "from": from_currency.upper(),
+        "to": to_token.upper(),
+        "fiatAmount": fiat_amount,
+    }
+    if not live_mode():
+        return _mock_onramp_rate(from_currency, to_token, fiat_amount)
+
+    return await _post("/api/v3/rate/onramp", body)
+
+
+def extract_crypto_amount(rate_res: dict) -> Optional[float]:
+    """Pull the crypto amount (data.cryptoAmount) from an onramp rate response."""
+    data = (rate_res or {}).get("data") or {}
+    val = data.get("cryptoAmount") or data.get("transactionAmount")
     try:
         return float(val) if val is not None else None
     except Exception:  # noqa: BLE001

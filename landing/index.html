@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <meta name="theme-color" content="#0A0807">
   <title>Vaulted — UK Fintech in Build · Cross-Border Remittance & Self-Custody Crypto Wallet (Waitlist)</title>
-  <meta name="description" content="Vaulted is a UK fintech in pre-launch. Cross-border remittance across 11 corridors backed by a self-custody crypto wallet. 4 African rails already live in sandbox. Currently in waitlist mode ahead of FCA authorization &mdash; not open for customer transactions.">
+  <meta name="description" content="Vaulted is a UK fintech in pre-launch. Bi-directional cross-border remittance — UK/EU to Africa AND Africa to UK/EU (school fees, medical bills). 4 African rails live in sandbox. Currently in waitlist mode ahead of FCA authorization &mdash; not open for customer transactions.">
   <!--
     Open Graph / Twitter / iMessage / WhatsApp / Slack preview cards.
     All social platforms honour these tags to render a rich preview when
@@ -14,8 +14,8 @@
     whenever brand copy or the illustrative KES amount changes.
   -->
   <meta property="og:site_name" content="Vaulted">
-  <meta property="og:title" content="Vaulted — Cheap. Fast. Self-custody remittance to Africa.">
-  <meta property="og:description" content="UK to Africa remittance without the wait. £50 → ~8,631 KES in ~30 seconds. Fiat in, fiat out — crypto rails underneath. 4 African corridors live in sandbox (Kenya, Ghana, Tanzania, Zambia). Currently in waitlist mode ahead of FCA authorization.">
+  <meta property="og:title" content="Vaulted — Bi-directional remittance between the UK/EU and Africa.">
+  <meta property="og:description" content="Cross-border remittance without the wait. £50 → 8,631 KES to Kenya. ₦100,000 → £45.74 to the UK. Fiat in, fiat out — regulated stablecoin rails underneath. 4 African corridors live in sandbox. Currently in waitlist mode ahead of FCA authorization.">
   <meta property="og:url" content="https://phoenix-atlas.com">
   <meta property="og:type" content="website">
   <meta property="og:image" content="https://phoenix-atlas.com/og-image.png">
@@ -23,14 +23,14 @@
   <meta property="og:image:type" content="image/png">
   <meta property="og:image:width" content="1200">
   <meta property="og:image:height" content="630">
-  <meta property="og:image:alt" content="Vaulted: send £50 to Kenya, recipient gets ~8,631 KES in ~30 seconds via M-Pesa. Fee £0.75.">
+  <meta property="og:image:alt" content="Vaulted: bi-directional remittance between the UK and Africa in about a minute.">
   <meta property="og:locale" content="en_GB">
 
   <meta name="twitter:card" content="summary_large_image">
-  <meta name="twitter:title" content="Vaulted — Cheap. Fast. Self-custody remittance.">
-  <meta name="twitter:description" content="£50 → ~8,631 KES in ~30 seconds. UK to 🇰🇪 🇬🇭 🇹🇿 🇿🇲 live in sandbox. Fiat in, fiat out — crypto rails underneath. Currently in waitlist mode ahead of FCA authorization.">
+  <meta name="twitter:title" content="Vaulted — Bi-directional UK ↔ Africa remittance.">
+  <meta name="twitter:description" content="£50 → 8,631 KES to Kenya. ₦100,000 → £45.74 to the UK. Fiat in, fiat out — stablecoin rails underneath. 4 African rails live in sandbox. Currently in waitlist mode ahead of FCA authorization.">
   <meta name="twitter:image" content="https://phoenix-atlas.com/og-image.png">
-  <meta name="twitter:image:alt" content="Vaulted: send £50 to Kenya, recipient gets ~8,631 KES in ~30 seconds via M-Pesa.">
+  <meta name="twitter:image:alt" content="Vaulted: bi-directional UK ↔ Africa remittance.">
 
   <meta name="robots" content="index, follow">
   <link rel="canonical" href="https://phoenix-atlas.com/">
@@ -511,6 +511,51 @@
       font-size: 11px; color: var(--text-muted);
     }
     .corridor-fee strong { color: var(--gold); font-weight: 700; }
+
+    /* Reverse corridors (Africa -> UK/EU) — Phase 1 */
+    .reverse-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+      gap: 16px;
+      max-width: 1080px; margin: 0 auto;
+    }
+    .reverse-card {
+      background: linear-gradient(160deg, rgba(201,163,91,0.06) 0%, var(--bg-card) 100%);
+      border: 1px solid rgba(201, 163, 91, 0.28);
+      border-radius: 20px;
+      padding: 24px 22px;
+      display: flex; flex-direction: column;
+    }
+    .reverse-header {
+      display: flex; align-items: center; justify-content: space-between;
+      margin-bottom: 14px;
+    }
+    .reverse-flags { font-size: 28px; line-height: 1; letter-spacing: -2px; }
+    .reverse-eta {
+      font-size: 11px; font-weight: 700; letter-spacing: 1px;
+      color: var(--gold); text-transform: uppercase;
+      background: rgba(201, 163, 91, 0.12);
+      padding: 4px 10px; border-radius: 999px;
+    }
+    .reverse-title { font-size: 17px; font-weight: 700; color: var(--gold-cream); margin-bottom: 6px; }
+    .reverse-usecase { font-size: 12px; color: var(--text-muted); margin-bottom: 18px; line-height: 1.5; }
+    .reverse-example {
+      background: rgba(10, 8, 7, 0.55);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 14px;
+      margin-top: auto;
+      font-size: 14px;
+      color: var(--text-secondary);
+      font-weight: 600;
+    }
+    .reverse-example .arrow { color: var(--gold); font-weight: 700; margin: 0 6px; }
+    .reverse-example .receive { color: var(--gold-cream); font-weight: 700; }
+    .reverse-note {
+      margin-top: 10px;
+      font-size: 11px; color: var(--text-muted);
+      line-height: 1.5;
+    }
 
     /* ------------------------------------------------------------------
        VAULTED IS FOR
@@ -1010,6 +1055,7 @@
         <a href="#features">Features</a>
         <a href="#corridors">Corridors</a>
         <a href="#who-its-for">Who it&rsquo;s for</a>
+        <a href="#reverse">Reverse</a>
         <a href="#compare">Compare</a>
         <a href="#pricing">Pricing</a>
         <a href="#security">Security</a>
@@ -1022,8 +1068,8 @@
   <section class="hero">
     <div class="container">
       <div class="eyebrow">Cross-border remittance &middot; UK fintech in build</div>
-      <h1>Send &pound;50 home in 5 seconds. <span class="gold-text">Coming soon</span> to the UK.</h1>
-      <p class="hero-sub">Phoenix-Atlas Technologies is building a fiat-first cross-border remittance app called Vaulted, backed by a self-custody crypto wallet. Fund with card, Apple Pay, Google Pay or bank transfer &mdash; you don&rsquo;t need to own crypto to send. Pick a country, enter pounds, we&rsquo;ll auto-pick the cheapest chain (XLM &middot; XRP &middot; USDC on Polygon/Base/Arbitrum). Currently in waitlist mode ahead of FCA authorization.</p>
+      <h1>Send &pound;50 home in 5 seconds. Now going <span class="gold-text">both ways</span>.</h1>
+      <p class="hero-sub">Phoenix-Atlas Technologies is building a fiat-first cross-border remittance app called Vaulted, backed by a self-custody crypto wallet. Fund with card, Apple Pay, Google Pay or bank transfer &mdash; you don&rsquo;t need to own crypto to send. Send <strong>UK/EU &rarr; Africa</strong> in seconds, and from Q4 2026 <strong>Africa &rarr; UK/EU</strong> for school fees and medical bills. Currently in waitlist mode ahead of FCA authorization.</p>
       <div class="hero-cta-row">
         <a class="btn btn-primary btn-large" href="#waitlist">Join the waitlist &rarr;</a>
         <a class="btn btn-ghost btn-large" href="https://app.phoenix-atlas.com">Preview the app</a>
@@ -1139,6 +1185,66 @@
         <div class="fca-label">Risk warning &middot; Cryptoassets</div>
         Don&rsquo;t invest unless you&rsquo;re prepared to lose all the money you invest. This is a high-risk investment and you should not expect to be protected if something goes wrong. <a href="/risk-disclosure.html">Take 2 mins to learn more.</a>
       </div>
+    </div>
+  </section>
+
+  <!-- REVERSE CORRIDORS (Africa -> UK/EU) — Phase 1, quote-only + waitlist -->
+  <section id="reverse" style="background: linear-gradient(180deg, var(--bg-primary) 0%, var(--bg-elevated) 100%);">
+    <div class="container">
+      <div class="corridors-hero">
+        <div class="section-eyebrow" style="color: var(--gold);">New &middot; Bi-directional</div>
+        <div class="corridor-headline">Send <span class="italic">to</span> the UK &amp; EU, from Africa.</div>
+        <p class="section-sub">
+          Diaspora families in the UK aren&rsquo;t the only ones with cross-border payments to make. Parents in Lagos paying UK tuition. Families in Nairobi covering medical treatment in London. Businesses in Accra paying Irish suppliers. <strong>Vaulted&rsquo;s reverse corridor</strong> lets you send from Nigeria, Kenya, Ghana or South Africa to <strong>GBP</strong> or <strong>EUR</strong> in about two minutes &mdash; using regulated stablecoin rails, not SWIFT. Live rate quotes today, GBP settlement launches in Phase 2.
+        </p>
+      </div>
+
+      <div class="reverse-grid">
+        <div class="reverse-card">
+          <div class="reverse-header">
+            <span class="reverse-flags">🇳🇬 &rarr; 🇬🇧</span>
+            <span class="reverse-eta">~2 min</span>
+          </div>
+          <div class="reverse-title">Nigeria &rarr; United Kingdom</div>
+          <div class="reverse-usecase">UK university fees &middot; Medical treatment &middot; Mortgage</div>
+          <div class="reverse-example">₦100,000 <span class="arrow">→</span> <span class="receive">~£45.74</span></div>
+          <div class="reverse-note">On-ramp via bank transfer &middot; USDC on Polygon &middot; UK Faster Payments payout</div>
+        </div>
+        <div class="reverse-card">
+          <div class="reverse-header">
+            <span class="reverse-flags">🇰🇪 &rarr; 🇬🇧</span>
+            <span class="reverse-eta">~90 sec</span>
+          </div>
+          <div class="reverse-title">Kenya &rarr; United Kingdom</div>
+          <div class="reverse-usecase">School fees abroad &middot; Medical bills &middot; Property</div>
+          <div class="reverse-example">KES 10,000 <span class="arrow">→</span> <span class="receive">~£53.60</span></div>
+          <div class="reverse-note">On-ramp via M-Pesa &middot; USDC on Polygon &middot; UK Faster Payments payout</div>
+        </div>
+        <div class="reverse-card">
+          <div class="reverse-header">
+            <span class="reverse-flags">🇬🇭 &rarr; 🇪🇺</span>
+            <span class="reverse-eta">~2 min</span>
+          </div>
+          <div class="reverse-title">Ghana &rarr; Eurozone</div>
+          <div class="reverse-usecase">Tuition remittance &middot; Family support &middot; Travel</div>
+          <div class="reverse-example">GHS 1,000 <span class="arrow">→</span> <span class="receive">~€57.90</span></div>
+          <div class="reverse-note">On-ramp via MTN / Vodafone MoMo &middot; USDC on Polygon &middot; SEPA Instant payout</div>
+        </div>
+        <div class="reverse-card">
+          <div class="reverse-header">
+            <span class="reverse-flags">🇿🇦 &rarr; 🇬🇧</span>
+            <span class="reverse-eta">~2 min</span>
+          </div>
+          <div class="reverse-title">South Africa &rarr; United Kingdom</div>
+          <div class="reverse-usecase">Business payments &middot; Property &middot; Family support</div>
+          <div class="reverse-example">ZAR 2,000 <span class="arrow">→</span> <span class="receive">~£83.90</span></div>
+          <div class="reverse-note">On-ramp via bank / MoMo &middot; USDC on Polygon &middot; UK Faster Payments payout</div>
+        </div>
+      </div>
+
+      <p style="text-align:center; color: var(--text-muted); font-size: 12px; margin-top: 32px; max-width: 780px; margin-left: auto; margin-right: auto;">
+        <strong>Illustrative estimates only</strong> &mdash; based on live on-ramp partner sandbox rates + open exchange feed. Reverse settlement to GBP / EUR requires our UK Payment Service Provider integration (Phase 2). Join the reverse-corridor waitlist below to lock in launch-window pricing (planned 50% off Vaulted fees for early joiners).
+      </p>
     </div>
   </section>
 
@@ -1457,18 +1563,33 @@
     <div class="container">
       <h2>Get on the <span class="italic">waitlist</span>.</h2>
       <p>We&rsquo;ll invite you to preview Vaulted as soon as authorized services in your corridor go live. No card required. No spam. One email when we launch.</p>
-      <form id="waitlist-form" class="waitlist-form" onsubmit="return handleWaitlist(event);" style="max-width: 460px; margin: 24px auto 0; display: flex; gap: 8px; flex-wrap: wrap; justify-content: center;">
+      <form id="waitlist-form" class="waitlist-form" onsubmit="return handleWaitlist(event);" style="max-width: 480px; margin: 24px auto 0; display: flex; gap: 8px; flex-wrap: wrap; justify-content: center;">
+        <!-- Direction toggle: outbound (UK→Africa) or inbound (Africa→UK/EU) -->
+        <div id="direction-toggle" role="tablist" style="flex: 1 1 100%; display: flex; gap: 6px; padding: 4px; background: rgba(255,255,255,0.04); border: 1px solid var(--border); border-radius: 999px; margin-bottom: 4px;">
+          <label style="flex: 1;">
+            <input type="radio" name="direction" value="outbound" checked style="display: none;" onchange="updateDirection(this)">
+            <span class="dir-pill dir-pill-active" data-dir="outbound" style="display: block; text-align: center; padding: 10px 14px; border-radius: 999px; font-size: 13px; font-weight: 600; cursor: pointer; color: var(--gold-cream);">🇬🇧 &rarr; 🌍 Send to Africa</span>
+          </label>
+          <label style="flex: 1;">
+            <input type="radio" name="direction" value="inbound" style="display: none;" onchange="updateDirection(this)">
+            <span class="dir-pill" data-dir="inbound" style="display: block; text-align: center; padding: 10px 14px; border-radius: 999px; font-size: 13px; font-weight: 600; cursor: pointer; color: var(--text-muted);">🌍 &rarr; 🇬🇧 Send to UK/EU <span style="background: var(--gold); color: #0F0B08; padding: 1px 6px; border-radius: 999px; font-size: 9px; font-weight: 800; margin-left: 4px;">NEW</span></span>
+          </label>
+        </div>
         <input id="waitlist-email" type="email" name="email" required placeholder="you@example.com" aria-label="Email address" style="flex: 1 1 240px; min-width: 220px; padding: 14px 18px; border-radius: 999px; border: 1px solid var(--border); background: rgba(255,255,255,0.03); color: var(--text-primary); font-family: 'Inter', sans-serif; font-size: 15px;">
-        <select id="waitlist-corridor" name="corridor" aria-label="Where are you sending money to?" style="flex: 1 1 240px; min-width: 220px; padding: 14px 18px; border-radius: 999px; border: 1px solid var(--border); background: rgba(255,255,255,0.03); color: var(--text-primary); font-family: 'Inter', sans-serif; font-size: 15px; appearance: none; -webkit-appearance: none;">
-          <option value="" disabled selected>Where are you sending money to?</option>
-          <option value="KE">🇰🇪 Kenya (M-Pesa)</option>
-          <option value="GH">🇬🇭 Ghana (Mobile Money)</option>
-          <option value="NG">🇳🇬 Nigeria</option>
-          <option value="UG">🇺🇬 Uganda</option>
-          <option value="TZ">🇹🇿 Tanzania</option>
-          <option value="ZM">🇿🇲 Zambia</option>
-          <option value="ZA">🇿🇦 South Africa</option>
-          <option value="XX">Other / Coming soon</option>
+        <select id="waitlist-corridor" name="corridor" aria-label="Which corridor?" style="flex: 1 1 240px; min-width: 220px; padding: 14px 18px; border-radius: 999px; border: 1px solid var(--border); background: rgba(255,255,255,0.03); color: var(--text-primary); font-family: 'Inter', sans-serif; font-size: 15px; appearance: none; -webkit-appearance: none;">
+          <option value="" disabled selected data-mode="both">Where are you sending money to?</option>
+          <option value="KE" data-mode="outbound">🇰🇪 Kenya (M-Pesa)</option>
+          <option value="GH" data-mode="outbound">🇬🇭 Ghana (Mobile Money)</option>
+          <option value="NG" data-mode="outbound">🇳🇬 Nigeria</option>
+          <option value="UG" data-mode="outbound">🇺🇬 Uganda</option>
+          <option value="TZ" data-mode="outbound">🇹🇿 Tanzania</option>
+          <option value="ZM" data-mode="outbound">🇿🇲 Zambia</option>
+          <option value="ZA" data-mode="outbound">🇿🇦 South Africa</option>
+          <option value="XX" data-mode="outbound">Other / Coming soon</option>
+          <option value="NG" data-mode="inbound">🇳🇬 From Nigeria &rarr; UK/EU</option>
+          <option value="KE" data-mode="inbound">🇰🇪 From Kenya &rarr; UK/EU</option>
+          <option value="GH" data-mode="inbound">🇬🇭 From Ghana &rarr; UK/EU</option>
+          <option value="ZA" data-mode="inbound">🇿🇦 From South Africa &rarr; UK/EU</option>
         </select>
         <button id="waitlist-btn" type="submit" class="btn btn-primary btn-large" style="padding: 14px 28px;">Join the waitlist &rarr;</button>
       </form>
@@ -1487,6 +1608,50 @@
     // (phoenix-atlas.com + any preview subdomain) or the browser will
     // reject preflights and users will see "Network hiccup".
     var WAITLIST_API_BASE = (window.__VAULTED_API_BASE__ || 'https://multi-sig-vault.emergent.host').replace(/\/+$/, '');
+
+    // Track current direction for the corridor filter + POST body.
+    var CURRENT_DIRECTION = 'outbound';
+
+    function updateDirection(input) {
+      CURRENT_DIRECTION = input.value === 'inbound' ? 'inbound' : 'outbound';
+      // Toggle visual pill state
+      var pills = document.querySelectorAll('.dir-pill');
+      pills.forEach(function (p) {
+        var active = p.getAttribute('data-dir') === CURRENT_DIRECTION;
+        p.classList.toggle('dir-pill-active', active);
+        p.style.background = active ? 'var(--gold)' : 'transparent';
+        p.style.color = active ? '#0F0B08' : 'var(--text-muted)';
+      });
+      // Filter the corridor <select> options — show only ones matching direction
+      var sel = document.getElementById('waitlist-corridor');
+      if (!sel) return;
+      var previous = sel.value;
+      Array.prototype.forEach.call(sel.options, function (opt) {
+        var m = opt.getAttribute('data-mode') || 'both';
+        opt.hidden = !(m === 'both' || m === CURRENT_DIRECTION);
+      });
+      // Reset selection if the previously chosen option is now hidden
+      if (!previous || sel.options[sel.selectedIndex].hidden) {
+        sel.selectedIndex = 0;
+      }
+      // Update placeholder copy based on direction
+      var placeholder = sel.querySelector('option[value=""]');
+      if (placeholder) {
+        placeholder.textContent = CURRENT_DIRECTION === 'inbound'
+          ? 'Where are you sending money from?'
+          : 'Where are you sending money to?';
+      }
+    }
+
+    // Initialize on load to apply the default outbound filter
+    document.addEventListener('DOMContentLoaded', function () {
+      var checked = document.querySelector('input[name="direction"]:checked');
+      if (checked) updateDirection(checked);
+      // Add pill active style rules
+      var s = document.createElement('style');
+      s.textContent = '.dir-pill-active { background: var(--gold) !important; color: #0F0B08 !important; }';
+      document.head.appendChild(s);
+    });
 
     async function handleWaitlist(e) {
       e.preventDefault();
@@ -1507,7 +1672,9 @@
       }
       if (!corridor) {
         msg.style.color = '#ff8a80';
-        msg.textContent = 'Please pick a destination so we can invite you at launch.';
+        msg.textContent = CURRENT_DIRECTION === 'inbound'
+          ? 'Please pick where you\u2019re sending FROM.'
+          : 'Please pick a destination so we can invite you at launch.';
         return false;
       }
 
@@ -1521,7 +1688,12 @@
         var res = await fetch(WAITLIST_API_BASE + '/api/waitlist/join', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ email: email, corridor: corridor, source: 'landing' })
+          body: JSON.stringify({
+            email: email,
+            corridor: corridor,
+            direction: CURRENT_DIRECTION,
+            source: CURRENT_DIRECTION === 'inbound' ? 'landing-reverse' : 'landing',
+          })
         });
         var data = {};
         try { data = await res.json(); } catch (_) {}

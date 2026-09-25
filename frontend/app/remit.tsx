@@ -13,6 +13,7 @@ import { authenticate, getCapabilities } from "@/src/lib/biometric";
 import { startRemitFundCheckout, syncStripeSession } from "@/src/lib/stripe";
 import KycStatusBanner from "@/src/components/KycStatusBanner";
 import PreviewBanner from "@/src/components/PreviewBanner";
+import ReverseRemitPanel from "@/src/components/ReverseRemitPanel";
 
 type Corridor = {
   code: string;
@@ -85,6 +86,9 @@ const FUNDING_OPTIONS: FundingOption[] = [
 export default function Remit() {
   const router = useRouter();
   const { user } = useAuth();
+  // Direction: "outbound" = UK/EU → Africa (original product);
+  // "inbound" = Africa → UK/EU (Phase 1 quote-only reverse corridor).
+  const [direction, setDirection] = useState<"outbound" | "inbound">("outbound");
   const [corridors, setCorridors] = useState<Corridor[]>([]);
   const [dest, setDest] = useState<string>("KE");
   const [srcFiat, setSrcFiat] = useState<SourceFiat>("GBP");
@@ -374,7 +378,32 @@ export default function Remit() {
         <PreviewBanner />
         <KycStatusBanner />
 
+        {/* Direction toggle — outbound (UK→Africa) vs inbound (Africa→UK/EU) */}
+        <View style={s.dirToggleWrap}>
+          <Pressable
+            testID="remit-direction-outbound"
+            onPress={() => setDirection("outbound")}
+            style={[s.dirToggle, direction === "outbound" && s.dirToggleActive]}
+          >
+            <Text style={s.dirToggleFlags}>🇬🇧 → 🌍</Text>
+            <Text style={[s.dirToggleText, direction === "outbound" && s.dirToggleTextActive]}>Send to Africa</Text>
+          </Pressable>
+          <Pressable
+            testID="remit-direction-inbound"
+            onPress={() => setDirection("inbound")}
+            style={[s.dirToggle, direction === "inbound" && s.dirToggleActive]}
+          >
+            <Text style={s.dirToggleFlags}>🌍 → 🇬🇧</Text>
+            <Text style={[s.dirToggleText, direction === "inbound" && s.dirToggleTextActive]}>Send to UK/EU</Text>
+            <View style={s.dirToggleBadge}><Text style={s.dirToggleBadgeText}>NEW</Text></View>
+          </Pressable>
+        </View>
+
         <ScrollView contentContainerStyle={{ padding: spacing.xl, paddingBottom: 120 }} keyboardShouldPersistTaps="handled">
+          {direction === "inbound" ? (
+            <ReverseRemitPanel userEmail={user?.email || null} />
+          ) : (
+          <>
           {/* Source fiat picker */}
           <Text style={s.label}>You send</Text>
           <View style={s.amountCard}>
@@ -675,6 +704,8 @@ export default function Remit() {
               </Text>
             )}
           </Pressable>
+          </>
+          )}
         </ScrollView>
       </KeyboardAvoidingView>
     </SafeAreaView>
@@ -766,4 +797,46 @@ const s = StyleSheet.create({
 
   cta: { backgroundColor: colors.brand, borderRadius: radius.md, paddingVertical: 16, alignItems: "center", marginTop: spacing.xl },
   ctaText: { color: "#0F0B08", fontSize: 16, fontWeight: "700" },
+
+  // Direction toggle (outbound vs inbound)
+  dirToggleWrap: {
+    flexDirection: "row",
+    marginHorizontal: spacing.xl,
+    marginTop: spacing.sm,
+    padding: 4,
+    borderRadius: radius.md,
+    backgroundColor: colors.surfaceSecondary,
+    borderWidth: 1,
+    borderColor: colors.border,
+    gap: 4,
+  },
+  dirToggle: {
+    flex: 1,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 8,
+    paddingVertical: 10,
+    paddingHorizontal: spacing.sm,
+    borderRadius: radius.sm,
+    backgroundColor: "transparent",
+  },
+  dirToggleActive: {
+    backgroundColor: colors.surface,
+    shadowColor: "#000",
+    shadowOpacity: 0.06,
+    shadowRadius: 4,
+    shadowOffset: { width: 0, height: 1 },
+    elevation: 1,
+  },
+  dirToggleFlags: { fontSize: 14 },
+  dirToggleText: { fontSize: 12, fontWeight: "600", color: colors.onSurfaceSecondary },
+  dirToggleTextActive: { color: colors.onSurface, fontWeight: "700" },
+  dirToggleBadge: {
+    backgroundColor: colors.brand,
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: radius.pill,
+  },
+  dirToggleBadgeText: { color: "#0F0B08", fontSize: 9, fontWeight: "800", letterSpacing: 0.4 },
 });

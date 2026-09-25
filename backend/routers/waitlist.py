@@ -68,6 +68,20 @@ def _normalize_corridor(value: Optional[str]) -> str:
     return "XX"
 
 
+# ---- Direction (outbound vs inbound) ------------------------------------
+# outbound: user is IN the UK/EU sending money TO Africa (original product)
+# inbound:  user is IN Africa sending money TO the UK/EU (reverse corridor,
+#           unlocked in Phase 1 of the bi-directional launch)
+ALLOWED_DIRECTIONS: set[str] = {"outbound", "inbound"}
+
+
+def _normalize_direction(value: Optional[str]) -> str:
+    v = (value or "").strip().lower()
+    if v in ALLOWED_DIRECTIONS:
+        return v
+    return "outbound"
+
+
 # ---- Rate limit (per-IP) --------------------------------------------------
 _RATE_WINDOW_SEC = 5
 _last_seen_by_ip: dict[str, float] = {}
@@ -91,13 +105,16 @@ def _client_ip(request: Request) -> str:
 
 # ---- Resend Audience routing ---------------------------------------------
 # Per-corridor audience id cache (Mongo-backed for durability across restarts).
-# Keys: {"corridor": "KE"} → {"corridor": "KE", "audience_id": "aud_...",
-#                             "name": "Vaulted Waitlist – Kenya",
-#                             "created_at": iso}
-async def _get_or_create_corridor_audience(corridor: str) -> Optional[str]:
-    """Return the Resend audience id for the given corridor, creating it
-    on-demand the first time it's needed. Cached in Mongo (durable across
-    process restarts) so we never re-create.
+# Keys: {"corridor": "KE", "direction": "outbound"} →
+#   {"corridor": "KE", "direction": "outbound",
+#    "audience_id": "aud_...", "name": "Vaulted Waitlist – Kenya → UK/EU",
+#    "created_at": iso}
+# Direction is folded into the audience name so campaigns can target the
+# right side of the corridor (UK diaspora vs African senders).
+async def _get_or_create_corridor_audience(corridor: str, direction: str = "outbound") -> Optional[str]:
+    """Return the Resend audience id for the given corridor + direction,
+    creating it on-demand the first time it's needed. Cached in Mongo
+    (durable across process restarts) so we never re-create.
 
     Returns None on any failure — caller falls back to plain `POST /contacts`.
     """
@@ -105,12 +122,31 @@ async def _get_or_create_corridor_audience(corridor: str) -> Optional[str]:
         return None
     if corridor not in CORRIDORS:
         corridor = "XX"
+    if direction not in ALLOWED_DIRECTIONS:
+        direction = "outbound"
 
-    cached = await db.resend_audiences.find_one({"corridor": corridor}, {"_id": 0})
+    cached = await db.resend_audiences.find_one(
+        {"corridor": corridor, "direction": direction}, {"_id": 0}
+    )
     if cached and cached.get("audience_id"):
         return cached["audience_id"]
 
-    name = f"Vaulted Waitlist – {CORRIDORS[corridor]}"
+    # Legacy audiences created before direction was introduced have no
+    # `direction` field — treat them as "outbound" (the original product)
+    # so we don't create a duplicate on the first inbound signup.
+    if direction == "outbound":
+        legacy = await db.resend_audiences.find_one(
+            {"corridor": corridor, "direction": {"$exists": False}}, {"_id": 0}
+        )
+        if legacy and legacy.get("audience_id"):
+            await db.resend_audiences.update_one(
+                {"corridor": corridor, "direction": {"$exists": False}},
+                {"$set": {"direction": "outbound"}},
+            )
+            return legacy["audience_id"]
+
+    arrow = "→ UK/EU" if direction == "inbound" else "← UK/EU"
+    name = f"Vaulted Waitlist – {CORRIDORS[corridor]} {arrow}"
     try:
         async with httpx.AsyncClient(timeout=httpx.Timeout(10.0, connect=5.0)) as cx:
             r = await cx.post(
@@ -127,34 +163,36 @@ async def _get_or_create_corridor_audience(corridor: str) -> Optional[str]:
                 aid = body.get("id") or (body.get("data") or {}).get("id")
                 if aid:
                     await db.resend_audiences.update_one(
-                        {"corridor": corridor},
+                        {"corridor": corridor, "direction": direction},
                         {"$set": {
                             "corridor": corridor,
+                            "direction": direction,
                             "audience_id": aid,
                             "name": name,
                             "created_at": iso(now_utc()),
                         }},
                         upsert=True,
                     )
-                    logger.info("[waitlist] created resend audience %s → %s", corridor, aid)
+                    logger.info("[waitlist] created resend audience %s (%s) → %s", corridor, direction, aid)
                     return aid
-            logger.warning("[waitlist] audience create %s: %s", r.status_code, r.text[:300])
+            logger.warning("[waitlist] audience create %s (%s): %s", corridor, direction, r.status_code)
             return None
     except Exception as e:  # noqa: BLE001
         logger.warning("[waitlist] audience create exception: %s", e)
         return None
 
 
-async def _add_resend_contact(email: str, source: str, corridor: str) -> Optional[str]:
-    """Add contact to the corridor-specific Resend audience. Falls back
-    to Resend's global contacts endpoint if audience creation fails.
-    Returns Resend's contact id on success, None on failure (never raises).
+async def _add_resend_contact(email: str, source: str, corridor: str, direction: str = "outbound") -> Optional[str]:
+    """Add contact to the corridor+direction-specific Resend audience.
+    Falls back to Resend's global contacts endpoint if audience creation
+    fails. Returns Resend's contact id on success, None on failure (never
+    raises).
     """
     if not RESEND_API_KEY:
         logger.warning("[waitlist] RESEND_API_KEY missing — skipping Resend add")
         return None
 
-    audience_id = await _get_or_create_corridor_audience(corridor)
+    audience_id = await _get_or_create_corridor_audience(corridor, direction)
 
     # If we have an audience, use the per-audience endpoint so the contact
     # is properly slotted for future corridor blasts. Otherwise fall back
@@ -164,15 +202,15 @@ async def _add_resend_contact(email: str, source: str, corridor: str) -> Optiona
     else:
         endpoint = "https://api.resend.com/contacts"
 
-    # Encode acquisition source + corridor in a Resend-visible field so
-    # you can eyeball corridor mix from the dashboard even without an API
-    # call (Resend's public contact schema is limited to first_name /
-    # last_name / email — no arbitrary metadata yet).
+    # Encode acquisition source + corridor + direction in a Resend-visible
+    # field so you can eyeball corridor+direction mix from the dashboard
+    # even without an API call.
+    dir_tag = "in" if direction == "inbound" else "out"
     payload = {
         "email": email,
         "unsubscribed": False,
         "first_name": "",
-        "last_name": f"[{corridor} · {source}]",
+        "last_name": f"[{corridor}·{dir_tag}·{source}]",
     }
 
     try:
@@ -203,17 +241,27 @@ async def _add_resend_contact(email: str, source: str, corridor: str) -> Optiona
 _CONFIRMATION_SUBJECT = "You're on the Vaulted waitlist ✨"
 
 
-def _confirmation_html(corridor: str) -> str:
-    """Corridor-personalized confirmation email. The subject and shell
-    are constant; only the corridor line changes."""
+def _confirmation_html(corridor: str, direction: str = "outbound") -> str:
+    """Corridor + direction personalized confirmation email. The subject
+    and shell are constant; only the corridor line + intro varies."""
     corridor_line = ""
     if corridor and corridor != "XX":
-        corridor_line = (
-            f'<p style="margin: 0 0 12px; font-size: 14px; color: #666;">'
-            f'We\u2019ve tagged you as interested in the '
-            f'<strong>{CORRIDORS.get(corridor, corridor)}</strong> corridor '
-            f'\u2014 you\u2019ll be the first to know when we go live there.</p>'
-        )
+        if direction == "inbound":
+            corridor_line = (
+                f'<p style="margin: 0 0 12px; font-size: 14px; color: #666;">'
+                f'We\u2019ve tagged you for the '
+                f'<strong>{CORRIDORS.get(corridor, corridor)} \u2192 UK/EU</strong> corridor '
+                f'\u2014 sending money out of {CORRIDORS.get(corridor, corridor)} '
+                f'to pay UK/EU school fees, medical bills, or family. '
+                f'You\u2019ll be first in when this goes live.</p>'
+            )
+        else:
+            corridor_line = (
+                f'<p style="margin: 0 0 12px; font-size: 14px; color: #666;">'
+                f'We\u2019ve tagged you as interested in the '
+                f'<strong>UK/EU \u2192 {CORRIDORS.get(corridor, corridor)}</strong> corridor '
+                f'\u2014 you\u2019ll be the first to know when we go live there.</p>'
+            )
     return (
         '<div style="font-family: -apple-system, BlinkMacSystemFont, \'Segoe UI\', Roboto, sans-serif; max-width: 560px; margin: 0 auto; padding: 24px; color: #1a1a1a;">'
         '<div style="text-align: center; padding: 32px 0 24px;">'
@@ -248,9 +296,9 @@ def _confirmation_html(corridor: str) -> str:
     )
 
 
-async def _send_confirmation_email(email: str, corridor: str) -> None:
+async def _send_confirmation_email(email: str, corridor: str, direction: str = "outbound") -> None:
     try:
-        await send_email_via_resend(email, _CONFIRMATION_SUBJECT, _confirmation_html(corridor))
+        await send_email_via_resend(email, _CONFIRMATION_SUBJECT, _confirmation_html(corridor, direction))
     except Exception as e:  # noqa: BLE001
         logger.warning("[waitlist] confirmation email failed for %s: %s", email, e)
 
@@ -259,6 +307,7 @@ async def _send_confirmation_email(email: str, corridor: str) -> None:
 class WaitlistJoinIn(BaseModel):
     email: EmailStr
     corridor: Optional[str] = Field(default=None, max_length=2)
+    direction: Optional[str] = Field(default=None, max_length=16)
     source: Optional[str] = Field(default="landing", max_length=40)
 
 
@@ -276,10 +325,13 @@ async def waitlist_join(body: WaitlistJoinIn, request: Request):
         raise HTTPException(status_code=429, detail="Slow down — one submission at a time.")
 
     corridor = _normalize_corridor(body.corridor)
+    direction = _normalize_direction(body.direction)
     ua = (request.headers.get("user-agent") or "")[:200]
     source = (body.source or "landing").strip()[:40]
 
-    existing = await db.waitlist.find_one({"email": email}, {"_id": 0, "email": 1, "corridor": 1})
+    existing = await db.waitlist.find_one(
+        {"email": email}, {"_id": 0, "email": 1, "corridor": 1, "direction": 1}
+    )
     already_joined = bool(existing)
 
     now = iso(now_utc())
@@ -287,6 +339,7 @@ async def waitlist_join(body: WaitlistJoinIn, request: Request):
         "email": email,
         "corridor": corridor,
         "corridor_name": CORRIDORS[corridor],
+        "direction": direction,
         "source": source,
         "updated_at": now,
         "last_ip": ip,
@@ -300,26 +353,33 @@ async def waitlist_join(body: WaitlistJoinIn, request: Request):
     )
 
     # Background: Resend audience add + confirmation email. Only fire once
-    # per email — a re-submit with the same corridor should be a no-op.
-    # If the user CHANGES corridor on a re-submit we still re-process so
-    # they end up in the right audience.
+    # per email — a re-submit with the same corridor+direction should be a
+    # no-op. If either changes, we re-process so they land in the right bucket.
+    prev_corridor = existing.get("corridor") if existing else None
+    prev_direction = (existing.get("direction") if existing else None) or "outbound"
     should_process = (
         not already_joined
-        or (existing and existing.get("corridor") != corridor)
+        or prev_corridor != corridor
+        or prev_direction != direction
     )
     if should_process:
-        asyncio.create_task(_add_and_confirm(email, source, corridor))
+        asyncio.create_task(_add_and_confirm(email, source, corridor, direction))
 
     logger.info(
-        "[waitlist] joined email=%s corridor=%s source=%s already=%s",
-        email, corridor, source, already_joined,
+        "[waitlist] joined email=%s corridor=%s direction=%s source=%s already=%s",
+        email, corridor, direction, source, already_joined,
     )
-    return {"ok": True, "already_joined": already_joined, "corridor": corridor}
+    return {
+        "ok": True,
+        "already_joined": already_joined,
+        "corridor": corridor,
+        "direction": direction,
+    }
 
 
-async def _add_and_confirm(email: str, source: str, corridor: str) -> None:
+async def _add_and_confirm(email: str, source: str, corridor: str, direction: str = "outbound") -> None:
     """Background task — Resend contact add + confirmation email."""
-    contact_id = await _add_resend_contact(email, source, corridor)
+    contact_id = await _add_resend_contact(email, source, corridor, direction)
     if contact_id:
         try:
             await db.waitlist.update_one(
@@ -328,7 +388,7 @@ async def _add_and_confirm(email: str, source: str, corridor: str) -> None:
             )
         except Exception as e:  # noqa: BLE001
             logger.warning("[waitlist] persist resend_contact_id failed: %s", e)
-    await _send_confirmation_email(email, corridor)
+    await _send_confirmation_email(email, corridor, direction)
 
 
 # ---- Admin stats ----------------------------------------------------------
@@ -341,7 +401,7 @@ try:  # avoid a hard import at module top so a missing admin dep doesn't
 
     @router.get("/admin/waitlist/stats")
     async def waitlist_stats(_=Depends(require_admin)):
-        """Corridor breakdown of the waitlist. Admin-only."""
+        """Corridor + direction breakdown of the waitlist. Admin-only."""
         total = await db.waitlist.count_documents({})
         # Mongo aggregation: group by corridor.
         cursor = db.waitlist.aggregate([
@@ -361,10 +421,43 @@ try:  # avoid a hard import at module top so a missing admin dep doesn't
             }
             for k, v in by_corridor.items()
         ]
+
+        # Direction split (outbound = UK→Africa; inbound = Africa→UK/EU).
+        dir_cursor = db.waitlist.aggregate([
+            {"$group": {"_id": {"$ifNull": ["$direction", "outbound"]}, "count": {"$sum": 1}}},
+        ])
+        by_direction: dict[str, int] = {"outbound": 0, "inbound": 0}
+        async for row in dir_cursor:
+            key = row.get("_id") or "outbound"
+            by_direction[key] = int(row.get("count", 0))
+
+        # Corridor × direction matrix — the useful investor-facing view.
+        matrix_cursor = db.waitlist.aggregate([
+            {"$group": {
+                "_id": {
+                    "corridor": "$corridor",
+                    "direction": {"$ifNull": ["$direction", "outbound"]},
+                },
+                "count": {"$sum": 1},
+            }},
+            {"$sort": {"count": -1}},
+        ])
+        matrix: list[dict] = []
+        async for row in matrix_cursor:
+            k = row.get("_id") or {}
+            matrix.append({
+                "corridor": k.get("corridor") or "XX",
+                "corridor_name": CORRIDORS.get(k.get("corridor") or "XX", "Unknown"),
+                "direction": k.get("direction") or "outbound",
+                "count": int(row.get("count", 0)),
+            })
+
         return {
             "total": total,
             "by_corridor": by_corridor,
+            "by_direction": by_direction,
             "breakdown": breakdown,
+            "matrix": matrix,
             "corridors": CORRIDORS,
         }
 except ImportError:

@@ -2330,6 +2330,7 @@ from routers.chat import router as chat_router
 from routers.multisig import router as multisig_router, _send_approval_email
 from routers.waitlist import router as waitlist_router
 from routers.auth import router as auth_router
+from routers.reverse_remit import router as reverse_remit_router
 from routers.kyc import (
     router as kyc_router,
     _apply_identity_verified,
@@ -2344,6 +2345,7 @@ api.include_router(chat_router)
 api.include_router(multisig_router)
 api.include_router(waitlist_router)
 api.include_router(auth_router)
+api.include_router(reverse_remit_router)
 api.include_router(kyc_router)
 
 # Push notifications: register-push uses raw /api/register-push (no double

@@ -649,3 +649,121 @@ agent_communication:
 
       Credentials: smoketest@vaulted.app / test1234.
       Report to /app/test_reports/iteration_21.json.
+
+  - agent: "main"
+    message: |
+      ITERATION 23 — Bi-directional remittance (Africa → UK/EU) Phase 1 MVP.
+
+      Product goal: unlock the *reverse* corridor requested by an investor
+      partner (Nigerian payments-services bank). While Vaulted's original
+      product is UK→Africa outbound (diaspora sending home), families in
+      Nigeria/Kenya/Ghana/South Africa need to send GBP/EUR to the UK/EU
+      for university fees, medical bills, mortgages, business payments.
+
+      SHIPS (backend + frontend + landing):
+
+      A. BACKEND
+        1. kotani.py — new async `onramp_rate(from_currency, to_token,
+           fiat_amount)` powered by Kotani v3 POST /api/v3/rate/onramp.
+           Includes a `_mock_onramp_rate` fallback with 1.0% spread + 2.5%
+           on-ramp fee — used when Kotani sandbox has ONRAMP disabled for
+           the integrator (same permission gate that blocks offramp
+           customer_create). Exposes `extract_crypto_amount()`.
+        2. NEW /app/backend/routers/reverse_remit.py — quote-only reverse
+           corridor router. Two endpoints:
+             - GET  /api/remit/reverse/corridors  (public catalog of 4
+               source countries: NG/KE/GH/ZA + 2 destinations GBP/EUR)
+             - POST /api/remit/reverse/quote      (public quote engine
+               fusing Kotani onramp rate + open.er-api FX cache; returns
+               source, bridge {USDC on Polygon}, destination, fees,
+               all-in rate, ETA)
+           Graceful degradation: when Kotani returns "not available",
+           auto-falls-back to mock rate and marks `kotani.mode: "estimated"`
+           so the UI can badge it honestly.
+        3. server.py registers the router:
+             api.include_router(reverse_remit_router)
+        4. Waitlist router now accepts `direction: "outbound" | "inbound"`.
+           Waitlist docs, Resend Audiences, and confirmation emails all
+           segment by BOTH corridor and direction. Legacy audiences (no
+           `direction` field) are auto-tagged as "outbound" so we don't
+           duplicate on the first inbound signup. Audience naming:
+             "Vaulted Waitlist – Nigeria → UK/EU"  (inbound)
+             "Vaulted Waitlist – Nigeria ← UK/EU"  (outbound; existing)
+        5. Admin waitlist stats now returns:
+             by_direction: {outbound, inbound}
+             matrix: [{corridor, direction, count} ...]
+
+      B. FRONTEND
+        1. NEW /app/frontend/src/components/ReverseRemitPanel.tsx — a
+           standalone panel used inside `/remit` when direction === "inbound".
+           Renders:
+             - Source corridor chips (NG/KE/GH/ZA)
+             - Amount input in local fiat
+             - Destination fiat pills (GBP/EUR)
+             - Live quote card with "Recipient gets X GBP" hero
+             - Fee breakdown (on-ramp fee, Vaulted fee)
+             - Use-case pills (UK university fees, Medical treatment, etc.)
+             - Waitlist "Reserve your spot" card — POSTs to
+               /api/waitlist/join with direction=inbound and corridor=<src>
+             - "Estimated · Kotani onramp enabling" badge when Kotani hasn't
+               enabled onramp for the corridor yet
+        2. /app/frontend/app/remit.tsx — added direction toggle at top
+           (Send to Africa | Send to UK/EU · NEW). When inbound is chosen,
+           renders <ReverseRemitPanel />; when outbound (default), keeps
+           the existing outbound flow untouched.
+
+      C. LANDING (/app/landing/index.html)
+        1. New #reverse section between Corridors and Features. Four
+           reverse-corridor cards (🇳🇬→🇬🇧, 🇰🇪→🇬🇧, 🇬🇭→🇪🇺, 🇿🇦→🇬🇧) with
+           use-cases + example amounts + rails.
+        2. Waitlist form now includes a direction toggle radio (outbound
+           default, inbound available). Corridor <select> auto-filters
+           options via data-mode attribute. JS sends `direction` on the
+           join payload; source becomes `landing-reverse` on inbound.
+        3. Nav bar: added "Reverse" link between "Who it's for" and
+           "Compare".
+        4. Hero H1 + meta description + OG + Twitter cards updated to
+           reflect bi-directional messaging.
+
+      LIVE STATUS (verified via curl against localhost:8001):
+        - GET  /remit/reverse/corridors                 → 200 (4 sources, 2 dests)
+        - POST /remit/reverse/quote NG 100k → GBP       → 200 £45.74 (mode=estimated)
+        - POST /remit/reverse/quote KE 10k  → GBP       → 200 £55.45 (mode=LIVE ✓)
+        - POST /remit/reverse/quote GH 1k   → GBP       → 200 £45.89 (mode=estimated)
+        - POST /remit/reverse/quote ZA 2k   → GBP       → 200 £88.91 (mode=LIVE ✓)
+        - POST /waitlist/join inbound/NG                → 200 direction=inbound
+        - POST /waitlist/join outbound/KE               → 200 direction=outbound
+
+      Please verify:
+        1. Backend: GET /api/remit/reverse/corridors returns 4 sources
+           (NG, KE, GH, ZA) with min/max amounts + use_cases + flags,
+           and 2 destinations (GBP + EUR).
+        2. Backend: POST /api/remit/reverse/quote for each of the 4
+           corridors → GBP + EUR (8 combinations) returns 200 with a
+           populated destination.amount, bridge.amount, fees, and a
+           kotani.mode of "live" | "estimated" | "mock".
+        3. Backend: min/max validation — POST with source_amount below the
+           corridor min or above max returns 400 with a helpful message.
+        4. Backend: bad corridor code (XX) → 400. Bad destination (USD) →
+           400. Both list the supported set in the detail.
+        5. Backend: Waitlist join with direction=inbound → 200 and the
+           response body contains "direction": "inbound".
+        6. Backend: Waitlist join without a direction field → defaults to
+           "outbound" (backward compat with existing landing forms during
+           any deployment drift).
+        7. Backend: Admin waitlist stats (/api/admin/waitlist/stats) as
+           admin returns `by_direction` + `matrix` keys.
+        8. Backend regression: existing outbound endpoints
+           (/remit/corridors, /remit/quote, /remit/send) still work
+           unchanged; nothing about existing flows was modified.
+        9. Frontend regression: /remit still renders the outbound flow by
+           default (direction=outbound). Toggle to "Send to UK/EU" shows
+           <ReverseRemitPanel />. Existing outbound flow untouched.
+
+      Skip: Long-running send/settlement (feature is quote-only). Skip:
+      Chat / video / wallet / multichain / KYC / referrals — untouched.
+
+      Credentials: smoketest@vaulted.app / test1234 (Pro).
+      Also try: p1-inbound-verify@example.com (seeded during smoke).
+      Report to /app/test_reports/iteration_23.json.
+

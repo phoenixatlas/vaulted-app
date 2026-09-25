@@ -1,6 +1,6 @@
 # Vaulted — Production State (FULLY OPERATIONAL 🏆)
 
-> Last updated: 2026-06-27 — Live + accepting real payments.
+> Last updated: 2026-06-27 — Bi-directional corridors shipped (Phase 1 quote-only).
 
 ## 🌐 Live URLs
 - **Primary**: https://app.phoenix-atlas.com (Vercel, Cloudflare DNS)
@@ -38,10 +38,18 @@ MONGO_URL, DB_NAME=vaulted, JWT_SECRET, STRIPE_API_KEY (live, rotated), STRIPE_W
 - Smoke test charge: confirmed live (refund after to recover funds minus Stripe fee)
 
 ## 🔄 Backlog (do later)
-- [ ] Server.py refactor (2156 lines → routers/) — after 2+ weeks of stability
+- [ ] Bi-directional Phase 2 — UK/EU GBP + EUR payout via PSP (Modulr / ClearBank / Stripe Treasury)
+- [ ] Server.py refactor continuation — extract stripe, remit, wallet, multichain routers
 - [ ] Marketing landing at phoenix-atlas.com root + www
 - [ ] Cloudflare SSL/TLS mode → "Full (strict)"
 - [ ] Optional api.phoenix-atlas.com subdomain for backend
 - [ ] Tighten Atlas IP allowlist to Render egress range
 - [ ] Cancel + clean up test subscription in Stripe (Subscriptions → Cancel)
 - [ ] Real WebRTC native module to replace Daily.co WebView (requires dev build)
+
+## 🔁 Bi-directional Corridors (Phase 1 shipped — Q3 2026)
+- **Reverse quote engine**: `/api/remit/reverse/quote` — live Kotani onramp rate + open.er-api FX cache → GBP/EUR estimate
+- **Corridors live**: 🇳🇬 NG · 🇰🇪 KE · 🇬🇭 GH · 🇿🇦 ZA → 🇬🇧 GBP / 🇪🇺 EUR
+- **Live Kotani sandbox rates**: KE ✓ · ZA ✓ · NG (estimated — Kotani onramp NG enablement pending) · GH (estimated)
+- **Waitlist**: Segmented by direction (inbound/outbound) → separate Resend Audiences per corridor+direction
+- **UI**: `/remit` direction toggle · `<ReverseRemitPanel />` · landing page `#reverse` section

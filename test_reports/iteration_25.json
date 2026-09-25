@@ -1,0 +1,44 @@
+{
+  "summary": "Iteration 25 — Bi-directional remittance (Africa → UK/EU) Phase 1 MVP. Ran 21 pytest cases covering GET /api/remit/reverse/corridors, POST /api/remit/reverse/quote (8 combos × happy + 4 validation), POST /api/waitlist/join direction segmentation (inbound, explicit outbound, missing field default, invalid value default), GET /api/admin/waitlist/stats (admin/403 + unauthenticated), and outbound regression (GET /api/remit/corridors returns 11, POST /api/remit/quote for KE 200). Result: 21/21 PASS (100%). Kotani mode observed exactly as spec'd: KE and ZA return 'live' (£139.93 and £222.28 respectively for GBP), NG and GH auto-fall-back to 'estimated' (£45.74 and £139.72). All amounts populate > 0, fees > 0, bridge USDC on POLYGON is emitted. Validation cases return 400 with helpful 'minimum'/'maximum'/'unsupported' copy in detail. Waitlist direction defaults correctly to 'outbound' when field missing OR invalid ('sideways'). Admin endpoint currently returns 403 for smoke user because ADMIN_EMAILS env var is not configured — that is the documented expected behaviour per the review request; the test asserts 200-or-403 and passes on 403. Unauthenticated request to admin endpoint returns 403 as well. No bugs found.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [],
+    "react_native_issues": []
+  },
+  "test_details": {
+    "corridors_catalog": "PASS — 4 sources {NG, KE, GH, ZA}; 2 destinations {GBP, EUR}; bridge=USDC/POLYGON; status=quote_only; every source has min_amount, max_amount, use_cases (non-empty list), flag, fund_via.",
+    "reverse_quote_happy_8_combos": "PASS — NG/KE/GH/ZA × GBP/EUR. Live modes: KE, ZA. Estimated (Kotani sandbox onramp disabled): NG, GH. Sample: NG 100,000 NGN → 45.74 GBP, bridge 62.47 USDC, total fee $3.56.",
+    "reverse_quote_validation": "PASS — below-min (NG 100 NGN → 400 'minimum'); above-max (NG 10M NGN → 400 'maximum'); unsupported source XX → 400; unsupported destination USD → 400.",
+    "waitlist_inbound": "PASS — {corridor:NG, direction:inbound} → 200 with echoed direction=inbound, corridor=NG.",
+    "waitlist_outbound_explicit": "PASS — direction=outbound accepted.",
+    "waitlist_missing_direction": "PASS — omitting direction defaults to 'outbound' (backward compat).",
+    "waitlist_invalid_direction": "PASS — direction='sideways' → 200 and normalised to 'outbound'.",
+    "admin_stats_or_403": "PASS — ADMIN_EMAILS not configured on this deployment so smoke user gets 403 (expected). Unauthenticated call also 403. If admin were enabled, endpoint would return {total, by_corridor, by_direction:{outbound,inbound}, matrix:[{corridor,direction,count}...]}, breakdown, corridors — code path reviewed and confirmed correct.",
+    "regression_outbound_corridors": "PASS — GET /api/remit/corridors returns 11 outbound corridors, list unchanged.",
+    "regression_outbound_quote_ke": "PASS — POST /api/remit/quote {source_fiat:GBP, amount:100, destination_code:KE} → 200 with same shape as before."
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_iteration25_reverse_remit.py",
+    "/app/test_reports/pytest/iter25_results.xml"
+  ],
+  "action_items": [
+    "(Optional / non-blocking) If you want the smoketest@vaulted.app user to be able to hit /api/admin/waitlist/stats in prod-preview, add ADMIN_EMAILS=smoketest@vaulted.app to /app/backend/.env and restart backend. Currently unset, so all callers get 403 — this is the fail-closed behaviour defined in deps.require_admin."
+  ],
+  "critical_code_review_comments": [
+    "routers/reverse_remit.py cleanly implements the fallback to _mock_onramp_rate when Kotani sandbox responds with 'not available' — verified live against sandbox for NG and GH. Both flags come through as kotani.mode='estimated', matching product spec.",
+    "routers/waitlist.py correctly normalises invalid direction values (e.g. 'sideways') to 'outbound' rather than 400-ing — that's important for backward compat with older landing-page JS that doesn't send the field.",
+    "Admin endpoint uses a fail-closed default (403 when ADMIN_EMAILS is empty). This is safer than fail-open but means the endpoint is unreachable on any deployment where the env var wasn't set — expected here.",
+    "Waitlist rate-limiter is in-memory (_last_seen_by_ip dict) so it doesn't survive process restarts and isn't shared across multiple gunicorn workers. Fine for MVP but worth flagging for prod scale."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_iteration25_reverse_remit.py (new)"
+  ],
+  "success_rate": {"backend": "100% (21/21)", "frontend": "N/A — backend only per review request"},
+  "seed_data_creation": "Four throwaway waitlist docs created (example.com emails testing-agent-in-/out-/nod-/bad-<uuid>@example.com) — since they are example.com Resend will not deliver confirmation. Safe to leave; they are properly tagged with source='iter25-test' for later cleanup.",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "All bi-directional remit endpoints are working. Live Kotani onramp is enabled for KE and ZA in the current sandbox key; NG and GH auto-fall-back to estimated mode. If you re-run this suite, note the 5s per-IP waitlist rate-limit — the tests already sleep 6s between waitlist calls, do not remove those sleeps. Admin stats returns 403 until ADMIN_EMAILS env var is configured. Test file: /app/backend/tests/test_iteration25_reverse_remit.py. Backend base URL comes from EXPO_PUBLIC_BACKEND_URL (falls back to https://multi-sig-vault.preview.emergentagent.com).",
+  "rca_of_issue": "N/A — no bugs found."
+}
