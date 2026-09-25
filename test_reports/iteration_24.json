@@ -1,0 +1,32 @@
+{
+  "summary": "Verified end-to-end fix for the waitlist-form 'Network hiccup' bug on the phoenix-atlas.com landing. Landing was served locally on http://localhost:8765 and the JS in /app/landing/index.html now points at https://multi-sig-vault.emergent.host (permissive CORS). Ran browser-automation tests covering all six review-request checks — all PASS. Real POST to /api/waitlist/join returned HTTP 200 with {ok:true, already_joined:false, corridor:'KE'} and the UI rendered the success line 'You're on the list. Check your inbox for a confirmation.' Both client-side validation branches (invalid email regex, missing corridor) render the expected copy. Bonus: HTTP 429 rate-limit branch also verified rendering 'Slow down — one submission at a time.' Meta tags (og:image, og:image:secure_url, og:image:type, og:image:width=1200, og:image:height=630, og:image:alt, twitter:card=summary_large_image, canonical=https://phoenix-atlas.com/) are all present; /og-image.png returns HTTP 200 with content-type image/png (90,475 bytes, valid PNG magic bytes 89504E470D0A1A0A). Sandbox has outbound HTTPS — no connectivity issue observed. Bug is fixed.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [],
+    "react_native_issues": []
+  },
+  "test_details": {
+    "test_1_invalid_email_native_html5": "PASS — HTML5 email input's built-in validation blocks obviously malformed values like 'not-an-email' before the JS handler runs (browser tooltip: \"Please include an '@' in the email address.\"). This is expected behaviour.",
+    "test_1b_invalid_email_js_regex": "PASS — for values that pass HTML5 but fail the JS regex (e.g. 'foo@bar', no dot in the domain), the UI shows exactly 'That doesn\u2019t look like a valid email address.' as required.",
+    "test_2_missing_corridor": "PASS — with a valid email and the corridor <select> reset to the empty placeholder option, the UI shows 'Please pick a destination so we can invite you at launch.' Both the copy and the trigger condition match the review-request wording ('Please pick a destination\u2026').",
+    "test_3_success_end_to_end": "PASS — POST https://multi-sig-vault.emergent.host/api/waitlist/join for testing-agent-xwqrt0ky03@example.com + KE returned HTTP 200 {ok:true, already_joined:false, corridor:'KE'}. UI rendered 'You\u2019re on the list. Check your inbox for a confirmation. \u2728'. Email input and corridor select were reset per the handler.",
+    "test_4_rate_limit_429": "PASS (bonus) — immediate resubmission triggered server rate limit; UI correctly rendered 'Slow down \u2014 one submission at a time.' from the 429 branch.",
+    "test_5_meta_tags": "PASS — grep on served HTML found og:image, og:image:secure_url, og:image:type, og:image:width=1200, og:image:height=630, og:image:alt, twitter:card=summary_large_image, and <link rel=\"canonical\" href=\"https://phoenix-atlas.com/\">.",
+    "test_6_og_image_asset": "PASS — GET /og-image.png returns HTTP 200, Content-Type: image/png, Content-Length: 90475, valid PNG signature."
+  },
+  "test_report_links": ["/app/test_reports/iteration_24.json"],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "handleWaitlist() in /app/landing/index.html line 1502 uses a stricter JS regex than HTML5's built-in email validator. In practice this is fine because HTML5 catches the obvious cases first and the JS branch catches edge cases (like 'foo@bar' without a TLD). No change needed.",
+    "The comment block at lines 1481\u20131488 correctly documents the CORS-caused root cause and the mitigation, which will help future maintainers avoid re-introducing the bug when swapping backends."
+  ],
+  "updated_files": [],
+  "success_rate": {"backend": "N/A (frontend-only per request)", "frontend": "100% (6/6 required checks + 1 bonus)"},
+  "seed_data_creation": "One real Resend contact created on the production backend (email testing-agent-xwqrt0ky03@example.com, corridor KE, source 'landing'). Since it's an example.com address the confirmation email will not deliver; the contact is dormant. Manual cleanup in Resend is optional.",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "Landing is a plain static HTML site served on http://localhost:8765 (not Expo). Form JS at line 1489 of /app/landing/index.html defaults WAITLIST_API_BASE to https://multi-sig-vault.emergent.host — that host has permissive CORS (Access-Control-Allow-Origin: *) and is the whole reason the bug is fixed. If a future change re-points this at a Render/other host, verify the target's CORS_ALLOW_ORIGINS env var includes phoenix-atlas.com (and any *.vercel.app preview subdomains) BEFORE testing, otherwise browser preflight will 400 and the UI will show 'Network hiccup \u2014 please try again.' To exercise the JS-level email regex branch (not HTML5's), remove the <input required> attribute and set 'novalidate' on the form via page.evaluate before submitting a value like 'foo@bar'. Backend rate-limit is aggressive \u2014 use a fresh random email per run to reach the ok=true/already_joined=false branch and avoid 429.",
+  "rca_of_issue": "Root cause (as diagnosed by main agent): landing JS was hitting https://vaulted-app.onrender.com whose CORS_ALLOW_ORIGINS did not include phoenix-atlas.com. Browser CORS preflight returned 400, fetch() rejected in the browser, catch block set 'Network hiccup \u2014 please try again.' Fix: switched fallback backend to https://multi-sig-vault.emergent.host which allows all origins. Verified via automated browser session that a real POST from localhost:8765 completes with 200 and success UI. No further action required."
+}

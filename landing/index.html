@@ -1479,9 +1479,14 @@
   </section>
   <script>
     // Waitlist form → POST /api/waitlist/join → Resend Contacts + Mongo
-    // Backend is set via WAITLIST_API_BASE at build time; falls back to
-    // the production Render URL so the same static file works on Vercel.
-    var WAITLIST_API_BASE = (window.__VAULTED_API_BASE__ || 'https://vaulted-app.onrender.com').replace(/\/+$/, '');
+    // Backend defaults to the Emergent-hosted production API which has
+    // permissive CORS. Override with `window.__VAULTED_API_BASE__` before
+    // this script loads if you need to point at a different backend
+    // (e.g. Render). If you switch backends, ensure that backend's
+    // CORS_ALLOW_ORIGINS env var includes the landing domain
+    // (phoenix-atlas.com + any preview subdomain) or the browser will
+    // reject preflights and users will see "Network hiccup".
+    var WAITLIST_API_BASE = (window.__VAULTED_API_BASE__ || 'https://multi-sig-vault.emergent.host').replace(/\/+$/, '');
 
     async function handleWaitlist(e) {
       e.preventDefault();
