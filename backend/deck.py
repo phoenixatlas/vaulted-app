@@ -108,14 +108,19 @@ def _draw_cover_hero(c: rl_canvas.Canvas, width: float, height: float) -> None:
     c.setFillColor(INK)
     c.setFont("Helvetica-Bold", 36)
     c.drawCentredString(width / 2, y - 12 * mm, "Vaulted")
+    # Product-of line — sits directly under the wordmark, styled subtly
+    # so it doesn't compete with the tagline underneath.
+    c.setFillColor(GOLD_DEEP)
+    c.setFont("Helvetica-Oblique", 10)
+    c.drawCentredString(width / 2, y - 20 * mm, "A product of Phoenix-Atlas Technologies Ltd")
     c.setFillColor(INK_SUBTLE)
     c.setFont("Helvetica", 11)
-    c.drawCentredString(width / 2, y - 22 * mm, "Cross-border remittance without the wait.")
+    c.drawCentredString(width / 2, y - 30 * mm, "Cross-border remittance without the wait.")
 
     now = datetime.now(timezone.utc).strftime("%B %Y")
     c.setFillColor(GOLD_DEEP)
     c.setFont("Helvetica-Bold", 8)
-    c.drawCentredString(width / 2, y - 34 * mm, f"INVESTOR DECK  ·  {now.upper()}  ·  CONFIDENTIAL")
+    c.drawCentredString(width / 2, y - 42 * mm, f"INVESTOR DECK  ·  {now.upper()}  ·  CONFIDENTIAL")
 
 
 def _traction_snapshot(traction: dict[str, int]) -> Table:
@@ -239,14 +244,27 @@ async def build_deck_pdf(db: Any) -> bytes:
     # --- PAGE 1: COVER ---
     _draw_cover_hero(c, width, height)
     _draw_page_chrome(c, width, height, 1, TOTAL_PAGES)
-    # Contact block bottom-center
+    # Contact block bottom-center. Split across two lines because the
+    # canonical LinkedIn slug is long — cramming email + LinkedIn on one
+    # centred row starts to feel busy on A4.
     c.setFillColor(INK)
     c.setFont("Helvetica-Bold", 10)
-    c.drawCentredString(width / 2, 55 * mm, "Oumar Sanii · Founder")
+    c.drawCentredString(width / 2, 58 * mm, "Umar Sani · Founder")
     c.setFillColor(INK_SUBTLE)
     c.setFont("Helvetica", 9)
-    c.drawCentredString(width / 2, 48 * mm, "oumar@phoenix-atlas.com  ·  linkedin.com/in/oumar-sanii/")
-    c.drawCentredString(width / 2, 42 * mm, "London, United Kingdom")
+    c.drawCentredString(width / 2, 51 * mm, "umar.sani@phoenix-atlas.com")
+    # Real LinkedIn slug — clickable hyperlink on the displayed text.
+    linkedin_display = "linkedin.com/in/umar-muhammad-sani-msc-mapm-60951155"
+    linkedin_full = "https://www.linkedin.com/in/umar-muhammad-sani-msc-mapm-60951155"
+    c.drawCentredString(width / 2, 46 * mm, linkedin_display)
+    # Overlay an invisible clickable rect over the LinkedIn text
+    text_w = c.stringWidth(linkedin_display, "Helvetica", 9)
+    c.linkURL(
+        linkedin_full,
+        (width / 2 - text_w / 2, 43 * mm, width / 2 + text_w / 2, 49 * mm),
+        relative=0,
+    )
+    c.drawCentredString(width / 2, 40 * mm, "London, United Kingdom")
     c.showPage()
 
     # --- PAGE 2: PROBLEM & MARKET ---
@@ -353,7 +371,7 @@ async def build_deck_pdf(db: Any) -> bytes:
 
         Paragraph("Team", S["h2"]),
         Paragraph(
-            "<b>Oumar Sanii</b> — Founder &amp; CEO. Previously built and shipped Vaulted end-to-end "
+            "<b>Umar Sani</b> — Founder &amp; CEO. Previously built and shipped Vaulted end-to-end "
             "solo across React Native, FastAPI, on-chain wallet flows (BTC, ETH, SOL, XLM, XRP + "
             "5 EVM L2s), and third-party rails (Stripe, Kotani, Resend). Actively recruiting a "
             "compliance-first UK co-founder.",
@@ -370,7 +388,9 @@ async def build_deck_pdf(db: Any) -> bytes:
 
         Spacer(1, 8),
         Paragraph(
-            "Let&rsquo;s talk. <b>oumar@phoenix-atlas.com</b>  ·  <b>linkedin.com/in/oumar-sanii/</b>",
+            'Let&rsquo;s talk. <b>umar.sani@phoenix-atlas.com</b>  ·  '
+            '<b><a href="https://www.linkedin.com/in/umar-muhammad-sani-msc-mapm-60951155" '
+            'color="#0F0B08">linkedin.com/in/umar-muhammad-sani</a></b>',
             S["quoteBig"],
         ),
     ]

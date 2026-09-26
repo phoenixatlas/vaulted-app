@@ -173,9 +173,9 @@ async def _add_investor_to_resend(email: str, name: str, company: str) -> Option
 # be updated in production without a redeploy. If DEMO_VIDEO_URL is unset,
 # the "Watch the sandbox demo" button is gracefully hidden — the email
 # still lands with a clean signature + PDF.
-FOUNDER_NAME = os.getenv("FOUNDER_NAME", "Oumar Sanii")
+FOUNDER_NAME = os.getenv("FOUNDER_NAME", "Umar Sani")
 FOUNDER_ROLE = os.getenv("FOUNDER_ROLE", "Founder, Vaulted")
-FOUNDER_LINKEDIN = os.getenv("FOUNDER_LINKEDIN", "https://www.linkedin.com/in/oumar-sanii/")
+FOUNDER_LINKEDIN = os.getenv("FOUNDER_LINKEDIN", "https://www.linkedin.com/in/umar-muhammad-sani-msc-mapm-60951155")
 FOUNDER_HEADSHOT_URL = os.getenv("FOUNDER_HEADSHOT_URL", "")  # Optional
 DEMO_VIDEO_URL = os.getenv("DEMO_VIDEO_URL", "")              # e.g. YouTube/Loom link
 
