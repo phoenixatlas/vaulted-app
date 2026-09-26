@@ -102,9 +102,11 @@ def _draw_header(c: rl_canvas.Canvas, width: float, height: float) -> None:
     c.setFont("Helvetica-Bold", 18)
     c.drawString(x + 16 * mm, y + 5 * mm, "Vaulted")
 
-    c.setFillColor(INK_SUBTLE)
-    c.setFont("Helvetica", 8)
-    c.drawString(x + 16 * mm, y + 1 * mm, "Phoenix-Atlas Technologies Ltd  ·  UK")
+    # Product-of byline — italic gold, sits directly under the wordmark
+    # for visual consistency with the investor deck cover.
+    c.setFillColor(GOLD_DEEP)
+    c.setFont("Helvetica-Oblique", 7.5)
+    c.drawString(x + 16 * mm, y + 1 * mm, "A product of Phoenix-Atlas Technologies Ltd  ·  UK")
 
     # Top-right stamp
     now = datetime.now(timezone.utc).strftime("%B %Y")
