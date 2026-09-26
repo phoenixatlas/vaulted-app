@@ -177,7 +177,7 @@ FOUNDER_NAME = os.getenv("FOUNDER_NAME", "Umar Sani")
 FOUNDER_ROLE = os.getenv("FOUNDER_ROLE", "Founder, Vaulted")
 FOUNDER_LINKEDIN = os.getenv("FOUNDER_LINKEDIN", "https://www.linkedin.com/in/umar-muhammad-sani-msc-mapm-60951155")
 FOUNDER_HEADSHOT_URL = os.getenv("FOUNDER_HEADSHOT_URL", "")  # Optional
-DEMO_VIDEO_URL = os.getenv("DEMO_VIDEO_URL", "")              # e.g. YouTube/Loom link
+DEMO_VIDEO_URL = os.getenv("DEMO_VIDEO_URL", "https://app.emergentagent.sh/v/vqCauZf2TU3d?lang=en")              # Vaulted 3-min explainer
 
 
 def _signature_block(pdf_type: str = "one-pager") -> str:
