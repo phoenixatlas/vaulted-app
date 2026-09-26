@@ -38,14 +38,20 @@ MONGO_URL, DB_NAME=vaulted, JWT_SECRET, STRIPE_API_KEY (live, rotated), STRIPE_W
 - Smoke test charge: confirmed live (refund after to recover funds minus Stripe fee)
 
 ## 🔄 Backlog (do later)
+- [ ] Backend refactor continuation — extract `remit_router.py` (~600 lines), `wallet_router.py` (~1500 lines), `multichain_router.py` from server.py (still ~2058 lines)
 - [ ] Bi-directional Phase 2 — UK/EU GBP + EUR payout via PSP (Modulr / ClearBank / Stripe Treasury)
-- [ ] Server.py refactor continuation — extract stripe, remit, wallet, multichain routers
 - [ ] Marketing landing at phoenix-atlas.com root + www
 - [ ] Cloudflare SSL/TLS mode → "Full (strict)"
 - [ ] Optional api.phoenix-atlas.com subdomain for backend
 - [ ] Tighten Atlas IP allowlist to Render egress range
 - [ ] Cancel + clean up test subscription in Stripe (Subscriptions → Cancel)
 - [ ] Real WebRTC native module to replace Daily.co WebView (requires dev build)
+
+## 🔧 Backend Refactor Progress (P2)
+- ✅ `routers/admin.py` · `routers/referrals.py` · `routers/offramp.py` · `routers/calls.py` · `routers/keys.py` · `routers/chat.py` · `routers/multisig.py` · `routers/waitlist.py` · `routers/auth.py` · `routers/kyc.py` · `routers/reverse_remit.py` · `routers/investor.py` · **`routers/stripe_router.py`** (new — 6 endpoints, ~370 lines extracted)
+- ⏳ Pending: `routers/remit_router.py` (~600 lines including /remit/quote, /remit/send, /remit/fund)
+- ⏳ Pending: `routers/wallet_router.py` + `routers/multichain_router.py` (~1500 lines combined)
+- Current server.py size: **2058 lines** (down from initial ~4500)
 
 ## 🔁 Bi-directional Corridors (Phase 1 shipped — Q3 2026)
 - **Reverse quote engine**: `/api/remit/reverse/quote` — live Kotani onramp rate + open.er-api FX cache → GBP/EUR estimate

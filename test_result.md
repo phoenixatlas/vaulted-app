@@ -918,6 +918,70 @@ agent_communication:
         8. POST /investor/deck/request happy path → 200 with download_url, expires_at
         9. GET /investor/deck/download?token=<valid> → 200, %PDF- header, > 5KB
        10. GET /investor/deck/download without token → 422; invalid/tampered → 403
+
+  - agent: "main"
+    message: |
+      ITERATION 26 — Backend refactor: Stripe router extraction.
+
+      Extracted the entire Stripe payments cluster (~370 lines) out of
+      server.py into /app/backend/routers/stripe_router.py. server.py
+      shrunk from 2422 → 2058 lines.
+
+      Endpoints moved (all still mounted at /api by server.py):
+        POST /api/stripe/checkout/deposit
+        POST /api/stripe/checkout/subscription
+        POST /api/stripe/sync
+        POST /api/stripe/webhook
+        POST /api/stripe/portal
+        POST /api/stripe/cancel
+
+      Helpers moved (now internal to the router):
+        _get_or_create_vault_pro_price()
+        _success_cancel_urls(flow)  — re-exported for /remit/fund which
+          still lives in server.py until Remit router extraction lands
+        _apply_checkout_session(session_obj)  — internal only
+
+      Cleaned up unused imports in server.py:
+        - Removed StripeDepositIn, StripeSyncIn (now in stripe_router)
+        - Removed Header (was only used by stripe_webhook)
+
+      OpenAPI verification: 90 total endpoints registered, 6 under /stripe/*.
+      Local smoke tests all passed:
+        - /api/health → 200 ok
+        - /api/stripe/checkout/deposit (unauth) → 401 (correct)
+        - /api/stripe/webhook (invalid body) → 400/500 (pre-existing behaviour)
+        - /api/waitlist/join → 200 (regression check)
+        - /api/remit/reverse/quote KE 10k GBP → £55.38 live rate
+
+      Please verify (backend only):
+        1. All 6 Stripe endpoints registered and callable at /api/stripe/*
+        2. POST /api/stripe/checkout/deposit unauth → 401
+        3. POST /api/stripe/webhook with an invalid Stripe-Signature header
+           returns 400 (STRIPE_WEBHOOK_SECRET is set in .env)
+        4. POST /api/stripe/webhook without signature + valid JSON like
+           {"type":"checkout.session.completed","data":{"object":{"id":"cs_test_x","mode":"payment","metadata":{}}}}
+           returns 200 (this hits _apply_checkout_session which finds no
+           user_id and returns "no user_id" — that's fine)
+        5. Regression: /api/waitlist/join, /api/remit/reverse/quote,
+           /api/investor/onepager/request, /api/investor/deck/request
+           all still work exactly as before
+        6. Regression: /api/remit/fund still works and calls
+           _success_cancel_urls (imported from stripe_router) — this is
+           the only cross-router call and needs to keep working until
+           the Remit router extraction lands in a follow-up session.
+
+      NOT DONE THIS SESSION (deferred to next):
+        - routers/remit_router.py extraction (~600 lines including /remit/
+          corridors, quote, send, fund, plus tx-recording helpers)
+        - routers/wallet_router.py extraction (~1500 lines, tangled with
+          multichain helpers)
+        - routers/multichain_router.py extraction (chain-specific info +
+          send endpoints)
+        These need proper time for careful extraction — Stripe was the
+        most self-contained cluster; the others share more helpers.
+
+      Report to /app/test_reports/iteration_26.json.
+
        11. GET /admin/investor/deck/status → uploaded:false initially
        12. POST /admin/investor/deck/upload without admin → 403
        13. Regression: /waitlist/join without ref still returns 200 with the new
