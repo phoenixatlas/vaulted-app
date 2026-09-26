@@ -106,6 +106,13 @@ type ReferralsResp = {
   };
 };
 
+type BookClicksResp = {
+  total: number;
+  by_source: { source: string; count: number }[];
+  recent: { source: string; created_at?: string; ref?: string }[];
+  booking_url: string;
+};
+
 // Country-code → flag emoji. Kept in sync with the landing dropdown so the
 // admin dashboard reads the same as the acquisition surface.
 const CORRIDOR_FLAGS: Record<string, string> = {
@@ -120,6 +127,7 @@ export default function AdminHome() {
   const [investors, setInvestors] = useState<InvestorLeadsResp | null>(null);
   const [dailySignups, setDailySignups] = useState<DailySignupsResp | null>(null);
   const [referrals, setReferrals] = useState<ReferralsResp | null>(null);
+  const [bookClicks, setBookClicks] = useState<BookClicksResp | null>(null);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [err, setErr] = useState<string | null>(null);
@@ -127,18 +135,20 @@ export default function AdminHome() {
   const load = useCallback(async () => {
     setErr(null);
     try {
-      const [h, w, inv, daily, refs] = await Promise.all([
+      const [h, w, inv, daily, refs, clicks] = await Promise.all([
         api<KotaniHealth>("/admin/kotani/health").catch((e) => { throw e; }),
         api<WaitlistStats>("/admin/waitlist/stats").catch(() => null),
         api<InvestorLeadsResp>("/admin/investor/leads").catch(() => null),
         api<DailySignupsResp>("/admin/waitlist/analytics/daily-signups?days=30").catch(() => null),
         api<ReferralsResp>("/admin/waitlist/analytics/referrals?limit=10").catch(() => null),
+        api<BookClicksResp>("/admin/investor/book-clicks").catch(() => null),
       ]);
       setHealth(h);
       setWaitlist(w);
       setInvestors(inv);
       setDailySignups(daily);
       setReferrals(refs);
+      setBookClicks(clicks);
     } catch (e: any) {
       // 403 usually = your account isn't in ADMIN_EMAILS on this environment.
       setErr(e?.message || "Failed to load admin health");
@@ -277,6 +287,9 @@ export default function AdminHome() {
 
         {/* Investor leads card */}
         <InvestorLeadsCard data={investors} loading={loading} />
+
+        {/* Book-a-call attribution card */}
+        <BookClicksCard data={bookClicks} loading={loading} />
 
         {/* Quick links */}
         <View style={s.card}>
@@ -668,6 +681,83 @@ function InvestorLeadsCard({
             ))}
           </View>
         </>
+      )}
+    </View>
+  );
+}
+
+
+// BookClicksCard — surfaces how many investors have hit "Book a call" and
+// which surface (hero / invest section / post-download / email) is doing
+// the heaviest lifting. Feeds the same funnel as InvestorLeadsCard and
+// tells Umar where to invest more copy or design weight.
+function BookClicksCard({
+  data,
+  loading,
+}: {
+  data: BookClicksResp | null;
+  loading: boolean;
+}) {
+  if (loading && !data) {
+    return (
+      <View style={s.card}>
+        <Text style={s.cardTitle}>Book-a-call clicks</Text>
+        <Text style={s.subtle}>Loading…</Text>
+      </View>
+    );
+  }
+  if (!data) {
+    return (
+      <View style={s.card}>
+        <Text style={s.cardTitle}>Book-a-call clicks</Text>
+        <Text style={s.subtle}>Unavailable (endpoint returned an error).</Text>
+      </View>
+    );
+  }
+  // Nicer human labels for each landing-page surface. Falls back to raw.
+  const SOURCE_LABEL: Record<string, string> = {
+    hero: "Hero link",
+    "invest-section": "Investor section CTA",
+    "post-download": "After PDF download",
+    "modal-open": "Modal → Google Calendar",
+    email: "Investor email",
+    "shortlink": "PDF shortlink redirect",
+  };
+  const label = (raw: string) =>
+    SOURCE_LABEL[raw] || raw.replace(/-shortlink$/i, " (PDF)");
+
+  return (
+    <View style={s.card}>
+      <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginBottom: 4 }}>
+        <Text style={s.cardTitle}>Book-a-call clicks</Text>
+        <View style={s.pill}><Text style={s.pillText}>{data.total} total</Text></View>
+      </View>
+      <Text style={s.subtle}>
+        Every &ldquo;Book a 20-min call&rdquo; CTA across the landing page, PDFs and investor emails.
+      </Text>
+
+      {data.total === 0 ? (
+        <Text style={[s.subtle, { marginTop: spacing.md }]}>
+          No clicks yet — CTAs live on the hero, investor section, post-download modal, and inside each investor email.
+        </Text>
+      ) : (
+        <View style={{ marginTop: spacing.md, gap: 8 }}>
+          {data.by_source.map((row) => {
+            const maxCount = Math.max(...data.by_source.map((r) => r.count), 1);
+            const pct = Math.max(6, Math.round((row.count / maxCount) * 100));
+            return (
+              <View key={row.source} style={{ gap: 4 }}>
+                <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center" }}>
+                  <Text style={s.leadName} numberOfLines={1}>{label(row.source)}</Text>
+                  <Text style={s.leadRole}>{row.count}</Text>
+                </View>
+                <View style={{ height: 6, borderRadius: 3, backgroundColor: colors.divider, overflow: "hidden" }}>
+                  <View style={{ width: `${pct}%`, height: "100%", backgroundColor: colors.brand }} />
+                </View>
+              </View>
+            );
+          })}
+        </View>
       )}
     </View>
   );

@@ -1,6 +1,6 @@
 # Vaulted — Production State (FULLY OPERATIONAL 🏆)
 
-> Last updated: 2026-06-27 — Bi-directional corridors shipped (Phase 1 quote-only).
+> Last updated: 2026-06-27 — Book-a-call scheduler wired into hero, investor section, post-download modal, investor emails and PDFs. Attribution surfaced in /admin.
 
 ## 🌐 Live URLs
 - **Primary**: https://app.phoenix-atlas.com (Vercel, Cloudflare DNS)

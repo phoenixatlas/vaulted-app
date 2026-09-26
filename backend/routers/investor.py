@@ -49,6 +49,14 @@ from deck import build_deck_pdf
 
 router = APIRouter()
 
+# ---- Booking link -------------------------------------------------------
+# Umar's Google Calendar appointment schedule. Referenced from PDFs, emails
+# and (mirrored) on the landing page. Change here to swap schedulers.
+BOOKING_URL = os.getenv(
+    "INVESTOR_BOOKING_URL",
+    "https://calendar.app.google/U1r2UbqrQqQCxQrcA",
+)
+
 # ---- Signed download tokens ---------------------------------------------
 # We roll a tiny HMAC-based signer here rather than reuse the auth JWT so a
 # stolen investor token can never do anything except download a public PDF.
@@ -250,8 +258,12 @@ async def _email_pdf(
         <li>UK/EU payout PSP shortlist &amp; timelines</li>
         <li>Fee waterfall on a real £1,000 send</li>
       </ul>
-      <p style="margin: 0 0 12px;">Reply to this email to lock in a slot &mdash; or hit the button below to open the doc in a browser.</p>
-      <div style="text-align: center; margin: 24px 0;">
+      <p style="margin: 0 0 12px;">Reply to this email to lock in a slot &mdash; or pick a time on the calendar directly:</p>
+      <div style="text-align: center; margin: 20px 0 12px;">
+        <a href="{BOOKING_URL}" style="display: inline-block; background: #0F0B08; color: #F5E9C9; padding: 14px 28px; border-radius: 999px; text-decoration: none; font-weight: 700; font-size: 14px; border: 1px solid #C9A35B;">📅 Book a 20-min call →</a>
+      </div>
+      <p style="margin: 0 0 12px; text-align: center; font-size: 12px; color: #666;">Or open the {pdf_label} in your browser:</p>
+      <div style="text-align: center; margin: 8px 0 24px;">
         <a href="{download_url}" style="display: inline-block; background: #C9A35B; color: #0F0B08; padding: 12px 24px; border-radius: 999px; text-decoration: none; font-weight: 700; font-size: 14px;">Open the {pdf_label}</a>
       </div>
       {_signature_block(pdf_type)}
@@ -615,3 +627,75 @@ async def admin_deck_status(_=Depends(require_admin)):
             "path": DECK_UPLOAD_PATH,
         }
     return {"uploaded": False, "size_bytes": 0, "note": "Serving auto-generated 5-page deck."}
+
+
+# ---- Booking-click attribution -----------------------------------------
+# Landing-page CTAs POST here (fire-and-forget sendBeacon) so we can see
+# which surface warms leads best. Non-blocking, no PII, silent on error.
+
+class BookingClickIn(BaseModel):
+    source: Optional[str] = Field(default=None, max_length=40)
+
+
+@router.post("/investor/book-click")
+async def investor_book_click(body: BookingClickIn, request: Request):
+    src = (body.source or "unknown").strip()[:40] or "unknown"
+    try:
+        await db.investor_book_clicks.insert_one({
+            "source": src,
+            "created_at": now_utc(),
+            "ua": (request.headers.get("user-agent") or "")[:200],
+            "ref": (request.headers.get("referer") or "")[:200],
+        })
+    except Exception as e:  # noqa: BLE001
+        logger.warning("[investor] book-click insert failed: %s", e)
+    # Return 204-ish empty payload; sendBeacon ignores the response body.
+    return {"ok": True}
+
+
+@router.get("/investor/book")
+async def investor_book_redirect(source: Optional[str] = Query(default=None)):
+    """Shortlink that 302s to Umar's Google Calendar. Also increments the
+    click counter so PDF/email CTAs and landing-page CTAs share the same
+    attribution store."""
+    from fastapi.responses import RedirectResponse
+    src = ((source or "shortlink") + "-shortlink")[:40]
+    try:
+        await db.investor_book_clicks.insert_one({
+            "source": src,
+            "created_at": now_utc(),
+        })
+    except Exception:
+        pass
+    return RedirectResponse(url=BOOKING_URL, status_code=302)
+
+
+@router.get("/admin/investor/book-clicks")
+async def admin_book_clicks(_=Depends(require_admin)):
+    """Return a per-source rollup + last 50 raw clicks for the admin UI."""
+    try:
+        cursor = db.investor_book_clicks.aggregate([
+            {"$group": {"_id": "$source", "count": {"$sum": 1}}},
+            {"$sort": {"count": -1}},
+        ])
+        by_source = [{"source": (d.get("_id") or "unknown"), "count": int(d.get("count") or 0)} async for d in cursor]
+    except Exception:
+        by_source = []
+    try:
+        total = await db.investor_book_clicks.count_documents({})
+    except Exception:
+        total = 0
+    try:
+        recent_cursor = db.investor_book_clicks.find({}, {"_id": 0}).sort("created_at", -1).limit(50)
+        recent = [
+            {
+                "source": d.get("source"),
+                "created_at": iso(d.get("created_at")),
+                "ref": d.get("ref"),
+            }
+            async for d in recent_cursor
+        ]
+    except Exception:
+        recent = []
+    return {"total": total, "by_source": by_source, "recent": recent, "booking_url": BOOKING_URL}
+

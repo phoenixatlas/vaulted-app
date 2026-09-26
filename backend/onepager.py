@@ -149,6 +149,23 @@ def _draw_footer(c: rl_canvas.Canvas, width: float) -> None:
     c.setFont("Helvetica", 6.5)
     c.drawRightString(width - 15 * mm, y - 1 * mm, "invest@phoenix-atlas.com")
 
+    # Booking CTA — clickable hyperlink over the "book a 20-min call" text.
+    # Sits centred above the divider so it's the first thing the eye lands on
+    # when the reader finishes scanning the page.
+    booking_text = "📅  Book a 20-min call →  calendar.app.google/U1r2UbqrQqQCxQrcA"
+    booking_url = "https://calendar.app.google/U1r2UbqrQqQCxQrcA"
+    c.setFillColor(GOLD_DEEP)
+    c.setFont("Helvetica-Bold", 7.5)
+    text_w = c.stringWidth(booking_text, "Helvetica-Bold", 7.5)
+    booking_y = y + 9 * mm
+    c.drawCentredString(width / 2, booking_y, booking_text)
+    c.linkURL(
+        booking_url,
+        (width / 2 - text_w / 2, booking_y - 1.5 * mm,
+         width / 2 + text_w / 2, booking_y + 3 * mm),
+        relative=0,
+    )
+
 
 async def _pull_traction(db: Any) -> dict[str, int]:
     """Read live traction metrics from Mongo. Safe defaults on any error

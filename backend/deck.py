@@ -265,6 +265,23 @@ async def build_deck_pdf(db: Any) -> bytes:
         relative=0,
     )
     c.drawCentredString(width / 2, 40 * mm, "London, United Kingdom")
+
+    # Booking CTA — subtle gold pill under the contact block. Clickable
+    # hyperlink so the whole "Book a 20-min call →" text sends the reader
+    # straight to Umar's Google Calendar appointment schedule.
+    booking_url = "https://calendar.app.google/U1r2UbqrQqQCxQrcA"
+    booking_text = "📅  Book a 20-min call  →  calendar.app.google/U1r2UbqrQqQCxQrcA"
+    c.setFillColor(GOLD_DEEP)
+    c.setFont("Helvetica-Bold", 9)
+    booking_y = 30 * mm
+    bw = c.stringWidth(booking_text, "Helvetica-Bold", 9)
+    c.drawCentredString(width / 2, booking_y, booking_text)
+    c.linkURL(
+        booking_url,
+        (width / 2 - bw / 2, booking_y - 2 * mm, width / 2 + bw / 2, booking_y + 4 * mm),
+        relative=0,
+    )
+
     c.showPage()
 
     # --- PAGE 2: PROBLEM & MARKET ---
@@ -391,6 +408,12 @@ async def build_deck_pdf(db: Any) -> bytes:
             'Let&rsquo;s talk. <b>umar.sani@phoenix-atlas.com</b>  ·  '
             '<b><a href="https://www.linkedin.com/in/umar-muhammad-sani-msc-mapm-60951155" '
             'color="#0F0B08">linkedin.com/in/umar-muhammad-sani</a></b>',
+            S["quoteBig"],
+        ),
+        Spacer(1, 6),
+        Paragraph(
+            '📅  <b><a href="https://calendar.app.google/U1r2UbqrQqQCxQrcA" '
+            'color="#8A6D2E">Book a 20-min sandbox walkthrough →</a></b>',
             S["quoteBig"],
         ),
     ]
