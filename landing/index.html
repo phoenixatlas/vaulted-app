@@ -1693,8 +1693,8 @@
           <div style="width: 48px; height: 48px; margin: 0 auto 14px; border-radius: 999px; background: rgba(201,163,91,0.15); display: flex; align-items: center; justify-content: center;">
             <span style="color: var(--gold); font-size: 22px;">✓</span>
           </div>
-          <div style="font-size: 18px; font-weight: 700; color: var(--gold-cream); margin-bottom: 6px;">Your one-pager is ready.</div>
-          <div style="font-size: 13px; color: var(--text-secondary); margin-bottom: 20px;">A copy has been emailed to you. It should have downloaded automatically &mdash; if not, use the button below.</div>
+          <div data-role="done-title" style="font-size: 18px; font-weight: 700; color: var(--gold-cream); margin-bottom: 6px;">Your one-pager is ready.</div>
+          <div data-role="done-sub" style="font-size: 13px; color: var(--text-secondary); margin-bottom: 20px;">A copy has been emailed to you. Tap below to open it in a new tab.</div>
           <a id="inv-download-btn" href="#" target="_blank" rel="noopener" class="btn btn-primary" style="padding: 12px 24px;">Open the PDF &rarr;</a>
           <!-- Warm-lead nudge: capture intent while the deck is still open -->
           <div style="margin-top: 24px; padding-top: 22px; border-top: 1px solid var(--border);">
@@ -1738,26 +1738,62 @@
       btn.disabled = true;
       btn.textContent = kind === 'deck' ? 'Building your deck\u2026' : 'Building your PDF\u2026';
       var endpoint = kind === 'deck' ? '/api/investor/deck/request' : '/api/investor/onepager/request';
+      // iOS Safari note: we intentionally DO NOT call window.open() after
+      // the awaited fetch. Safari treats popups from post-await code as
+      // programmatic (not user-initiated) and blocks them, which was
+      // surfacing an "aborted" state to investors. Instead, we swap the
+      // form for a success card with a first-class "Open the deck" button
+      // that stays inside a fresh user-gesture when tapped.
+      var errMsg = null;
+      var respStatus = null;
+      var body = null;
       try {
         var res = await fetch(WAITLIST_API_BASE + endpoint, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ email: email, name: name, company: company, role: role, note: note, source: 'landing-investor-' + kind })
         });
-        if (!res.ok) throw new Error('Server returned ' + res.status);
-        var body = await res.json();
+        respStatus = res.status;
+        if (!res.ok) {
+          var txt = '';
+          try { txt = (await res.text()).slice(0, 200); } catch (_) {}
+          throw new Error('Server returned ' + res.status + (txt ? (' — ' + txt) : ''));
+        }
+        try {
+          body = await res.json();
+        } catch (parseErr) {
+          throw new Error('Server response was not JSON (' + (parseErr && parseErr.message ? parseErr.message : 'parse error') + ')');
+        }
+        if (!body || !body.download_url) {
+          throw new Error('Server response missing download_url');
+        }
         var url = WAITLIST_API_BASE + body.download_url;
-        var w = window.open(url, '_blank');
-        if (!w) { location.href = url; }
         document.getElementById('investor-form-wrap').style.display = 'none';
         var done = document.getElementById('investor-done');
         done.style.display = 'block';
-        document.getElementById('inv-download-btn').href = url;
-        document.getElementById('inv-download-btn').textContent = kind === 'deck' ? 'Open the deck →' : 'Open the PDF →';
+        var openBtn = document.getElementById('inv-download-btn');
+        openBtn.href = url;
+        openBtn.textContent = kind === 'deck' ? 'Open the deck →' : 'Open the PDF →';
+        // Update copy so the user knows they need to tap the button.
+        try {
+          var doneTitle = done.querySelector('[data-role="done-title"]');
+          var doneSub = done.querySelector('[data-role="done-sub"]');
+          if (doneTitle) doneTitle.textContent = kind === 'deck' ? 'Your 5-page deck is ready.' : 'Your one-pager is ready.';
+          if (doneSub) doneSub.textContent = 'A copy has been emailed to you. Tap below to open it in a new tab.';
+        } catch (_) {}
+        // Scroll the success card into view so investors on mobile see it.
+        try { done.scrollIntoView({ behavior: 'smooth', block: 'center' }); } catch (_) {}
       } catch (err) {
+        errMsg = (err && err.message) ? err.message : String(err);
+      }
+      if (errMsg) {
         btn.disabled = false;
         btn.textContent = orig;
-        alert('Could not build your ' + (kind === 'deck' ? 'deck' : 'one-pager') + ' right now — please try again in a moment, or email invest@phoenix-atlas.com.');
+        // Show the specific server/network reason so investors + our logs
+        // both get actionable signal. Keeps the friendly fallback email.
+        var label = kind === 'deck' ? 'deck' : 'one-pager';
+        var extra = respStatus ? (' (status ' + respStatus + ')') : '';
+        alert('Could not build your ' + label + ' right now' + extra + '.\n\n' + errMsg + '\n\nPlease try again in a moment, or email invest@phoenix-atlas.com.');
       }
       return false;
     }
