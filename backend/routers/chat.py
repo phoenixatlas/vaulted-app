@@ -5,9 +5,9 @@ groups. All 6 endpoints share the `db.conversations` / `db.messages` /
 Extracted from server.py during the P2 refactor.
 
 Note: `/chat/send_crypto` delegates the actual ETH broadcast to
-`_broadcast_eth_send` (lives in server.py under wallet code, to be extracted
-in a future session). We lazy-import that helper at call-time to avoid a
-circular server <-> chat import cycle.
+`_broadcast_eth_send`, which lives in routers/wallet.py after the P2
+refactor. We lazy-import that helper at call-time to avoid any circular
+import between the chat and wallet routers.
 """
 from __future__ import annotations
 
@@ -173,8 +173,9 @@ async def chat_send_crypto(body: SendChatCryptoIn, user=Depends(get_current_user
     to_addr = await _get_or_create_contact_eth_address(contact_id)
     # Lazy import to avoid circular: server.py imports this router at
     # module load, and this router would otherwise need to import
-    # _broadcast_eth_send from server at load time.
-    from server import _broadcast_eth_send  # noqa: PLC0415
+    # _broadcast_eth_send lives in routers/wallet.py (P2 refactor). Lazy
+    # import to avoid circular dependencies with the chat router.
+    from routers.wallet import _broadcast_eth_send  # noqa: PLC0415
     result = await _broadcast_eth_send(user, addr, pk, to_addr, body.amount_eth)
     tx_hash = result.get("tx_hash")
     explorer = result.get("explorer_url")

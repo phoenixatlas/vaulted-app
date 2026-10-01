@@ -182,9 +182,11 @@ async def decide_approval(body: ApprovalActionIn):
     user = await db.users.find_one({"id": approval["user_id"]}, {"_id": 0})
     if not user:
         raise HTTPException(status_code=404, detail="Original sender not found")
-    # Lazy import to avoid circular; _broadcast_eth_send lives in server.py
-    # under wallet code (not yet extracted).
-    from server import _broadcast_eth_send  # noqa: PLC0415
+    # Lazy import to avoid circular; _broadcast_eth_send lives in
+    # routers/wallet.py after the P2 refactor. The multisig router is
+    # imported BY the wallet router (for _send_approval_email), so we
+    # must defer the import to call-time rather than module-top.
+    from routers.wallet import _broadcast_eth_send  # noqa: PLC0415
     try:
         tx_record = await _broadcast_eth_send(
             user, user["wallet_address"], user["eth_private_key"],
