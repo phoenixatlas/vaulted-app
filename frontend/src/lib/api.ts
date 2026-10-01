@@ -9,6 +9,10 @@ const RAW_BASE =
 const BASE = /^https?:\/\//i.test(RAW_BASE) ? RAW_BASE : `https://${RAW_BASE}`;
 const TOKEN_KEY = "vaulted_token";
 
+// Exposed so views that need to build full URLs for downloads
+// (e.g. /admin letterhead download card) don't have to re-derive this.
+export const API_BASE = BASE;
+
 export async function setToken(token: string | null) {
   if (token) await storage.secureSet(TOKEN_KEY, token);
   else await storage.secureRemove(TOKEN_KEY);

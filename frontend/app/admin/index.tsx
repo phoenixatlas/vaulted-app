@@ -13,12 +13,12 @@
 import { useCallback, useEffect, useState } from "react";
 import {
   View, Text, Pressable, StyleSheet, ScrollView,
-  ActivityIndicator, RefreshControl,
+  ActivityIndicator, RefreshControl, Linking, Platform,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { useRouter } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
-import { api } from "@/src/lib/api";
+import { api, API_BASE } from "@/src/lib/api";
 import { colors, spacing, radius } from "@/src/lib/theme";
 import { DailySignupChart, CorridorMatrixHeatmap, ReferralLeaderboard } from "@/src/components/AdminCharts";
 
@@ -290,6 +290,52 @@ export default function AdminHome() {
 
         {/* Book-a-call attribution card */}
         <BookClicksCard data={bookClicks} loading={loading} />
+
+        {/* Reusable letterhead template downloads */}
+        <View style={s.card}>
+          <Text style={s.cardTitle}>Company letterhead</Text>
+          <Text style={s.subtle}>
+            Download your branded Phoenix-Atlas / Vaulted letterhead. The DOCX
+            is editable in Word Online — drop it in OneDrive and the gold
+            header + Companies House footer repeat on every page you add.
+          </Text>
+          <Pressable
+            style={s.toolRow}
+            onPress={() => {
+              const url = `${API_BASE}/api/letterhead.docx`;
+              if (Platform.OS === "web") {
+                window.open(url, "_blank");
+              } else {
+                Linking.openURL(url).catch(() => {});
+              }
+            }}
+          >
+            <Ionicons name="document-text-outline" size={18} color={colors.brand} />
+            <View style={{ flex: 1 }}>
+              <Text style={s.toolTitle}>Editable Word template (.docx)</Text>
+              <Text style={s.toolSub}>Save to OneDrive · type over the placeholders</Text>
+            </View>
+            <Ionicons name="download-outline" size={16} color={colors.onSurfaceTertiary} />
+          </Pressable>
+          <Pressable
+            style={s.toolRow}
+            onPress={() => {
+              const url = `${API_BASE}/api/letterhead.pdf`;
+              if (Platform.OS === "web") {
+                window.open(url, "_blank");
+              } else {
+                Linking.openURL(url).catch(() => {});
+              }
+            }}
+          >
+            <Ionicons name="document-outline" size={18} color={colors.brand} />
+            <View style={{ flex: 1 }}>
+              <Text style={s.toolTitle}>Print-ready A4 PDF</Text>
+              <Text style={s.toolSub}>Overlay in Pages/Word or print and sign</Text>
+            </View>
+            <Ionicons name="download-outline" size={16} color={colors.onSurfaceTertiary} />
+          </Pressable>
+        </View>
 
         {/* Quick links */}
         <View style={s.card}>
