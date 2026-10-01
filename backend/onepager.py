@@ -139,15 +139,12 @@ def _draw_footer(c: rl_canvas.Canvas, width: float) -> None:
     c.drawString(
         22 * mm, y - 1 * mm,
         "Illustrative unit economics only. Not an offer to invest or a "
-        "financial promotion. Not authorised by the FCA at the time of "
-        "this document. See risk disclosure at phoenix-atlas.com/risk.",
+        "financial promotion. Not authorised by the FCA. "
+        "See risk disclosure at phoenix-atlas.com/risk.",
     )
-    c.setFillColor(GOLD_DEEP)
-    c.setFont("Helvetica-Bold", 7)
-    c.drawRightString(width - 15 * mm, y + 2 * mm, "phoenix-atlas.com")
-    c.setFillColor(INK_SUBTLE)
-    c.setFont("Helvetica", 6.5)
-    c.drawRightString(width - 15 * mm, y - 1 * mm, "invest@phoenix-atlas.com")
+    # Right-side brand mark removed — the centred Book-a-call line and the
+    # Companies House text already carry the brand. Avoiding any overlap
+    # with the long left-side legal text.
 
     # Booking CTA — clickable hyperlink over the "book a 20-min call" text.
     # Sits centred above the divider so it's the first thing the eye lands on
@@ -245,22 +242,23 @@ def _unit_econ_table() -> Table:
 
 
 def _traction_table(t: dict[str, int]) -> Table:
-    total = max(t.get("total_waitlist", 0), 1)
-    outbound = t.get("outbound_waitlist", 0)
-    inbound = t.get("inbound_waitlist", 0)
-    outbound_pct = f"{(outbound / total * 100):.0f}%" if total else "—"
-    inbound_pct = f"{(inbound / total * 100):.0f}%" if total else "—"
-
+    """One-pager traction snapshot. Reframed for institutional readers —
+    we no longer surface pre-launch waitlist counts (per founder guidance,
+    this is not a credible traction signal for an investment committee).
+    What institutional LPs want to see: live integrations, corridor reach,
+    sandbox status, and the regulatory posture — all of which are below."""
     data = [
-        ["Metric", "Value", "Detail"],
-        ["Total waitlist", f"{t.get('total_waitlist', 0):,}",
-         "Verified emails via Resend Audiences"],
-        ["Outbound (UK/EU → Africa)", f"{outbound:,}  ({outbound_pct})",
-         "Kenya · Ghana · Tanzania · Zambia · Nigeria · Uganda · South Africa"],
-        ["Inbound (Africa → UK/EU)", f"{inbound:,}  ({inbound_pct})",
-         "Launched Phase 1 — quote-only + waitlist"],
-        ["Live sandbox corridors", "🇰🇪 · 🇿🇦", "Kotani Pay v3 on-ramp — real live rates today"],
-        ["Enabling shortly",       "🇳🇬 · 🇬🇭", "Kotani permission gate pending (weeks)"],
+        ["Validation surface", "Status", "Operational detail"],
+        ["Live infrastructure integrations", "Operational",
+         "Kotani Pay v3 API on-ramps returning real-time FX + liquidity rates"],
+        ["Corridor architectural reach", "7 corridors",
+         "Kenya · Ghana · Nigeria · Tanzania · Zambia · Uganda · South Africa"],
+        ["Live sandbox corridors", "KE · ZA",
+         "Kotani Pay v3 on-ramp — real live rates today"],
+        ["Settlement layer", "Regulated stablecoin",
+         "USDC on Polygon L2 — sub-5-sec finality, auditable on-chain"],
+        ["Compliance primitives", "Live in test",
+         "Stripe Identity KYC flows fully live in test environments"],
     ]
     tbl = Table(data, colWidths=[45 * mm, 40 * mm, 90 * mm])
     tbl.setStyle(TableStyle([
@@ -303,18 +301,17 @@ async def build_onepager_pdf(db: Any) -> bytes:
     _draw_header(c, width, height)
     _draw_footer(c, width)
 
-    # Content frame (below header, above footer)
+    # Content frame (below header, above footer). Bottom lifted to 26mm
+    # so the content stops cleanly above the booking-CTA line and divider
+    # drawn by `_draw_footer` (booking is at ~21mm, divider at 18mm).
     frame = Frame(
-        22 * mm, 22 * mm,                       # x, y
+        22 * mm, 26 * mm,                       # x, y
         width - 22 * mm - 15 * mm,             # width
-        height - 30 * mm - 22 * mm,            # height
+        height - 30 * mm - 26 * mm,            # height
         leftPadding=0, rightPadding=0,
         topPadding=8, bottomPadding=0,
         showBoundary=0,
     )
-
-    total = traction.get("total_waitlist", 0)
-    inbound = traction.get("inbound_waitlist", 0)
 
     story = [
         Paragraph("BI-DIRECTIONAL REMITTANCE · REVERSE CORRIDOR", S["eyebrow"]),
@@ -359,7 +356,7 @@ async def build_onepager_pdf(db: Any) -> bytes:
         _unit_econ_table(),
         Spacer(1, 6),
 
-        Paragraph("TRACTION (live snapshot)", S["h2"]),
+        Paragraph("VALIDATION &amp; SANDBOX TRACTION", S["h2"]),
         _traction_table(traction),
         Spacer(1, 6),
 
@@ -373,10 +370,11 @@ async def build_onepager_pdf(db: Any) -> bytes:
             S["body"],
         ),
         Paragraph(
-            f"Sign the mutual NDA and we&rsquo;ll open the data room within 24 hours — "
-            f"including a live sandbox demo with real Kotani onramp rates. "
-            f"Currently at <b>{total}</b> confirmed waitlist emails "
-            f"(<b>{inbound}</b> on the inbound side, unprompted).",
+            "Sign the mutual NDA and we&rsquo;ll open the data room within 24 hours — "
+            "including a live sandbox demo with real Kotani on-ramp rates. "
+            "<b>Phase 1 quote-only engine fully operational.</b> Initial B2B distribution "
+            "strategy focused on white-label API integrations with regional African payment "
+            "institutions.",
             S["callout"],
         ),
     ]
