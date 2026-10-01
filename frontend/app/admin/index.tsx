@@ -132,16 +132,35 @@ export default function AdminHome() {
   const [refreshing, setRefreshing] = useState(false);
   const [err, setErr] = useState<string | null>(null);
 
+  // Per-endpoint error strings — surfaced in each card's "Unavailable"
+  // state so operators can actually see which call failed and why
+  // (403 → not in ADMIN_EMAILS; 404 → endpoint missing on this deploy;
+  //  500 → server-side bug; network error → CORS / timeout).
+  const [cardErrors, setCardErrors] = useState<Record<string, string>>({});
+
   const load = useCallback(async () => {
     setErr(null);
+    const errors: Record<string, string> = {};
+    // Collect each endpoint's error separately so we can tag it on the
+    // card instead of showing a generic "Unavailable" message.
+    const grab = async <T,>(key: string, path: string): Promise<T | null> => {
+      try {
+        return await api<T>(path);
+      } catch (e: any) {
+        errors[key] = e?.message ? String(e.message) : "Request failed";
+        return null;
+      }
+    };
     try {
       const [h, w, inv, daily, refs, clicks] = await Promise.all([
+        // Kotani health is special — if THIS throws we can't be admin at all
+        // so bubble the error up to the full-page error banner.
         api<KotaniHealth>("/admin/kotani/health").catch((e) => { throw e; }),
-        api<WaitlistStats>("/admin/waitlist/stats").catch(() => null),
-        api<InvestorLeadsResp>("/admin/investor/leads").catch(() => null),
-        api<DailySignupsResp>("/admin/waitlist/analytics/daily-signups?days=30").catch(() => null),
-        api<ReferralsResp>("/admin/waitlist/analytics/referrals?limit=10").catch(() => null),
-        api<BookClicksResp>("/admin/investor/book-clicks").catch(() => null),
+        grab<WaitlistStats>("waitlist", "/admin/waitlist/stats"),
+        grab<InvestorLeadsResp>("investors", "/admin/investor/leads"),
+        grab<DailySignupsResp>("daily", "/admin/waitlist/analytics/daily-signups?days=30"),
+        grab<ReferralsResp>("referrals", "/admin/waitlist/analytics/referrals?limit=10"),
+        grab<BookClicksResp>("bookClicks", "/admin/investor/book-clicks"),
       ]);
       setHealth(h);
       setWaitlist(w);
@@ -149,6 +168,7 @@ export default function AdminHome() {
       setDailySignups(daily);
       setReferrals(refs);
       setBookClicks(clicks);
+      setCardErrors(errors);
     } catch (e: any) {
       // 403 usually = your account isn't in ADMIN_EMAILS on this environment.
       setErr(e?.message || "Failed to load admin health");
@@ -274,22 +294,22 @@ export default function AdminHome() {
         </View>
 
         {/* Waitlist stats card */}
-        <WaitlistCard stats={waitlist} loading={loading} />
+        <WaitlistCard stats={waitlist} loading={loading} errorMsg={cardErrors.waitlist} />
 
         {/* Daily signup trend card */}
-        <DailySignupsCard data={dailySignups} loading={loading} />
+        <DailySignupsCard data={dailySignups} loading={loading} errorMsg={cardErrors.daily} />
 
         {/* Corridor × direction matrix card */}
-        <CorridorMatrixCard stats={waitlist} loading={loading} />
+        <CorridorMatrixCard stats={waitlist} loading={loading} errorMsg={cardErrors.waitlist} />
 
         {/* Referral leaderboard card */}
-        <ReferralLeaderboardCard data={referrals} loading={loading} />
+        <ReferralLeaderboardCard data={referrals} loading={loading} errorMsg={cardErrors.referrals} />
 
         {/* Investor leads card */}
-        <InvestorLeadsCard data={investors} loading={loading} />
+        <InvestorLeadsCard data={investors} loading={loading} errorMsg={cardErrors.investors} />
 
         {/* Book-a-call attribution card */}
-        <BookClicksCard data={bookClicks} loading={loading} />
+        <BookClicksCard data={bookClicks} loading={loading} errorMsg={cardErrors.bookClicks} />
 
         {/* Reusable letterhead template downloads */}
         <View style={s.card}>
@@ -404,10 +424,11 @@ function Chip({ label, bad }: { label: string; bad?: boolean }) {
 // Bars are relative to the largest corridor so a small waitlist still fills
 // the card visually. Empty state is friendly (no signups yet).
 function WaitlistCard({
-  stats, loading,
+  stats, loading, errorMsg,
 }: {
   stats: WaitlistStats | null;
   loading: boolean;
+  errorMsg?: string;
 }) {
   if (loading && !stats) {
     return (
@@ -425,7 +446,21 @@ function WaitlistCard({
       </View>
     );
   }
-  if (!stats) return null;  // Fetch failed silently (non-admin, etc.)
+  if (!stats) {
+    return (
+      <View style={s.card}>
+        <View style={s.cardHeaderRow}>
+          <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
+            <Ionicons name="people-outline" size={18} color={colors.brand} />
+            <Text style={s.cardTitle}>Waitlist</Text>
+          </View>
+        </View>
+        <Text style={s.subtle}>
+          Unavailable. {errorMsg ? `(${errorMsg})` : "Endpoint returned an error."}
+        </Text>
+      </View>
+    );
+  }
 
   // Sort by count descending, then alphabetically for stability.
   const rows = [...stats.breakdown].sort((a, b) => {
@@ -509,9 +544,11 @@ function CorridorBar({
 function DailySignupsCard({
   data,
   loading,
+  errorMsg,
 }: {
   data: DailySignupsResp | null;
   loading: boolean;
+  errorMsg?: string;
 }) {
   if (loading && !data) {
     return (
@@ -525,7 +562,9 @@ function DailySignupsCard({
     return (
       <View style={s.card}>
         <Text style={s.cardTitle}>Daily signups</Text>
-        <Text style={s.subtle}>Unavailable.</Text>
+        <Text style={s.subtle}>
+          Unavailable. {errorMsg ? `(${errorMsg})` : "Endpoint returned an error."}
+        </Text>
       </View>
     );
   }
@@ -570,9 +609,11 @@ function DailySignupsCard({
 function CorridorMatrixCard({
   stats,
   loading,
+  errorMsg,
 }: {
   stats: WaitlistStats | null;
   loading: boolean;
+  errorMsg?: string;
 }) {
   if (loading && !stats) {
     return (
@@ -586,7 +627,9 @@ function CorridorMatrixCard({
     return (
       <View style={s.card}>
         <Text style={s.cardTitle}>Corridor breakdown</Text>
-        <Text style={s.subtle}>No data yet.</Text>
+        <Text style={s.subtle}>
+          {errorMsg ? `Unavailable. (${errorMsg})` : "No data yet."}
+        </Text>
       </View>
     );
   }
@@ -607,9 +650,11 @@ function CorridorMatrixCard({
 function ReferralLeaderboardCard({
   data,
   loading,
+  errorMsg,
 }: {
   data: ReferralsResp | null;
   loading: boolean;
+  errorMsg?: string;
 }) {
   if (loading && !data) {
     return (
@@ -623,7 +668,9 @@ function ReferralLeaderboardCard({
     return (
       <View style={s.card}>
         <Text style={s.cardTitle}>Referral leaderboard</Text>
-        <Text style={s.subtle}>Unavailable.</Text>
+        <Text style={s.subtle}>
+          Unavailable. {errorMsg ? `(${errorMsg})` : "Endpoint returned an error."}
+        </Text>
       </View>
     );
   }
@@ -642,9 +689,11 @@ function ReferralLeaderboardCard({
 function InvestorLeadsCard({
   data,
   loading,
+  errorMsg,
 }: {
   data: InvestorLeadsResp | null;
   loading: boolean;
+  errorMsg?: string;
 }) {
   if (loading && !data) {
     return (
@@ -658,7 +707,9 @@ function InvestorLeadsCard({
     return (
       <View style={s.card}>
         <Text style={s.cardTitle}>Investor leads</Text>
-        <Text style={s.subtle}>Unavailable (endpoint returned an error).</Text>
+        <Text style={s.subtle}>
+          Unavailable. {errorMsg ? `(${errorMsg})` : "Endpoint returned an error."}
+        </Text>
       </View>
     );
   }
@@ -740,9 +791,11 @@ function InvestorLeadsCard({
 function BookClicksCard({
   data,
   loading,
+  errorMsg,
 }: {
   data: BookClicksResp | null;
   loading: boolean;
+  errorMsg?: string;
 }) {
   if (loading && !data) {
     return (
@@ -756,7 +809,9 @@ function BookClicksCard({
     return (
       <View style={s.card}>
         <Text style={s.cardTitle}>Book-a-call clicks</Text>
-        <Text style={s.subtle}>Unavailable (endpoint returned an error).</Text>
+        <Text style={s.subtle}>
+          Unavailable. {errorMsg ? `(${errorMsg})` : "Endpoint returned an error."}
+        </Text>
       </View>
     );
   }
