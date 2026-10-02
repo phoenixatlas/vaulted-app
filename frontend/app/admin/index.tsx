@@ -151,31 +151,39 @@ export default function AdminHome() {
         return null;
       }
     };
-    try {
-      const [h, w, inv, daily, refs, clicks] = await Promise.all([
-        // Kotani health is special — if THIS throws we can't be admin at all
-        // so bubble the error up to the full-page error banner.
-        api<KotaniHealth>("/admin/kotani/health").catch((e) => { throw e; }),
-        grab<WaitlistStats>("waitlist", "/admin/waitlist/stats"),
-        grab<InvestorLeadsResp>("investors", "/admin/investor/leads"),
-        grab<DailySignupsResp>("daily", "/admin/waitlist/analytics/daily-signups?days=30"),
-        grab<ReferralsResp>("referrals", "/admin/waitlist/analytics/referrals?limit=10"),
-        grab<BookClicksResp>("bookClicks", "/admin/investor/book-clicks"),
-      ]);
-      setHealth(h);
-      setWaitlist(w);
-      setInvestors(inv);
-      setDailySignups(daily);
-      setReferrals(refs);
-      setBookClicks(clicks);
-      setCardErrors(errors);
-    } catch (e: any) {
-      // 403 usually = your account isn't in ADMIN_EMAILS on this environment.
-      setErr(e?.message || "Failed to load admin health");
-    } finally {
-      setLoading(false);
-      setRefreshing(false);
+    // Every call now runs independently via grab() — a failure on any
+    // single endpoint only marks that card as unavailable instead of
+    // nuking the entire dashboard. Previously /admin/kotani/health was
+    // special-cased with `catch (e) => { throw e; }` which rejected the
+    // whole Promise.all whenever Kotani returned "Not authenticated",
+    // leaving the other 5 cards with an empty errorMsg.
+    const [h, w, inv, daily, refs, clicks] = await Promise.all([
+      grab<KotaniHealth>("kotani", "/admin/kotani/health"),
+      grab<WaitlistStats>("waitlist", "/admin/waitlist/stats"),
+      grab<InvestorLeadsResp>("investors", "/admin/investor/leads"),
+      grab<DailySignupsResp>("daily", "/admin/waitlist/analytics/daily-signups?days=30"),
+      grab<ReferralsResp>("referrals", "/admin/waitlist/analytics/referrals?limit=10"),
+      grab<BookClicksResp>("bookClicks", "/admin/investor/book-clicks"),
+    ]);
+    setHealth(h);
+    setWaitlist(w);
+    setInvestors(inv);
+    setDailySignups(daily);
+    setReferrals(refs);
+    setBookClicks(clicks);
+    setCardErrors(errors);
+    // Full-page banner only when EVERY card failed — avoids drowning
+    // out individual card errors.
+    const allFailed =
+      !h && !w && !inv && !daily && !refs && !clicks && Object.keys(errors).length >= 6;
+    if (allFailed) {
+      const first = errors.kotani || errors.waitlist || Object.values(errors)[0] || "Unknown error";
+      setErr(first.includes("403") || first.toLowerCase().includes("admin")
+        ? "Admin access required — ensure your account is in ADMIN_EMAILS on the backend."
+        : first);
     }
+    setLoading(false);
+    setRefreshing(false);
   }, []);
 
   useEffect(() => { load(); }, [load]);
@@ -226,6 +234,11 @@ export default function AdminHome() {
             <View style={s.loadingBox}>
               <ActivityIndicator color={colors.brand} />
               <Text style={s.loadingText}>Probing Kotani sandbox…</Text>
+            </View>
+          ) : (cardErrors.kotani && !health) ? (
+            <View style={s.errorBox}>
+              <Ionicons name="alert-circle-outline" size={18} color={colors.error} />
+              <Text style={s.errorText}>{cardErrors.kotani}</Text>
             </View>
           ) : err ? (
             <View style={s.errorBox}>
