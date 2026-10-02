@@ -88,3 +88,10 @@ MONGO_URL, DB_NAME=vaulted, JWT_SECRET, STRIPE_API_KEY (live, rotated), STRIPE_W
 - **Admin webhook-echo**: `GET /api/admin/kotani/webhook-echo` surfaces last 20 raw deliveries, config checklist, and expected webhook URL. `POST /api/admin/kotani/webhook-echo/replay` fires a synthetic signed envelope end-to-end for QA.
 - **UI**: New `KotaniWebhookEchoCard` in `/admin` shows checklist (API key, secret, URL registered, signatures valid), subscribed events, latest deliveries, and a "Fire test delivery" button.
 - **Tests**: `tests/test_kotani_webhook_v3.py` — 29 unit tests covering canonical/raw signature paths, status enum, snake/camel field picker, receipt extraction.
+
+## 🧪 Kotani Pay — Smoke Test, Receipts, Settlements (Iter 45, 2026-10)
+- **Smoke test** (`POST /api/admin/kotani/smoke-test?corridor=KE`): runs health → rate → customer → booking → dispatcher as 5 independent steps; surfaces Kotani error payloads (e.g. "Service mobile_money_customers is not enabled for your account") verbatim so operators can forward to Kotani support.
+- **Settlement receipts** (`POST /offramp/callback` → `_handle_offramp_event`): on `bucket == "settled"`, auto-generates a branded A4 PDF (`backend/receipt.py`) and emails it as a Resend attachment via `send_offramp_receipt_email`. Idempotency flag `receipt_emailed_at` prevents double-sending on Kotani retry.
+- **User-facing re-download**: `GET /api/transactions/{tx_id}/receipt.pdf` — gated to tx owner + settled status.
+- **Live settlement rollup** (`GET /api/admin/kotani/settlements?days=30`): daily aggregation of settled offramps with per-currency reconciliation (quoted vs settled fiat delta). `delta_pct > 0.5%` auto-highlighted as warning in UI.
+- **UI**: Three new cards on `/admin` — `KotaniSmokeTestCard` (6-corridor pills + stepper + verdict banner), `KotaniSettlementsCard` (4-stat grid + 7-day breakdown with reconciliation chips).

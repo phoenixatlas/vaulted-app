@@ -70,6 +70,82 @@ async def send_email_via_resend(to: str, subject: str, html: str) -> bool:
         return False
 
 
+async def send_email_via_resend_with_attachment(
+    to: str,
+    subject: str,
+    html: str,
+    *,
+    attachment_bytes: bytes,
+    attachment_filename: str,
+    attachment_mime: str = "application/pdf",
+) -> bool:
+    """Same as `send_email_via_resend` but with a base64 attachment.
+
+    Resend's `attachments` array takes `{filename, content (base64), content_type}`.
+    Used for settlement receipts (PDF). Keeps the single-attachment API
+    narrow — if we ever need multi-attachment flows we'll generalise then.
+    """
+    if not RESEND_API_KEY:
+        logger.warning("RESEND_API_KEY not set; email+attachment to %s skipped", to)
+        return False
+    import base64
+    try:
+        async with httpx.AsyncClient(timeout=20) as cx:
+            r = await cx.post(
+                "https://api.resend.com/emails",
+                headers={
+                    "Authorization": f"Bearer {RESEND_API_KEY}",
+                    "Content-Type": "application/json",
+                },
+                json={
+                    "from": get_resend_from(),
+                    "to": [to],
+                    "subject": subject,
+                    "html": html,
+                    "reply_to": RESEND_REPLY_TO,
+                    "attachments": [{
+                        "filename": attachment_filename,
+                        "content": base64.b64encode(attachment_bytes).decode("ascii"),
+                        "content_type": attachment_mime,
+                    }],
+                },
+            )
+            if r.status_code >= 400:
+                logger.warning("resend send+attach failed %s: %s", r.status_code, r.text[:300])
+                return False
+            return True
+    except Exception as e:  # noqa: BLE001
+        logger.warning("resend send+attach exception: %s", e)
+        return False
+
+
+async def send_offramp_receipt_email(
+    *, to: str, tx: dict, user: Optional[dict] = None,
+) -> bool:
+    """Send a user their branded Vaulted/Phoenix-Atlas offramp receipt
+    with the PDF attached. Imported lazily so unit tests that don't need
+    reportlab don't pay the import cost."""
+    from receipt import build_offramp_receipt_pdf, offramp_receipt_email_html
+
+    try:
+        pdf_bytes = build_offramp_receipt_pdf(tx, user)
+    except Exception as e:  # noqa: BLE001
+        logger.warning("[receipt] build_offramp_receipt_pdf failed: %s", e)
+        return False
+
+    html = offramp_receipt_email_html(tx, user)
+    ref = ((tx.get("kotani") or {}).get("reference_id")) or tx.get("id") or "receipt"
+    # Sanitise filename — Resend rejects certain characters.
+    safe_ref = "".join(c for c in str(ref) if c.isalnum() or c in "-_") or "receipt"
+    return await send_email_via_resend_with_attachment(
+        to=to,
+        subject=f"Your Vaulted payout receipt — {safe_ref}",
+        html=html,
+        attachment_bytes=pdf_bytes,
+        attachment_filename=f"vaulted-receipt-{safe_ref}.pdf",
+    )
+
+
 def password_reset_email_html(name: str, reset_url: str) -> str:
     safe_name = (name or "there").strip() or "there"
     return f"""

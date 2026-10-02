@@ -358,6 +358,28 @@ async def _handle_offramp_event(data: dict) -> dict:
         except Exception as e:  # noqa: BLE001
             logger.warning("kotani webhook audit_write failed: %s", e)
 
+        # Email a branded PDF receipt the moment the payout settles. We
+        # re-read the tx so the receipt reflects every update we just
+        # applied (settled_at, mpesa_receipt, transaction_hash). Guarded
+        # so a Resend outage doesn't 500 the webhook — Kotani retries
+        # on 5xx and we'd rather be idempotent on receipt emails anyway.
+        if bucket == "settled" and user_doc and user_doc.get("email"):
+            try:
+                fresh_tx = await db.transactions.find_one({"id": tx["id"]}, {"_id": 0}) or tx
+                # Flag so re-deliveries of the same webhook don't double-email.
+                if not fresh_tx.get("receipt_emailed_at"):
+                    from emails import send_offramp_receipt_email
+                    ok = await send_offramp_receipt_email(
+                        to=user_doc["email"], tx=fresh_tx, user=user_doc,
+                    )
+                    if ok:
+                        await db.transactions.update_one(
+                            {"id": tx["id"]},
+                            {"$set": {"receipt_emailed_at": iso(now_utc())}},
+                        )
+            except Exception as e:  # noqa: BLE001
+                logger.warning("[kotani-webhook] receipt email failed: %s", e)
+
     return {"ok": True, "matched": True, "status": kotani_status, "bucket": bucket}
 
 

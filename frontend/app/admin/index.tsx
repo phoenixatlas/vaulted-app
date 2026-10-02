@@ -122,6 +122,55 @@ type WebhookDelivery = {
   raw_body?: string;
 };
 
+type SmokeStep = {
+  name: string;
+  call: string;
+  ok: boolean;
+  ms: number;
+  detail?: any;
+  error?: string | null;
+};
+
+type SmokeTestResp = {
+  corridor: string;
+  verdict: "all_green" | "partial" | "all_failed";
+  passed: number;
+  total: number;
+  elapsed_ms: number;
+  steps: SmokeStep[];
+  started_at: string;
+};
+
+type SettlementDay = {
+  date: string;
+  tx_count: number;
+  crypto_sent: Record<string, number>;
+  fiat_delivered: Record<string, number>;
+  usd_equivalent: number;
+  corridors: Record<string, number>;
+  reconciliation: {
+    currency: string;
+    quoted: number;
+    settled: number;
+    delta: number;
+    delta_pct: number;
+  }[];
+  sample_tx_ids: string[];
+};
+
+type SettlementsResp = {
+  window_days: number;
+  since: string;
+  overall: {
+    tx_count: number;
+    crypto_sent: Record<string, number>;
+    fiat_delivered: Record<string, number>;
+    usd_equivalent: number;
+    corridor_breakdown: Record<string, number>;
+  };
+  daily: SettlementDay[];
+};
+
 type KotaniWebhookEchoResp = {
   expected_webhook_url: string | null;
   host_type: "unset" | "preview" | "render" | "localhost" | "custom";
@@ -159,6 +208,10 @@ export default function AdminHome() {
   const [bookClicks, setBookClicks] = useState<BookClicksResp | null>(null);
   const [webhookEcho, setWebhookEcho] = useState<KotaniWebhookEchoResp | null>(null);
   const [replayStatus, setReplayStatus] = useState<string | null>(null);
+  const [smokeResult, setSmokeResult] = useState<SmokeTestResp | null>(null);
+  const [smokeRunning, setSmokeRunning] = useState(false);
+  const [smokeCorridor, setSmokeCorridor] = useState<string>("KE");
+  const [settlements, setSettlements] = useState<SettlementsResp | null>(null);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [err, setErr] = useState<string | null>(null);
@@ -188,7 +241,7 @@ export default function AdminHome() {
     // special-cased with `catch (e) => { throw e; }` which rejected the
     // whole Promise.all whenever Kotani returned "Not authenticated",
     // leaving the other 5 cards with an empty errorMsg.
-    const [h, w, inv, daily, refs, clicks, echo] = await Promise.all([
+    const [h, w, inv, daily, refs, clicks, echo, settle] = await Promise.all([
       grab<KotaniHealth>("kotani", "/admin/kotani/health"),
       grab<WaitlistStats>("waitlist", "/admin/waitlist/stats"),
       grab<InvestorLeadsResp>("investors", "/admin/investor/leads"),
@@ -196,6 +249,7 @@ export default function AdminHome() {
       grab<ReferralsResp>("referrals", "/admin/waitlist/analytics/referrals?limit=10"),
       grab<BookClicksResp>("bookClicks", "/admin/investor/book-clicks"),
       grab<KotaniWebhookEchoResp>("webhookEcho", "/admin/kotani/webhook-echo"),
+      grab<SettlementsResp>("settlements", "/admin/kotani/settlements?days=30"),
     ]);
     setHealth(h);
     setWaitlist(w);
@@ -204,11 +258,13 @@ export default function AdminHome() {
     setReferrals(refs);
     setBookClicks(clicks);
     setWebhookEcho(echo);
+    setSettlements(settle);
     setCardErrors(errors);
     // Full-page banner only when EVERY card failed — avoids drowning
     // out individual card errors.
     const allFailed =
-      !h && !w && !inv && !daily && !refs && !clicks && !echo && Object.keys(errors).length >= 7;
+      !h && !w && !inv && !daily && !refs && !clicks && !echo && !settle &&
+      Object.keys(errors).length >= 8;
     if (allFailed) {
       const first = errors.kotani || errors.waitlist || Object.values(errors)[0] || "Unknown error";
       setErr(first.includes("403") || first.toLowerCase().includes("admin")
@@ -244,6 +300,31 @@ export default function AdminHome() {
       setReplayStatus(`✗ ${e?.message || "Replay failed"}`);
     }
   }, [load]);
+
+  const onRunSmokeTest = useCallback(async (corridor: string) => {
+    setSmokeRunning(true);
+    setSmokeCorridor(corridor);
+    setSmokeResult(null);
+    try {
+      const res = await api<SmokeTestResp>(
+        `/admin/kotani/smoke-test?corridor=${encodeURIComponent(corridor)}`,
+        { method: "POST", body: {} }
+      );
+      setSmokeResult(res);
+    } catch (e: any) {
+      setSmokeResult({
+        corridor,
+        verdict: "all_failed",
+        passed: 0,
+        total: 0,
+        elapsed_ms: 0,
+        steps: [{ name: "Request failed", call: "N/A", ok: false, ms: 0, error: e?.message || "Unknown error" }],
+        started_at: new Date().toISOString(),
+      });
+    } finally {
+      setSmokeRunning(false);
+    }
+  }, []);
 
   return (
     <SafeAreaView style={s.container} edges={["top", "bottom"]}>
@@ -368,6 +449,21 @@ export default function AdminHome() {
           errorMsg={cardErrors.webhookEcho}
           onReplay={onReplayWebhook}
           replayStatus={replayStatus}
+        />
+
+        {/* Kotani end-to-end smoke test */}
+        <KotaniSmokeTestCard
+          result={smokeResult}
+          running={smokeRunning}
+          corridor={smokeCorridor}
+          onRun={onRunSmokeTest}
+        />
+
+        {/* Live settlement rollup (per-day) */}
+        <KotaniSettlementsCard
+          data={settlements}
+          loading={loading}
+          errorMsg={cardErrors.settlements}
         />
 
         {/* Daily signup trend card */}
@@ -1127,7 +1223,355 @@ function KotaniWebhookEchoCard({
 }
 
 
+// KotaniSmokeTestCard — one-tap end-to-end validator for the offramp rail.
+// Fires rate-quote → customer-create → booking → dispatcher through the
+// *real* Kotani sandbox so operators can see exactly where things break.
+// Especially useful today while we're waiting on Kotani support to flip
+// `integratorEnabled` — this card shows the per-service error payload so
+// you can forward it verbatim in the support ticket.
+function KotaniSmokeTestCard({
+  result,
+  running,
+  corridor,
+  onRun,
+}: {
+  result: SmokeTestResp | null;
+  running: boolean;
+  corridor: string;
+  onRun: (corridor: string) => void;
+}) {
+  const CORRIDORS = ["KE", "NG", "GH", "UG", "TZ", "ZA"];
+
+  const verdictColor =
+    result?.verdict === "all_green" ? s.smokeVerdictGreen
+    : result?.verdict === "partial" ? s.smokeVerdictYellow
+    : result?.verdict === "all_failed" ? s.smokeVerdictRed
+    : null;
+
+  const verdictText =
+    result?.verdict === "all_green"
+      ? "All stages passed. The offramp rail is fully live for this corridor."
+      : result?.verdict === "partial"
+      ? "Some stages blocked — check the step details below and forward any Kotani error payloads to their support team."
+      : result?.verdict === "all_failed"
+      ? "Nothing passed. Check your API key, webhook secret, and Render deploy status."
+      : "";
+
+  const detailPreview = (step: SmokeStep): string | null => {
+    if (!step.detail) return null;
+    const d = step.detail;
+    if (d.kotani_error) return `Kotani: ${d.kotani_error}`;
+    if (d.status_code) return `HTTP ${d.status_code}`;
+    if (d.rate_id) return `rateId · ${String(d.rate_id).slice(0, 10)}… · ${d.fiat_amount ?? "—"} ${d.currency ?? ""}`;
+    if (d.customer_key) return `customerKey · ${String(d.customer_key).slice(0, 14)}…`;
+    if (d.reference_id) return `ref · ${String(d.reference_id).slice(0, 18)}… · ${d.status || "created"}`;
+    if (d.status) return String(d.status);
+    return null;
+  };
+
+  return (
+    <View style={s.card}>
+      <View style={s.cardHeaderRow}>
+        <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
+          <Ionicons name="flash-outline" size={18} color={colors.brand} />
+          <Text style={s.cardTitle}>Offramp smoke test</Text>
+        </View>
+        {running ? (
+          <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
+            <ActivityIndicator size="small" color={colors.brand} />
+            <Text style={s.subtle}>Running…</Text>
+          </View>
+        ) : null}
+      </View>
+
+      <Text style={s.subtle}>
+        Dry-run the full crypto → M-Pesa pipeline against the Kotani sandbox. No real USDC moves.
+      </Text>
+
+      {/* Corridor picker */}
+      <View style={s.smokeCorridorRow}>
+        {CORRIDORS.map((c) => {
+          const active = c === corridor;
+          return (
+            <Pressable
+              key={c}
+              onPress={() => !running && onRun(c)}
+              disabled={running}
+              style={[s.corridorPill, active && s.corridorPillActive]}
+              hitSlop={6}
+            >
+              <Text style={[s.corridorPillText, active && s.corridorPillTextActive]}>{c}</Text>
+            </Pressable>
+          );
+        })}
+      </View>
+
+      {/* Verdict banner */}
+      {result && verdictColor ? (
+        <View style={[s.smokeVerdictBox, verdictColor]}>
+          <Text style={s.smokeVerdictTitle}>
+            {result.verdict === "all_green" ? "🎉 All green" :
+             result.verdict === "partial" ? `⚠ ${result.passed} / ${result.total} passed` :
+             "✗ All stages failed"}
+            {" · "}
+            <Text style={{ fontSize: 11, color: colors.onSurfaceSecondary, fontWeight: "500" }}>
+              {result.corridor} · {result.elapsed_ms}ms
+            </Text>
+          </Text>
+          <Text style={s.smokeVerdictText}>{verdictText}</Text>
+        </View>
+      ) : null}
+
+      {/* Step details */}
+      {result?.steps.map((step, i) => (
+        <View key={i} style={s.smokeStepRow}>
+          <Ionicons
+            name={step.ok ? "checkmark-circle" : "close-circle"}
+            size={18}
+            color={step.ok ? colors.success : colors.error}
+            style={{ marginTop: 1 }}
+          />
+          <View style={{ flex: 1, minWidth: 0 }}>
+            <View style={{ flexDirection: "row", alignItems: "center" }}>
+              <Text style={s.smokeStepName}>{step.name}</Text>
+              <Text style={s.smokeStepMs}>{step.ms}ms</Text>
+            </View>
+            <Text style={s.smokeStepCall}>{step.call}</Text>
+            {step.ok ? (
+              detailPreview(step) ? <Text style={s.smokeStepDetail}>{detailPreview(step)}</Text> : null
+            ) : (
+              <Text style={s.smokeStepError}>
+                {step.error || detailPreview(step) || "Failed"}
+              </Text>
+            )}
+          </View>
+        </View>
+      ))}
+
+      {!result && !running ? (
+        <View style={[s.emptyBox, { paddingVertical: spacing.md, marginTop: 10 }]}>
+          <Ionicons name="flash-outline" size={20} color={colors.onSurfaceTertiary} />
+          <Text style={s.emptyText}>
+            Tap a corridor above to run a fresh end-to-end test. Takes ~5s.
+          </Text>
+        </View>
+      ) : null}
+    </View>
+  );
+}
+
+
+// KotaniSettlementsCard — rolls up settled offramp activity by day so
+// operators can watch the rail breathe without pulling raw CSVs. The
+// reconciliation chip is the key signal: a persistent delta_pct > 0.5%
+// on any currency is early-warning that Kotani's effective rate has
+// drifted from our quoted rate (fee change, FX revaluation, etc.).
+function KotaniSettlementsCard({
+  data,
+  loading,
+  errorMsg,
+}: {
+  data: SettlementsResp | null;
+  loading: boolean;
+  errorMsg?: string;
+}) {
+  if (loading && !data) {
+    return (
+      <View style={s.card}>
+        <Text style={s.cardTitle}>Settlements</Text>
+        <View style={s.loadingBox}>
+          <ActivityIndicator color={colors.brand} />
+          <Text style={s.loadingText}>Loading daily rollup…</Text>
+        </View>
+      </View>
+    );
+  }
+  if (!data) {
+    return (
+      <View style={s.card}>
+        <Text style={s.cardTitle}>Settlements</Text>
+        <Text style={s.subtle}>
+          Unavailable. {errorMsg ? `(${errorMsg})` : "Endpoint returned an error."}
+        </Text>
+      </View>
+    );
+  }
+
+  const noneYet = data.overall.tx_count === 0;
+  const topCrypto = Object.entries(data.overall.crypto_sent)
+    .sort((a, b) => b[1] - a[1])[0];
+  const topFiat = Object.entries(data.overall.fiat_delivered)
+    .sort((a, b) => b[1] - a[1])[0];
+
+  return (
+    <View style={s.card}>
+      <View style={s.cardHeaderRow}>
+        <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
+          <Ionicons name="trending-up-outline" size={18} color={colors.brand} />
+          <Text style={s.cardTitle}>Settlements</Text>
+        </View>
+        <View style={s.modePill}>
+          <Text style={s.modePillText}>LAST {data.window_days}D</Text>
+        </View>
+      </View>
+
+      {noneYet ? (
+        <View style={[s.emptyBox, { paddingVertical: spacing.md }]}>
+          <Ionicons name="receipt-outline" size={20} color={colors.onSurfaceTertiary} />
+          <Text style={s.emptyText}>
+            No settled offramps yet. First successful payout will appear here within seconds of Kotani webhook delivery.
+          </Text>
+        </View>
+      ) : (
+        <>
+          {/* Overall stats grid */}
+          <View style={s.settleOverallGrid}>
+            <View style={s.settleStatBox}>
+              <Text style={s.settleStatLabel}>Transactions</Text>
+              <Text style={s.settleStatValue}>{data.overall.tx_count}</Text>
+              <Text style={s.settleStatSub}>
+                across {Object.keys(data.overall.corridor_breakdown).length} corridor(s)
+              </Text>
+            </View>
+            <View style={s.settleStatBox}>
+              <Text style={s.settleStatLabel}>USD equivalent</Text>
+              <Text style={s.settleStatValue}>
+                ${data.overall.usd_equivalent.toLocaleString(undefined, { maximumFractionDigits: 0 })}
+              </Text>
+              <Text style={s.settleStatSub}>stablecoin notional</Text>
+            </View>
+            <View style={s.settleStatBox}>
+              <Text style={s.settleStatLabel}>Crypto sent</Text>
+              <Text style={s.settleStatValue}>
+                {topCrypto ? `${topCrypto[1].toLocaleString(undefined, { maximumFractionDigits: 2 })}` : "—"}
+              </Text>
+              <Text style={s.settleStatSub}>{topCrypto ? topCrypto[0] : "—"}</Text>
+            </View>
+            <View style={s.settleStatBox}>
+              <Text style={s.settleStatLabel}>Fiat delivered</Text>
+              <Text style={s.settleStatValue}>
+                {topFiat ? `${topFiat[1].toLocaleString(undefined, { maximumFractionDigits: 0 })}` : "—"}
+              </Text>
+              <Text style={s.settleStatSub}>{topFiat ? topFiat[0] : "—"}</Text>
+            </View>
+          </View>
+
+          {/* Daily rows (top 7) */}
+          <Text style={[s.microLabel, { marginTop: spacing.md }]}>DAILY BREAKDOWN</Text>
+          {data.daily.slice(0, 7).map((d) => (
+            <View key={d.date} style={s.settleRow}>
+              <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "baseline" }}>
+                <Text style={s.settleDay}>{d.date}</Text>
+                <Text style={s.settleDaySub}>{d.tx_count} tx · ${d.usd_equivalent.toLocaleString(undefined, { maximumFractionDigits: 0 })}</Text>
+              </View>
+              <Text style={s.settleDaySub}>
+                {Object.entries(d.fiat_delivered)
+                  .map(([cur, amt]) => `${amt.toLocaleString(undefined, { maximumFractionDigits: 0 })} ${cur}`)
+                  .join(" · ")}
+              </Text>
+              {d.reconciliation.length > 0 ? (
+                <View style={s.settleReconRow}>
+                  {d.reconciliation.map((r) => (
+                    <View
+                      key={r.currency}
+                      style={[s.settleReconChip, Math.abs(r.delta_pct) > 0.5 && s.settleReconChipWarn]}
+                    >
+                      <Text style={s.settleReconChipText}>
+                        {r.currency} Δ {r.delta >= 0 ? "+" : ""}{r.delta.toFixed(2)} ({r.delta_pct >= 0 ? "+" : ""}{r.delta_pct.toFixed(2)}%)
+                      </Text>
+                    </View>
+                  ))}
+                </View>
+              ) : null}
+            </View>
+          ))}
+        </>
+      )}
+    </View>
+  );
+}
+
+
 const s = StyleSheet.create({
+  // KotaniSmokeTestCard
+  smokeCorridorRow: {
+    flexDirection: "row", flexWrap: "wrap", gap: 6, marginTop: 10,
+  },
+  corridorPill: {
+    paddingHorizontal: 10, paddingVertical: 6,
+    borderRadius: radius.pill,
+    backgroundColor: colors.surfaceSecondary,
+    borderWidth: 1, borderColor: colors.border,
+    minWidth: 40, alignItems: "center",
+  },
+  corridorPillActive: {
+    backgroundColor: colors.brand + "25",
+    borderColor: colors.brand,
+  },
+  corridorPillText: { fontSize: 11, fontWeight: "700", color: colors.onSurfaceSecondary, letterSpacing: 0.5 },
+  corridorPillTextActive: { color: colors.brandDeep },
+  smokeStepRow: {
+    flexDirection: "row", alignItems: "flex-start", gap: 10,
+    paddingVertical: 8, paddingHorizontal: 10,
+    backgroundColor: colors.surfaceSecondary,
+    borderRadius: radius.sm,
+    marginTop: 6,
+  },
+  smokeStepName: { fontSize: 12, fontWeight: "700", color: colors.onSurface },
+  smokeStepCall: { fontSize: 10, color: colors.onSurfaceTertiary, fontFamily: "Menlo", marginTop: 1 },
+  smokeStepDetail: { fontSize: 10.5, color: colors.onSurfaceSecondary, marginTop: 4, lineHeight: 14 },
+  smokeStepError: { fontSize: 10.5, color: colors.error, marginTop: 4, lineHeight: 14 },
+  smokeStepMs: { fontSize: 9.5, color: colors.onSurfaceTertiary, marginLeft: "auto" },
+  smokeVerdictBox: {
+    marginTop: 10, paddingHorizontal: 12, paddingVertical: 10,
+    borderRadius: radius.md,
+    borderWidth: 1,
+  },
+  smokeVerdictGreen: {
+    backgroundColor: colors.success + "15",
+    borderColor: colors.success + "50",
+  },
+  smokeVerdictYellow: {
+    backgroundColor: colors.warning + "15",
+    borderColor: colors.warning + "50",
+  },
+  smokeVerdictRed: {
+    backgroundColor: colors.error + "15",
+    borderColor: colors.error + "50",
+  },
+  smokeVerdictTitle: { fontSize: 13, fontWeight: "800", color: colors.onSurface, letterSpacing: -0.2 },
+  smokeVerdictText: { fontSize: 11.5, color: colors.onSurfaceSecondary, marginTop: 3, lineHeight: 16 },
+
+  // KotaniSettlementsCard
+  settleOverallGrid: {
+    flexDirection: "row", flexWrap: "wrap", gap: 10, marginTop: 10,
+  },
+  settleStatBox: {
+    flex: 1, minWidth: "47%",
+    paddingHorizontal: 10, paddingVertical: 10,
+    backgroundColor: colors.surfaceSecondary,
+    borderRadius: radius.sm,
+    borderWidth: 1, borderColor: colors.border,
+  },
+  settleStatLabel: { fontSize: 10, color: colors.onSurfaceTertiary, letterSpacing: 0.4, textTransform: "uppercase" },
+  settleStatValue: { fontSize: 18, fontWeight: "800", color: colors.onSurface, marginTop: 3, letterSpacing: -0.3 },
+  settleStatSub: { fontSize: 10, color: colors.onSurfaceSecondary, marginTop: 2 },
+  settleRow: {
+    paddingVertical: 10, paddingHorizontal: 10,
+    borderTopWidth: 1, borderTopColor: colors.border,
+  },
+  settleDay: { fontSize: 11.5, fontWeight: "700", color: colors.onSurface },
+  settleDaySub: { fontSize: 10.5, color: colors.onSurfaceSecondary, marginTop: 2 },
+  settleReconRow: { flexDirection: "row", gap: 8, marginTop: 6, flexWrap: "wrap" },
+  settleReconChip: {
+    paddingHorizontal: 7, paddingVertical: 3,
+    borderRadius: radius.sm,
+    backgroundColor: colors.surface,
+    borderWidth: 1, borderColor: colors.border,
+  },
+  settleReconChipText: { fontSize: 10, color: colors.onSurfaceSecondary, fontFamily: "Menlo" },
+  settleReconChipWarn: { borderColor: colors.warning + "80", backgroundColor: colors.warning + "15" },
+
   container: { flex: 1, backgroundColor: colors.background },
   header: {
     flexDirection: "row", alignItems: "center", gap: 12,

@@ -164,3 +164,36 @@ async def export_transactions_csv(
         media_type="text/csv",
         headers={"Content-Disposition": f'attachment; filename="{name}"'},
     )
+
+
+
+# ---------------------------------------------------------------------------
+# Payout receipt download (settled offramp only)
+# ---------------------------------------------------------------------------
+# Rebuilds the PDF receipt on demand so users can re-download if they lose
+# the one that was auto-emailed on settlement. Only returns 200 when:
+#   • the tx belongs to the caller (prevents enumeration attacks)
+#   • the tx is in a settled state (nothing to receipt for a pending/failed)
+@router.get("/transactions/{tx_id}/receipt.pdf")
+async def download_offramp_receipt(tx_id: str, user=Depends(get_current_user)):
+    from fastapi.responses import Response
+    from receipt import build_offramp_receipt_pdf
+
+    tx = await db.transactions.find_one({"id": tx_id, "user_id": user["id"]}, {"_id": 0})
+    if not tx:
+        raise HTTPException(status_code=404, detail="Transaction not found")
+
+    status = (tx.get("status") or "").lower()
+    kotani_status = ((tx.get("kotani") or {}).get("status") or "").upper()
+    is_settled = status == "settled" or kotani_status in {"SUCCESSFUL", "SUCCESS", "COMPLETED"}
+    if not is_settled:
+        raise HTTPException(status_code=400, detail="Receipt only available for settled transactions")
+
+    pdf = build_offramp_receipt_pdf(tx, user)
+    ref = ((tx.get("kotani") or {}).get("reference_id")) or tx_id
+    safe_ref = "".join(c for c in str(ref) if c.isalnum() or c in "-_") or "receipt"
+    return Response(
+        content=pdf,
+        media_type="application/pdf",
+        headers={"Content-Disposition": f'inline; filename="vaulted-receipt-{safe_ref}.pdf"'},
+    )

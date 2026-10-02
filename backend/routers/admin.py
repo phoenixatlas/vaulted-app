@@ -7,7 +7,8 @@ Extracted from server.py during the P2 refactor.
 from __future__ import annotations
 
 import hashlib
-from typing import Optional
+import os
+from typing import Any, Optional
 
 from fastapi import APIRouter, Depends, HTTPException
 
@@ -538,3 +539,365 @@ async def admin_audit_log_for_user(user_id: str, _admin=Depends(require_admin)):
     event_type. Consumed by SAR (Suspicious Activity Report) filings and
     ad-hoc regulator requests."""
     return await audit_summarize_user(db, user_id)
+
+
+
+# ============================================================================
+# ADMIN — Kotani end-to-end smoke test
+# ============================================================================
+# Validates the entire offramp stack in a single tap: rate quote → customer
+# create → booking → status poll. The caller gets step-by-step pass/fail so
+# they can see exactly which Kotani permission is still missing when things
+# are blocked. All side effects (db writes, external calls) are tagged as
+# `source: "smoke-test"` so they're trivially filterable.
+#
+# Design calls:
+#   • No real USDC moves — we book the smallest possible fiat amount
+#     (1 unit of local fiat) and we don't disburse. Kotani holds the
+#     booking in `PENDING` until the referenceId naturally times out.
+#   • Each step runs independently; one failure doesn't block the next.
+#     That's crucial because the common "insufficient permissions" error
+#     on rate-quote shouldn't prevent us from testing customer-create.
+#   • The response shape stays small + flat so the admin UI renders it
+#     as a stepper without recursion.
+@router.post("/admin/kotani/smoke-test")
+async def admin_kotani_smoke_test(
+    corridor: str = "KE",
+    _admin=Depends(require_admin),
+):
+    """Run a full offramp dry-run against Kotani. Returns per-step results."""
+    import time
+    import kotani
+
+    corridor = (corridor or "KE").upper()
+    # Pick a reasonable test configuration per corridor. These match the
+    # live Kotani sandbox corridors documented at
+    # https://documentation.kotanipay.com/v3/corridors
+    corridor_config = {
+        "KE": {"currency": "KES", "country": "KE", "mobile": "254712345678", "crypto_amount": 0.5, "name": "Smoke Test KE", "network": "MPESA"},
+        "NG": {"currency": "NGN", "country": "NG", "mobile": "2348012345678", "crypto_amount": 0.5, "name": "Smoke Test NG", "network": "MTN"},
+        "GH": {"currency": "GHS", "country": "GH", "mobile": "233501234567", "crypto_amount": 0.5, "name": "Smoke Test GH", "network": "MTN"},
+        "UG": {"currency": "UGX", "country": "UG", "mobile": "256701234567", "crypto_amount": 0.5, "name": "Smoke Test UG", "network": "MTN"},
+        "TZ": {"currency": "TZS", "country": "TZ", "mobile": "255712345678", "crypto_amount": 0.5, "name": "Smoke Test TZ", "network": "VODACOM"},
+        "ZA": {"currency": "ZAR", "country": "ZA", "mobile": "27712345678", "crypto_amount": 0.5, "name": "Smoke Test ZA", "network": "MTN"},
+    }
+    cfg = corridor_config.get(corridor)
+    if not cfg:
+        raise HTTPException(status_code=400, detail=f"Unsupported corridor {corridor}")
+
+    started = time.perf_counter()
+    steps: list[dict] = []
+
+    def _step(name: str, call: str) -> dict:
+        return {"name": name, "call": call, "ok": False, "ms": 0, "detail": None, "error": None}
+
+    def _finish(step: dict, *, ok: bool, detail: Any = None, error: Optional[str] = None, t0: float = 0.0):
+        step["ok"] = ok
+        step["ms"] = round((time.perf_counter() - t0) * 1000, 1)
+        if detail is not None:
+            step["detail"] = detail
+        if error is not None:
+            step["error"] = error[:400]  # cap error payload size
+        steps.append(step)
+
+    # ---- Step 1: Health check -----------------------------------------
+    s1 = _step("Health check", "GET /health")
+    t0 = time.perf_counter()
+    try:
+        health = await kotani.health()
+        # Kotani v3 nests the status under `data.status`; older sandbox
+        # builds returned it flat. Accept both.
+        nested_status = (health or {}).get("data", {}).get("status") if isinstance(health, dict) else None
+        flat_status = (health or {}).get("status") if isinstance(health, dict) else None
+        ok = bool(
+            (health or {}).get("ok")
+            or (health or {}).get("success")
+            or nested_status in {"ok", "healthy", "OK", "up"}
+            or flat_status in {"ok", "healthy", "OK", "up"}
+        )
+        _finish(s1, ok=ok, detail={"status": nested_status or flat_status}, t0=t0)
+    except Exception as e:  # noqa: BLE001
+        _finish(s1, ok=False, error=str(e), t0=t0)
+
+    # ---- Step 2: Rate quote -------------------------------------------
+    s2 = _step("Rate quote", "POST /api/v3/rate/offramp")
+    t0 = time.perf_counter()
+    rate_quote = None
+    rate_id = None
+    try:
+        rate_quote = await kotani.offramp_rate(
+            from_token="USDC",
+            to_currency=cfg["currency"],
+            crypto_amount=cfg["crypto_amount"],
+        )
+        rate_id = kotani.extract_rate_id(rate_quote)
+        ok = bool(rate_id)
+        _finish(s2, ok=ok, detail={
+            "rate_id": rate_id,
+            "fiat_amount": kotani.extract_fiat_amount(rate_quote),
+            "currency": cfg["currency"],
+        }, t0=t0)
+    except Exception as e:  # noqa: BLE001
+        _finish(s2, ok=False, error=str(e), t0=t0)
+
+    # ---- Step 3: Customer create --------------------------------------
+    s3 = _step("Customer create", "POST /api/v3/customer/mobile-money")
+    t0 = time.perf_counter()
+    customer = None
+    customer_key = None
+    try:
+        customer = await kotani.create_mobile_money_customer(
+            phone_number=cfg["mobile"],
+            country_code=cfg["country"],
+            network=cfg["network"],
+            first_name="Smoke",
+            last_name=f"Test {corridor}",
+            account_name=cfg["name"],
+        )
+        customer_key = kotani.extract_customer_key(customer)
+        ok = bool(customer_key)
+        # Surface Kotani's error payload when there's no key — this is
+        # how we show "integratorEnabled: false" blocking messages so
+        # ops can forward them to Kotani support.
+        detail = {"customer_key": customer_key}
+        if not ok and isinstance(customer, dict):
+            detail["kotani_error"] = (
+                customer.get("message")
+                or (customer.get("data") or {}).get("message")
+                or customer.get("error")
+                or "No customerKey returned — service likely disabled on your account"
+            )
+            detail["raw"] = {k: v for k, v in customer.items() if k != "success"}
+        _finish(s3, ok=ok, detail=detail, t0=t0)
+    except Exception as e:  # noqa: BLE001
+        _finish(s3, ok=False, error=str(e), t0=t0)
+
+    # ---- Step 4: Offramp booking (DRY RUN — PENDING, no disbursal) ----
+    s4 = _step("Offramp booking", "POST /api/v3/offramp (dry-run)")
+    t0 = time.perf_counter()
+    try:
+        if not customer_key:
+            raise RuntimeError("Skipped — no customerKey from previous step")
+        if not rate_id:
+            raise RuntimeError("Skipped — no rateId from previous step")
+        booking = await kotani.create_offramp(
+            crypto_amount=cfg["crypto_amount"],
+            currency=cfg["currency"],
+            chain="POLYGON",
+            token="USDC",
+            reference_id=f"smoke_{corridor.lower()}_{int(time.time())}",
+            customer_key=customer_key,
+            rate_id=rate_id,
+            sender_address="0x0000000000000000000000000000000000000001",
+            callback_url=f"{(os.environ.get('APP_PUBLIC_URL') or '').rstrip('/')}/api/offramp/callback",
+        )
+        ref_id = (booking or {}).get("data", {}).get("referenceId")
+        ok = bool(ref_id)
+        _finish(s4, ok=ok, detail={
+            "reference_id": ref_id,
+            "status": (booking or {}).get("data", {}).get("status"),
+            "escrow_address": (booking or {}).get("data", {}).get("escrowAddress"),
+        }, t0=t0)
+    except Exception as e:  # noqa: BLE001
+        _finish(s4, ok=False, error=str(e), t0=t0)
+
+    # ---- Step 5: Dispatcher self-test (fire a synthetic webhook) ------
+    s5 = _step("Dispatcher self-test", "POST /api/offramp/callback (replay)")
+    t0 = time.perf_counter()
+    try:
+        import json as _json
+        import hmac as _hmac
+        import hashlib as _hashlib
+        import httpx
+
+        public_url = (os.environ.get("APP_PUBLIC_URL") or "").rstrip("/")
+        secret = os.environ.get("KOTANI_WEBHOOK_SECRET", "")
+        envelope = {
+            "event": "transaction.offramp.status.updated",
+            "data": {
+                "referenceId": f"smoke_dispatch_{int(time.time())}",
+                "status": "SUCCESSFUL",
+                "fiatAmount": 100,  # synthetic; dispatcher only cares about structure
+                "fiatCurrency": cfg["currency"],
+                "telcoId": "SMOKE-TEST-MPESA",
+            },
+        }
+        canonical = _json.dumps({"event": envelope["event"], "data": envelope["data"]},
+                                ensure_ascii=False, separators=(",", ":")).encode("utf-8")
+        headers = {"Content-Type": "application/json"}
+        if secret:
+            sig = _hmac.new(secret.encode(), canonical, _hashlib.sha256).hexdigest()
+            headers["X-Kotani-Signature"] = f"sha256={sig}"
+            headers["X-Kotani-Event"] = envelope["event"]
+            envelope["signature"] = f"sha256={sig}"
+
+        async with httpx.AsyncClient(timeout=15.0) as cx:
+            r = await cx.post(f"{public_url}/api/offramp/callback",
+                              content=_json.dumps(envelope), headers=headers)
+        resp = {}
+        try:
+            resp = r.json()
+        except Exception:
+            resp = {"raw": r.text[:200]}
+        _finish(s5, ok=(r.status_code == 200), detail={"status_code": r.status_code, "response": resp}, t0=t0)
+    except Exception as e:  # noqa: BLE001
+        _finish(s5, ok=False, error=str(e), t0=t0)
+
+    passed = sum(1 for s in steps if s["ok"])
+    overall_ms = round((time.perf_counter() - started) * 1000, 1)
+    verdict = (
+        "all_green" if passed == len(steps)
+        else "partial" if passed > 0
+        else "all_failed"
+    )
+    return {
+        "corridor": corridor,
+        "verdict": verdict,
+        "passed": passed,
+        "total": len(steps),
+        "elapsed_ms": overall_ms,
+        "steps": steps,
+        "started_at": iso(now_utc()),
+    }
+
+
+# ============================================================================
+# ADMIN — Live settlement view (daily rollup of offramp activity)
+# ============================================================================
+# Aggregates settled offramp transactions by day so operators can see:
+#   • Total crypto out (USDC / USDT)
+#   • Total fiat delivered (KES / NGN / GHS / etc.)
+#   • USD-equivalent value (approximated via tx-level rate)
+#   • Reconciliation delta: what we expected to deliver (quoted fiat)
+#     vs. what Kotani actually settled (fiat_transaction_amount).
+#     A persistent delta > 0.5% is the early-warning signal for a
+#     corridor rate drift or a Kotani fee change.
+#
+# This endpoint does the aggregation inline on Mongo. Fine for our volume
+# today (few hundred tx/day target); if we hit >50k/day we move it to a
+# materialised view with a daily cron.
+@router.get("/admin/kotani/settlements")
+async def admin_kotani_settlements(
+    days: int = 30,
+    _admin=Depends(require_admin),
+):
+    """Return per-day settlement rollup for the last `days` days. Caps at 90."""
+    from datetime import datetime as _dt, timedelta as _td, timezone as _tz
+    from collections import defaultdict
+
+    days = max(1, min(days or 30, 90))
+    since = _dt.now(_tz.utc) - _td(days=days)
+
+    # Pull only settled offramp txs with a kotani reference — anything
+    # else can't be a settlement for this view. Project just the fields
+    # we aggregate on to keep the cursor light.
+    cursor = db.transactions.find(
+        {
+            "status": "settled",
+            "kotani.reference_id": {"$exists": True},
+            "kotani.settled_at": {"$gte": since.isoformat()},
+        },
+        {
+            "_id": 0, "id": 1, "amount_crypto": 1, "amount_fiat": 1,
+            "token": 1, "fiat_currency": 1, "rate": 1, "corridor": 1,
+            "kotani": 1, "created_at": 1,
+        },
+    )
+
+    daily: dict[str, dict] = defaultdict(lambda: {
+        "date": None,
+        "tx_count": 0,
+        "crypto_sent": defaultdict(float),       # by token symbol
+        "fiat_delivered": defaultdict(float),    # by fiat currency
+        "usd_equivalent": 0.0,
+        "quoted_total": defaultdict(float),
+        "settled_total": defaultdict(float),
+        "corridors": defaultdict(int),
+        "sample_tx_ids": [],
+    })
+
+    corridor_total: dict[str, int] = defaultdict(int)
+    overall = {
+        "tx_count": 0,
+        "crypto_sent": defaultdict(float),
+        "fiat_delivered": defaultdict(float),
+        "usd_equivalent": 0.0,
+    }
+
+    async for tx in cursor:
+        k = tx.get("kotani") or {}
+        settled_at = k.get("settled_at") or tx.get("created_at")
+        try:
+            day_key = _dt.fromisoformat(settled_at.replace("Z", "+00:00")).date().isoformat()
+        except Exception:
+            day_key = "unknown"
+
+        row = daily[day_key]
+        row["date"] = day_key
+        row["tx_count"] += 1
+        overall["tx_count"] += 1
+
+        token = (tx.get("token") or "USDC").upper()
+        fiat_cur = (tx.get("fiat_currency") or k.get("fiat_currency") or "???").upper()
+        corridor = (tx.get("corridor") or "??").upper()
+        corridor_total[corridor] += 1
+        row["corridors"][corridor] += 1
+
+        amount_crypto = float(tx.get("amount_crypto") or 0)
+        quoted_fiat = float(tx.get("amount_fiat") or 0)
+        settled_fiat = float(k.get("fiat_transaction_amount") or quoted_fiat or 0)
+        # For USDC/USDT, 1 token ≈ 1 USD. Any other asset would need a
+        # live spot rate — out of scope for now.
+        usd_eq = amount_crypto if token in {"USDC", "USDT", "DAI"} else 0.0
+
+        row["crypto_sent"][token] += amount_crypto
+        row["fiat_delivered"][fiat_cur] += settled_fiat
+        row["quoted_total"][fiat_cur] += quoted_fiat
+        row["settled_total"][fiat_cur] += settled_fiat
+        row["usd_equivalent"] += usd_eq
+
+        overall["crypto_sent"][token] += amount_crypto
+        overall["fiat_delivered"][fiat_cur] += settled_fiat
+        overall["usd_equivalent"] += usd_eq
+
+        if len(row["sample_tx_ids"]) < 5:
+            row["sample_tx_ids"].append(tx.get("id"))
+
+    # Collapse defaultdicts → plain dicts + compute reconciliation delta
+    rows_out = []
+    for day_key, row in sorted(daily.items(), reverse=True):
+        reconciliation = []
+        for cur, quoted in row["quoted_total"].items():
+            settled = row["settled_total"].get(cur, 0.0)
+            delta = settled - quoted
+            pct = (delta / quoted * 100) if quoted > 0 else 0.0
+            reconciliation.append({
+                "currency": cur,
+                "quoted": round(quoted, 2),
+                "settled": round(settled, 2),
+                "delta": round(delta, 2),
+                "delta_pct": round(pct, 3),
+            })
+        rows_out.append({
+            "date": row["date"],
+            "tx_count": row["tx_count"],
+            "crypto_sent": {k: round(v, 6) for k, v in row["crypto_sent"].items()},
+            "fiat_delivered": {k: round(v, 2) for k, v in row["fiat_delivered"].items()},
+            "usd_equivalent": round(row["usd_equivalent"], 2),
+            "corridors": dict(row["corridors"]),
+            "reconciliation": reconciliation,
+            "sample_tx_ids": row["sample_tx_ids"],
+        })
+
+    return {
+        "window_days": days,
+        "since": since.isoformat(),
+        "overall": {
+            "tx_count": overall["tx_count"],
+            "crypto_sent": {k: round(v, 6) for k, v in overall["crypto_sent"].items()},
+            "fiat_delivered": {k: round(v, 2) for k, v in overall["fiat_delivered"].items()},
+            "usd_equivalent": round(overall["usd_equivalent"], 2),
+            "corridor_breakdown": dict(corridor_total),
+        },
+        "daily": rows_out,
+    }
