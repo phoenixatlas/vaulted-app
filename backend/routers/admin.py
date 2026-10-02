@@ -215,6 +215,40 @@ async def admin_kotani_webhook_echo(_admin=Depends(require_admin)):
     public_url = (os.environ.get("APP_PUBLIC_URL") or "").rstrip("/")
     expected_webhook_url = f"{public_url}/api/offramp/callback" if public_url else None
 
+    # Classify the host so the UI can warn operators when they're pointing
+    # Kotani at an ephemeral preview URL instead of a stable production host.
+    host_type = "unset"
+    host_label = "⚠ APP_PUBLIC_URL not set"
+    host_warning: Optional[str] = (
+        "Set APP_PUBLIC_URL on your hosting provider to the backend's "
+        "public HTTPS base URL, then redeploy."
+    )
+    if public_url:
+        lowered = public_url.lower()
+        if "emergentagent.com" in lowered or "preview" in lowered:
+            host_type = "preview"
+            host_label = "Emergent preview"
+            host_warning = (
+                "This is an Emergent preview URL. Fine for sandbox testing "
+                "today, but switch to your permanent Render / production URL "
+                "before go-live — preview hosts can rotate."
+            )
+        elif "onrender.com" in lowered or "render.com" in lowered:
+            host_type = "render"
+            host_label = "Render (production)"
+            host_warning = None
+        elif "localhost" in lowered or "127.0.0.1" in lowered or ".local" in lowered:
+            host_type = "localhost"
+            host_label = "Localhost (unreachable by Kotani)"
+            host_warning = (
+                "Kotani cannot reach localhost. Use ngrok / cloudflared for "
+                "local testing, or deploy to Render first."
+            )
+        else:
+            host_type = "custom"
+            host_label = "Custom domain"
+            host_warning = None
+
     rows = await db.kotani_webhook_log \
         .find({}, {"_id": 0}) \
         .sort("received_at", -1) \
@@ -238,6 +272,9 @@ async def admin_kotani_webhook_echo(_admin=Depends(require_admin)):
 
     return {
         "expected_webhook_url": expected_webhook_url,
+        "host_type": host_type,
+        "host_label": host_label,
+        "host_warning": host_warning,
         "diagnostic": diag,
         "config_checklist": {
             "webhook_url_registered": bool(total > 0),

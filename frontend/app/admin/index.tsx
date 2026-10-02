@@ -124,6 +124,9 @@ type WebhookDelivery = {
 
 type KotaniWebhookEchoResp = {
   expected_webhook_url: string | null;
+  host_type: "unset" | "preview" | "render" | "localhost" | "custom";
+  host_label: string;
+  host_warning: string | null;
   diagnostic: KotaniHealth["diagnostic"];
   config_checklist: {
     webhook_url_registered: boolean;
@@ -1019,7 +1022,17 @@ function KotaniWebhookEchoCard({
 
       {/* Expected URL block — the thing to paste into Kotani dashboard */}
       <View style={s.webhookUrlBox}>
-        <Text style={s.microLabel}>WEBHOOK URL · PASTE INTO KOTANI DASHBOARD</Text>
+        <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center" }}>
+          <Text style={s.microLabel}>WEBHOOK URL · PASTE INTO KOTANI DASHBOARD</Text>
+          <View style={[
+            s.hostBadge,
+            data.host_type === "render" && s.hostBadgeOk,
+            data.host_type === "preview" && s.hostBadgeWarn,
+            (data.host_type === "unset" || data.host_type === "localhost") && s.hostBadgeErr,
+          ]}>
+            <Text style={s.hostBadgeText}>{data.host_label}</Text>
+          </View>
+        </View>
         <View style={{ flexDirection: "row", alignItems: "center", gap: 6, marginTop: 4 }}>
           <Text selectable style={s.webhookUrl} numberOfLines={2}>
             {expected_webhook_url || "⚠ APP_PUBLIC_URL env var not set"}
@@ -1030,6 +1043,12 @@ function KotaniWebhookEchoCard({
             </Pressable>
           ) : null}
         </View>
+        {data.host_warning ? (
+          <View style={s.hostWarnBox}>
+            <Ionicons name="warning-outline" size={13} color={colors.warning} />
+            <Text style={s.hostWarnText}>{data.host_warning}</Text>
+          </View>
+        ) : null}
       </View>
 
       {/* Setup checklist */}
@@ -1336,4 +1355,35 @@ const s = StyleSheet.create({
   },
   deliveryEvent: { fontSize: 11.5, color: colors.onSurface, fontWeight: "600" },
   deliveryTime: { fontSize: 10, color: colors.onSurfaceTertiary, marginTop: 1 },
+
+  // Host badge + warning
+  hostBadge: {
+    paddingHorizontal: 6, paddingVertical: 2,
+    borderRadius: radius.pill,
+    backgroundColor: colors.onSurfaceTertiary + "20",
+    borderWidth: 1, borderColor: colors.border,
+  },
+  hostBadgeOk: {
+    backgroundColor: colors.success + "20",
+    borderColor: colors.success + "60",
+  },
+  hostBadgeWarn: {
+    backgroundColor: colors.warning + "20",
+    borderColor: colors.warning + "60",
+  },
+  hostBadgeErr: {
+    backgroundColor: colors.error + "20",
+    borderColor: colors.error + "60",
+  },
+  hostBadgeText: {
+    fontSize: 9.5, fontWeight: "700", color: colors.onSurface, letterSpacing: 0.3,
+  },
+  hostWarnBox: {
+    flexDirection: "row", gap: 6, alignItems: "flex-start",
+    marginTop: 8, paddingHorizontal: 8, paddingVertical: 6,
+    backgroundColor: colors.warning + "12",
+    borderRadius: radius.sm,
+    borderWidth: 1, borderColor: colors.warning + "35",
+  },
+  hostWarnText: { flex: 1, fontSize: 11, color: colors.onSurfaceSecondary, lineHeight: 15 },
 });
