@@ -188,6 +188,158 @@ async def admin_kotani_health(_admin=Depends(require_admin)):
 
 
 # ============================================================================
+# ADMIN — Kotani webhook echo (last ~20 raw deliveries)
+# ============================================================================
+# Primary use case: diagnosing "nothing is firing from the Kotani dashboard"
+# complaints. Every POST to /api/offramp/callback is persisted to
+# `kotani_webhook_log` by the webhook handler (bounded to 100 rows). This
+# endpoint surfaces the latest 20 so operators can:
+#   • Confirm Kotani actually posts to our URL (signature header, event
+#     name, raw body)
+#   • Compare observed signature header vs. our expected format
+#   • Spot a misconfigured service (e.g. `transaction.deposit.*` arriving
+#     when they only expected `transaction.offramp.*`)
+#   • Replay a payload via curl against staging without having to wait
+#     for Kotani to re-fire
+#
+# Also returns the exact URL + required env vars so the operator can copy
+# it straight into the Kotani dashboard without hunting through infra.
+@router.get("/admin/kotani/webhook-echo")
+async def admin_kotani_webhook_echo(_admin=Depends(require_admin)):
+    """Return the last ~20 raw Kotani webhook deliveries + the public URL
+    Kotani should be posting to. Used by operators to debug dashboard
+    config before go-live."""
+    import os
+    import kotani
+
+    public_url = (os.environ.get("APP_PUBLIC_URL") or "").rstrip("/")
+    expected_webhook_url = f"{public_url}/api/offramp/callback" if public_url else None
+
+    rows = await db.kotani_webhook_log \
+        .find({}, {"_id": 0}) \
+        .sort("received_at", -1) \
+        .limit(20).to_list(length=20)
+
+    diag = kotani.diagnostic_info()
+    recommended_events = [
+        "transaction.offramp.status.updated",
+        "transaction.onramp.status.updated",
+        "transaction.deposit.status.updated",
+        "transaction.withdrawal.status.updated",
+        "kyc.status.changed",
+        "refund.completed",
+        "refund.failed",
+    ]
+
+    # Quick counters so the UI can show "No deliveries yet" vs. "Last was
+    # 3h ago" without re-scanning the full array.
+    total = await db.kotani_webhook_log.count_documents({})
+    bad_sig = await db.kotani_webhook_log.count_documents({"signature_valid": False})
+
+    return {
+        "expected_webhook_url": expected_webhook_url,
+        "diagnostic": diag,
+        "config_checklist": {
+            "webhook_url_registered": bool(total > 0),
+            "signature_valid_count": total - bad_sig,
+            "signature_invalid_count": bad_sig,
+            "webhook_secret_configured": diag.get("webhook_secret_configured"),
+            "api_key_configured": diag.get("api_key_configured"),
+            "mode": diag.get("mode"),
+        },
+        "recommended_events": recommended_events,
+        "total_received": total,
+        "deliveries": rows,
+        "setup_hint": (
+            "In the Kotani integrator dashboard: Settings → Webhooks → "
+            f"paste {expected_webhook_url or '<set APP_PUBLIC_URL>'} as the "
+            "endpoint, select the recommended events, save the signing "
+            "secret to KOTANI_WEBHOOK_SECRET in your backend env, redeploy, "
+            "then pull-to-refresh this screen."
+        ),
+    }
+
+
+# ============================================================================
+# ADMIN — Dev-only: fire a mock Kotani webhook at ourselves
+# ============================================================================
+# Nice for proving the dispatcher works end-to-end before Kotani is
+# actually configured. Builds a canonical signed envelope (if secret is
+# configured) or a direct-callback body (if not), then POSTs it to our
+# own /api/offramp/callback — same code path a real Kotani delivery hits.
+@router.post("/admin/kotani/webhook-echo/replay")
+async def admin_kotani_webhook_replay(
+    body: Optional[dict] = None,
+    _admin=Depends(require_admin),
+):
+    """Replay a synthetic offramp SUCCESSFUL event through our live
+    webhook handler. If `body` is provided it's used verbatim; otherwise
+    we fabricate a canonical v3 offramp success envelope.
+
+    Returns the HTTP status, parsed response, and any db side-effects so
+    the operator can confirm the dispatcher updated a tx.
+    """
+    import json as _json
+    import os
+    import hmac as _hmac
+    import hashlib as _hashlib
+    import httpx
+
+    public_url = (os.environ.get("APP_PUBLIC_URL") or "").rstrip("/")
+    if not public_url:
+        raise HTTPException(status_code=400, detail="APP_PUBLIC_URL not set")
+
+    envelope = body or {
+        "event": "transaction.offramp.status.updated",
+        "data": {
+            "referenceId": "kp_replay_demo",
+            "status": "SUCCESSFUL",
+            "onchainStatus": "SUCCESSFUL",
+            "fiatAmount": 5000,
+            "fiatTransactionAmount": 4850,
+            "cryptoAmount": 38.5,
+            "fiatCurrency": "KES",
+            "customerKey": "cust_mock_replay",
+            "senderAddress": "0xabc123",
+            "escrowAddress": "0xescrow",
+            "telcoId": "MPESA-REPLAY-XYZ",
+            "transactionHash": "0xdef456",
+        },
+    }
+
+    secret = os.environ.get("KOTANI_WEBHOOK_SECRET", "")
+    canonical = _json.dumps(
+        {"event": envelope.get("event"), "data": envelope.get("data")},
+        ensure_ascii=False, separators=(",", ":"),
+    ).encode("utf-8")
+
+    headers = {"Content-Type": "application/json"}
+    if secret:
+        sig = _hmac.new(secret.encode(), canonical, _hashlib.sha256).hexdigest()
+        headers["X-Kotani-Signature"] = f"sha256={sig}"
+        headers["X-Kotani-Event"] = envelope["event"]
+        envelope["signature"] = f"sha256={sig}"
+
+    url = f"{public_url}/api/offramp/callback"
+    async with httpx.AsyncClient(timeout=15.0) as cx:
+        r = await cx.post(url, content=_json.dumps(envelope), headers=headers)
+
+    try:
+        parsed = r.json()
+    except Exception:  # noqa: BLE001
+        parsed = {"raw": r.text[:600]}
+
+    return {
+        "posted_to": url,
+        "status_code": r.status_code,
+        "response": parsed,
+        "envelope_sent": envelope,
+    }
+
+
+
+
+# ============================================================================
 # MANUAL EDD (Enhanced Due Diligence) — admin-triggered KYC approval
 # ============================================================================
 # Stripe Identity's automated face-match / document-check algorithms can't

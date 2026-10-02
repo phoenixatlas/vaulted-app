@@ -118,7 +118,12 @@ async def trigger_kotani_offramp_for_remit(remit_tx: dict) -> dict:
             },
             # Success-status transactions: flip receipt status to "settled"
             # for mock (deterministic) — live mode waits for webhook.
-            **({"status": "settled"} if (kotani_status == "SUCCESS" and not kotani.live_mode()) else {}),
+            # Accept both legacy "SUCCESS" (from our mock) and Kotani v3's
+            # canonical "SUCCESSFUL" so the UX doesn't regress when we
+            # switch to real sandbox responses.
+            **({"status": "settled"} if (
+                kotani_status in kotani.TERMINAL_SUCCESS and not kotani.live_mode()
+            ) else {}),
         }},
     )
 
@@ -197,65 +202,146 @@ async def offramp_mpesa_status(reference_id: str, user=Depends(get_current_user)
 
 @router.post("/offramp/callback")
 async def offramp_callback(request: Request):
-    """Webhook endpoint — Kotani Pay POSTs terminal state here after fiat
-    disbursement. Signature verification is enforced when
-    KOTANI_WEBHOOK_SECRET is configured.
+    """Webhook endpoint — Kotani Pay POSTs transaction + settlement events
+    here. Handles both v3 signed envelopes (`{event, data, signature}`)
+    and legacy direct-callback mode (raw tx object in body).
 
-    Terminal states we handle:
-    - SUCCESS: mark tx settled, record M-Pesa receipt
-    - FAILED: mark tx failed, ops will follow up
-    - REFUNDED / REFUND_FAILED: informational only for the tx timeline
+    Events we actively handle:
+      - transaction.offramp.status.updated   → remit → M-Pesa payouts
+      - transaction.onramp.status.updated    → inbound Africa → UK/EU
+      - transaction.deposit.status.updated   → integrator fiat wallet credits
+      - transaction.withdrawal.status.updated
+      - refund.completed / refund.failed     → informational only
+
+    Signature verification is enforced when KOTANI_WEBHOOK_SECRET is set.
+    Every delivery is logged to `kotani_webhook_log` (last 100 kept) so the
+    admin webhook-echo endpoint can show operators exactly what Kotani is
+    sending — invaluable when debugging dashboard config.
     """
     payload = await request.body()
     signature = request.headers.get("X-Kotani-Signature")
-    event_type = request.headers.get("X-Kotani-Event", "callback")
+    event_type_header = request.headers.get("X-Kotani-Event")
+    integrator_header = request.headers.get("X-Kotani-Integrator")
 
-    if not kotani.verify_webhook_signature(payload, signature):
+    sig_valid = kotani.verify_webhook_signature(payload, signature)
+
+    # Always persist the raw delivery first so admin can see even
+    # malformed / failed-sig attempts. Capped at 100 rows.
+    try:
+        await db.kotani_webhook_log.insert_one({
+            "received_at": iso(now_utc()),
+            "signature_present": bool(signature),
+            "signature_valid": sig_valid,
+            "event_header": event_type_header,
+            "integrator_header": integrator_header,
+            "raw_body": payload.decode("utf-8", errors="replace")[:4000],
+        })
+        count = await db.kotani_webhook_log.count_documents({})
+        if count > 100:
+            oldest = await db.kotani_webhook_log.find({}, {"_id": 1}) \
+                .sort("received_at", 1).limit(count - 100).to_list(length=count - 100)
+            if oldest:
+                await db.kotani_webhook_log.delete_many(
+                    {"_id": {"$in": [o["_id"] for o in oldest]}}
+                )
+    except Exception as e:  # noqa: BLE001
+        logger.warning("[kotani-webhook] log insert failed: %s", e)
+
+    if not sig_valid:
         await audit_write(db, EventType.OFFRAMP_WEBHOOK_INVALID_SIGNATURE, user=None, data={
-            "event_type": event_type,
+            "event_type": event_type_header or "unknown",
             "sig_present": bool(signature),
         })
         raise HTTPException(status_code=401, detail="Invalid webhook signature")
 
     try:
-        event = json.loads(payload.decode())
+        envelope = json.loads(payload.decode())
     except Exception as e:  # noqa: BLE001
         raise HTTPException(status_code=400, detail=f"Invalid JSON: {e}") from e
 
-    # Kotani sends either the raw tx object (unsigned mode) or a
-    # {event, data} envelope (signed mode). Handle both.
-    if isinstance(event, dict) and isinstance(event.get("data"), dict):
-        data = event["data"]
-    elif isinstance(event, dict):
-        # Unsigned mode — the whole payload is the tx object
-        data = event
-    else:
+    if not isinstance(envelope, dict):
         raise HTTPException(status_code=400, detail="Payload must be a JSON object")
 
-    ref_id = data.get("referenceId") or data.get("reference_id")
+    # Determine the event name + inner data, accepting both shapes:
+    #   signed:    {event, data: {...}, signature}
+    #   unsigned:  {referenceId, status, ...}  — the whole body IS the data
+    if isinstance(envelope.get("data"), dict):
+        event_name = envelope.get("event") or event_type_header or ""
+        data = envelope["data"]
+    else:
+        event_name = event_type_header or ""
+        data = envelope
+
+    # Fire-and-forget audit of every well-formed delivery so admins can
+    # trace what Kotani sent even for events we don't act on.
+    try:
+        await audit_write(db, EventType.OFFRAMP_WEBHOOK_RECEIVED, user=None, data={
+            "event_name": event_name,
+            "reference_id": kotani.pick(data, "reference_id"),
+            "status": data.get("status"),
+        })
+    except Exception as e:  # noqa: BLE001
+        logger.warning("[kotani-webhook] receive audit failed: %s", e)
+
+    event_lower = (event_name or "").lower()
+
+    # --- Dispatch -------------------------------------------------------
+    if event_lower.startswith("transaction.offramp") or event_lower in ("", "callback"):
+        return await _handle_offramp_event(data)
+    if event_lower.startswith("transaction.onramp"):
+        return await _handle_onramp_event(data)
+    if event_lower.startswith("transaction.deposit"):
+        return await _handle_deposit_event(data)
+    if event_lower.startswith("transaction.withdrawal"):
+        return await _handle_withdrawal_event(data)
+    if event_lower.startswith("refund."):
+        return await _handle_refund_event(event_lower, data)
+    if event_lower.startswith("kyc.") or event_lower.startswith("settlement."):
+        # Informational-only for now; already logged above.
+        return {"ok": True, "handled": "logged", "event": event_name}
+
+    # Unknown event — don't 400 (Kotani will retry forever); log + 200.
+    logger.info("[kotani-webhook] unknown event %r, body-head=%r", event_name,
+                payload[:200])
+    return {"ok": True, "handled": "unknown", "event": event_name}
+
+
+async def _handle_offramp_event(data: dict) -> dict:
+    """Terminal state for a crypto → fiat (M-Pesa) disbursement."""
+    ref_id = kotani.pick(data, "reference_id")
     kotani_status = (data.get("status") or "").upper()
     if not ref_id or not kotani_status:
         raise HTTPException(status_code=400, detail="Payload missing referenceId or status")
 
     tx = await db.transactions.find_one({"kotani.reference_id": ref_id}, {"_id": 0})
     if not tx:
-        # Kotani retries webhooks; a stray one is not fatal — log + 200.
         logger.warning("[kotani-webhook] no local tx for referenceId=%s", ref_id)
-        return {"ok": True, "matched": False}
+        return {"ok": True, "matched": False, "reference_id": ref_id}
 
+    bucket = kotani.classify_status(kotani_status)
     updates: dict = {"kotani.status": kotani_status, "kotani.updated_at": iso(now_utc())}
     audit_event = None
-    if kotani_status == "SUCCESS":
+
+    if bucket == "settled":
         updates["status"] = "settled"
-        updates["kotani.mpesa_receipt"] = (data.get("receipt") or {}).get("mpesaReceipt")
+        receipt = kotani.extract_mpesa_receipt(data)
+        if receipt:
+            updates["kotani.mpesa_receipt"] = receipt
         updates["kotani.settled_at"] = data.get("settledAt") or iso(now_utc())
+        updates["kotani.fiat_transaction_amount"] = data.get("fiatTransactionAmount")
+        updates["kotani.transaction_hash"] = data.get("transactionHash")
         audit_event = EventType.OFFRAMP_MPESA_SUCCESS
-    elif kotani_status == "FAILED":
+    elif bucket == "failed":
         updates["status"] = "failed"
-        updates["kotani.failure_reason"] = data.get("failureReason") or data.get("message")
+        updates["kotani.failure_reason"] = (
+            data.get("transactionError")
+            or data.get("errorMessage")
+            or (data.get("onchainError") or {}).get("message")
+            or data.get("message")
+        )
         audit_event = EventType.OFFRAMP_MPESA_FAILED
-    elif kotani_status in ("REFUNDED", "REFUND_PENDING"):
-        updates["status"] = "refunded" if kotani_status == "REFUNDED" else "processing"
+    elif bucket in ("refunded", "refund_pending"):
+        updates["status"] = "refunded" if bucket == "refunded" else "processing"
         audit_event = EventType.OFFRAMP_MPESA_REFUNDED
 
     await db.transactions.update_one({"id": tx["id"]}, {"$set": updates})
@@ -267,9 +353,114 @@ async def offramp_callback(request: Request):
                 "tx_id": tx["id"],
                 "kotani_reference_id": ref_id,
                 "kotani_status": kotani_status,
-                "mpesa_receipt": (data.get("receipt") or {}).get("mpesaReceipt"),
+                "mpesa_receipt": kotani.extract_mpesa_receipt(data),
             })
         except Exception as e:  # noqa: BLE001
             logger.warning("kotani webhook audit_write failed: %s", e)
 
-    return {"ok": True, "matched": True, "status": kotani_status}
+    return {"ok": True, "matched": True, "status": kotani_status, "bucket": bucket}
+
+
+async def _handle_onramp_event(data: dict) -> dict:
+    """Terminal state for a fiat → crypto (inbound Africa→UK/EU) ramp."""
+    ref_id = kotani.pick(data, "reference_id")
+    status = (data.get("status") or "").upper()
+    if not ref_id:
+        return {"ok": True, "matched": False, "reason": "no referenceId"}
+
+    bucket = kotani.classify_status(status)
+    tx = await db.transactions.find_one({"onramp.reference_id": ref_id}, {"_id": 0})
+
+    updates = {
+        "onramp.status": status,
+        "onramp.deposit_status": data.get("depositStatus"),
+        "onramp.onchain_status": data.get("onchainStatus"),
+        "onramp.transaction_hash": data.get("transactionHash"),
+        "onramp.updated_at": iso(now_utc()),
+    }
+    audit_event = None
+    if bucket == "settled":
+        updates["status"] = "settled"
+        audit_event = EventType.ONRAMP_SUCCESS
+    elif bucket == "failed":
+        updates["status"] = "failed"
+        updates["onramp.failure_reason"] = (
+            (data.get("error") or {}).get("message")
+            or data.get("errorMessage")
+            or data.get("transactionError")
+        )
+        audit_event = EventType.ONRAMP_FAILED
+
+    if tx:
+        await db.transactions.update_one({"id": tx["id"]}, {"$set": updates})
+
+    if audit_event:
+        user_doc = await db.users.find_one({"id": (tx or {}).get("user_id")}, {"_id": 0}) if tx else None
+        try:
+            await audit_write(db, audit_event, user=user_doc, data={
+                "tx_id": (tx or {}).get("id"),
+                "kotani_reference_id": ref_id,
+                "kotani_status": status,
+            })
+        except Exception as e:  # noqa: BLE001
+            logger.warning("kotani onramp audit_write failed: %s", e)
+
+    return {"ok": True, "matched": bool(tx), "status": status, "bucket": bucket}
+
+
+async def _handle_deposit_event(data: dict) -> dict:
+    """Integrator fiat wallet was credited (settlement-side)."""
+    ref_id = kotani.pick(data, "reference_id")
+    status = (data.get("status") or "").upper()
+    logger.info("[kotani-webhook] deposit event ref=%s status=%s amount=%s",
+                ref_id, status, data.get("transaction_amount") or data.get("amount"))
+    return {"ok": True, "event": "deposit", "status": status, "reference_id": ref_id}
+
+
+async def _handle_withdrawal_event(data: dict) -> dict:
+    """Integrator fiat wallet was debited (payout-side)."""
+    ref_id = kotani.pick(data, "reference_id")
+    status = (data.get("status") or "").upper()
+    logger.info("[kotani-webhook] withdrawal event ref=%s status=%s", ref_id, status)
+    return {"ok": True, "event": "withdrawal", "status": status, "reference_id": ref_id}
+
+
+async def _handle_refund_event(event_name: str, data: dict) -> dict:
+    """Record refund outcomes against the original offramp tx so the
+    user-facing timeline shows 'refunded' instead of 'failed'."""
+    ref_id = kotani.pick(data, "reference_id")
+    if not ref_id:
+        return {"ok": True, "matched": False}
+    tx = await db.transactions.find_one({"kotani.reference_id": ref_id}, {"_id": 0})
+    if not tx:
+        return {"ok": True, "matched": False, "reference_id": ref_id}
+
+    if event_name == "refund.completed":
+        updates = {
+            "status": "refunded",
+            "kotani.refund_status": "SUCCESSFUL",
+            "kotani.refund_tx_hash": data.get("refundTransactionHash"),
+            "kotani.refund_amount": data.get("refundAmount"),
+        }
+    elif event_name == "refund.failed":
+        updates = {
+            "kotani.refund_status": "FAILED",
+            "kotani.refund_error": data.get("error"),
+            "kotani.refund_retries": data.get("totalRetries"),
+        }
+    else:
+        updates = {"kotani.refund_status": event_name}
+
+    await db.transactions.update_one({"id": tx["id"]}, {"$set": updates})
+
+    try:
+        user_doc = await db.users.find_one({"id": tx["user_id"]}, {"_id": 0})
+        await audit_write(db, EventType.OFFRAMP_MPESA_REFUNDED, user=user_doc, data={
+            "tx_id": tx["id"],
+            "kotani_reference_id": ref_id,
+            "refund_event": event_name,
+        })
+    except Exception as e:  # noqa: BLE001
+        logger.warning("[kotani-webhook] refund audit_write failed: %s", e)
+
+    return {"ok": True, "matched": True, "event": event_name}

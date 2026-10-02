@@ -78,3 +78,13 @@ MONGO_URL, DB_NAME=vaulted, JWT_SECRET, STRIPE_API_KEY (live, rotated), STRIPE_W
 - **Corridor matrix heatmap**: Outbound × inbound × 7 corridors, brand-gold intensity = demand
 - **Referral leaderboard**: Top 10 referrers (redacted emails) + founding members count
 - **Investor leads card**: Total + repeat visitors + top companies + 5 most recent
+
+## 🔗 Kotani Pay v3 Webhook Hardening (Iter 44, 2026-10)
+- **Signature verification**: Rewrote `kotani.verify_webhook_signature` to handle Kotani v3's `sha256=<hex>` header format over canonical `JSON.stringify({event, data})`. Keeps raw-body fallback for direct-callback mode.
+- **Status enum**: Added `TERMINAL_SUCCESS/FAILURE/REFUND` constants + `classify_status()` helper so `SUCCESSFUL` (Kotani v3) and `SUCCESS` (legacy mock) both map to `settled`.
+- **Receipt extraction**: `extract_mpesa_receipt()` reads `telcoId` (offramp/withdrawal camelCase), `telco_id` (deposit snake_case), and legacy `receipt.mpesaReceipt`.
+- **Event dispatcher**: `/api/offramp/callback` now routes `transaction.{offramp,onramp,deposit,withdrawal}.status.updated`, `refund.{completed,failed}`, and settlement/kyc events to dedicated handlers.
+- **Onramp booking**: Added `kotani.create_onramp()` + `kotani.onramp_status()` to complete inbound-remit flow once Kotani enables the service.
+- **Admin webhook-echo**: `GET /api/admin/kotani/webhook-echo` surfaces last 20 raw deliveries, config checklist, and expected webhook URL. `POST /api/admin/kotani/webhook-echo/replay` fires a synthetic signed envelope end-to-end for QA.
+- **UI**: New `KotaniWebhookEchoCard` in `/admin` shows checklist (API key, secret, URL registered, signatures valid), subscribed events, latest deliveries, and a "Fire test delivery" button.
+- **Tests**: `tests/test_kotani_webhook_v3.py` — 29 unit tests covering canonical/raw signature paths, status enum, snake/camel field picker, receipt extraction.

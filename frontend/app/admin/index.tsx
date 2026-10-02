@@ -113,6 +113,32 @@ type BookClicksResp = {
   booking_url: string;
 };
 
+type WebhookDelivery = {
+  received_at: string;
+  signature_present: boolean;
+  signature_valid: boolean;
+  event_header?: string | null;
+  integrator_header?: string | null;
+  raw_body?: string;
+};
+
+type KotaniWebhookEchoResp = {
+  expected_webhook_url: string | null;
+  diagnostic: KotaniHealth["diagnostic"];
+  config_checklist: {
+    webhook_url_registered: boolean;
+    signature_valid_count: number;
+    signature_invalid_count: number;
+    webhook_secret_configured: boolean;
+    api_key_configured: boolean;
+    mode: string;
+  };
+  recommended_events: string[];
+  total_received: number;
+  deliveries: WebhookDelivery[];
+  setup_hint: string;
+};
+
 // Country-code → flag emoji. Kept in sync with the landing dropdown so the
 // admin dashboard reads the same as the acquisition surface.
 const CORRIDOR_FLAGS: Record<string, string> = {
@@ -128,6 +154,8 @@ export default function AdminHome() {
   const [dailySignups, setDailySignups] = useState<DailySignupsResp | null>(null);
   const [referrals, setReferrals] = useState<ReferralsResp | null>(null);
   const [bookClicks, setBookClicks] = useState<BookClicksResp | null>(null);
+  const [webhookEcho, setWebhookEcho] = useState<KotaniWebhookEchoResp | null>(null);
+  const [replayStatus, setReplayStatus] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [err, setErr] = useState<string | null>(null);
@@ -157,13 +185,14 @@ export default function AdminHome() {
     // special-cased with `catch (e) => { throw e; }` which rejected the
     // whole Promise.all whenever Kotani returned "Not authenticated",
     // leaving the other 5 cards with an empty errorMsg.
-    const [h, w, inv, daily, refs, clicks] = await Promise.all([
+    const [h, w, inv, daily, refs, clicks, echo] = await Promise.all([
       grab<KotaniHealth>("kotani", "/admin/kotani/health"),
       grab<WaitlistStats>("waitlist", "/admin/waitlist/stats"),
       grab<InvestorLeadsResp>("investors", "/admin/investor/leads"),
       grab<DailySignupsResp>("daily", "/admin/waitlist/analytics/daily-signups?days=30"),
       grab<ReferralsResp>("referrals", "/admin/waitlist/analytics/referrals?limit=10"),
       grab<BookClicksResp>("bookClicks", "/admin/investor/book-clicks"),
+      grab<KotaniWebhookEchoResp>("webhookEcho", "/admin/kotani/webhook-echo"),
     ]);
     setHealth(h);
     setWaitlist(w);
@@ -171,11 +200,12 @@ export default function AdminHome() {
     setDailySignups(daily);
     setReferrals(refs);
     setBookClicks(clicks);
+    setWebhookEcho(echo);
     setCardErrors(errors);
     // Full-page banner only when EVERY card failed — avoids drowning
     // out individual card errors.
     const allFailed =
-      !h && !w && !inv && !daily && !refs && !clicks && Object.keys(errors).length >= 6;
+      !h && !w && !inv && !daily && !refs && !clicks && !echo && Object.keys(errors).length >= 7;
     if (allFailed) {
       const first = errors.kotani || errors.waitlist || Object.values(errors)[0] || "Unknown error";
       setErr(first.includes("403") || first.toLowerCase().includes("admin")
@@ -191,6 +221,25 @@ export default function AdminHome() {
   const onRefresh = useCallback(() => {
     setRefreshing(true);
     load();
+  }, [load]);
+
+  const onReplayWebhook = useCallback(async () => {
+    setReplayStatus("Sending synthetic webhook…");
+    try {
+      const res = await api<{ status_code: number; response: any }>(
+        "/admin/kotani/webhook-echo/replay",
+        { method: "POST", body: {} }
+      );
+      setReplayStatus(
+        res.status_code === 200
+          ? `✓ Dispatcher returned 200 (bucket=${res.response?.bucket || "n/a"})`
+          : `✗ Dispatcher returned ${res.status_code}`
+      );
+      // Refresh the echo card so the new delivery appears in the list.
+      setTimeout(() => load(), 400);
+    } catch (e: any) {
+      setReplayStatus(`✗ ${e?.message || "Replay failed"}`);
+    }
   }, [load]);
 
   return (
@@ -308,6 +357,15 @@ export default function AdminHome() {
 
         {/* Waitlist stats card */}
         <WaitlistCard stats={waitlist} loading={loading} errorMsg={cardErrors.waitlist} />
+
+        {/* Kotani webhook echo + setup checklist */}
+        <KotaniWebhookEchoCard
+          data={webhookEcho}
+          loading={loading}
+          errorMsg={cardErrors.webhookEcho}
+          onReplay={onReplayWebhook}
+          replayStatus={replayStatus}
+        />
 
         {/* Daily signup trend card */}
         <DailySignupsCard data={dailySignups} loading={loading} errorMsg={cardErrors.daily} />
@@ -878,6 +936,178 @@ function BookClicksCard({
 }
 
 
+// KotaniWebhookEchoCard — surfaces the raw deliveries that landed on
+// /api/offramp/callback plus a step-by-step setup checklist. This is the
+// first stop for diagnosing "my Kotani dashboard says no webhooks are
+// firing" because it answers all three questions in one card: (1) did
+// Kotani even POST anything? (2) is the signature verifying? (3) are the
+// right event types subscribed?
+function KotaniWebhookEchoCard({
+  data,
+  loading,
+  errorMsg,
+  onReplay,
+  replayStatus,
+}: {
+  data: KotaniWebhookEchoResp | null;
+  loading: boolean;
+  errorMsg?: string;
+  onReplay: () => void;
+  replayStatus?: string | null;
+}) {
+  const copyUrl = useCallback(() => {
+    if (!data?.expected_webhook_url) return;
+    if (Platform.OS === "web" && typeof navigator !== "undefined" && navigator.clipboard) {
+      navigator.clipboard.writeText(data.expected_webhook_url).catch(() => {});
+    }
+  }, [data]);
+
+  if (loading && !data) {
+    return (
+      <View style={s.card}>
+        <Text style={s.cardTitle}>Kotani webhooks</Text>
+        <View style={s.loadingBox}>
+          <ActivityIndicator color={colors.brand} />
+          <Text style={s.loadingText}>Checking deliveries…</Text>
+        </View>
+      </View>
+    );
+  }
+  if (!data) {
+    return (
+      <View style={s.card}>
+        <Text style={s.cardTitle}>Kotani webhooks</Text>
+        <Text style={s.subtle}>
+          Unavailable. {errorMsg ? `(${errorMsg})` : "Endpoint returned an error."}
+        </Text>
+      </View>
+    );
+  }
+
+  const { config_checklist: cc, deliveries, expected_webhook_url } = data;
+  const noneYet = data.total_received === 0;
+
+  const ChecklistRow = ({ ok, label }: { ok: boolean; label: string }) => (
+    <View style={s.checklistRow}>
+      <Ionicons
+        name={ok ? "checkmark-circle" : "ellipse-outline"}
+        size={16}
+        color={ok ? colors.success : colors.onSurfaceTertiary}
+      />
+      <Text style={[s.checklistText, !ok && { color: colors.onSurfaceSecondary }]}>
+        {label}
+      </Text>
+    </View>
+  );
+
+  return (
+    <View style={s.card}>
+      <View style={s.cardHeaderRow}>
+        <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
+          <Ionicons name="radio-outline" size={18} color={colors.brand} />
+          <Text style={s.cardTitle}>Kotani webhooks</Text>
+        </View>
+        <View style={[
+          s.modePill,
+          noneYet ? s.modePillMock : (cc.signature_invalid_count > 0 ? s.modePillLive : s.modePillReady),
+        ]}>
+          <Text style={s.modePillText}>
+            {noneYet ? "AWAITING" : cc.signature_invalid_count > 0 ? "SIG ERRORS" : "RECEIVING"}
+          </Text>
+        </View>
+      </View>
+
+      {/* Expected URL block — the thing to paste into Kotani dashboard */}
+      <View style={s.webhookUrlBox}>
+        <Text style={s.microLabel}>WEBHOOK URL · PASTE INTO KOTANI DASHBOARD</Text>
+        <View style={{ flexDirection: "row", alignItems: "center", gap: 6, marginTop: 4 }}>
+          <Text selectable style={s.webhookUrl} numberOfLines={2}>
+            {expected_webhook_url || "⚠ APP_PUBLIC_URL env var not set"}
+          </Text>
+          {expected_webhook_url && Platform.OS === "web" ? (
+            <Pressable onPress={copyUrl} hitSlop={8} style={s.copyBtn}>
+              <Ionicons name="copy-outline" size={14} color={colors.brand} />
+            </Pressable>
+          ) : null}
+        </View>
+      </View>
+
+      {/* Setup checklist */}
+      <Text style={[s.microLabel, { marginTop: spacing.md }]}>SETUP CHECKLIST</Text>
+      <View style={{ marginTop: 6, gap: 4 }}>
+        <ChecklistRow ok={cc.api_key_configured} label="API key configured in backend .env" />
+        <ChecklistRow ok={cc.webhook_secret_configured} label="Webhook signing secret in backend .env" />
+        <ChecklistRow ok={cc.webhook_url_registered} label={
+          cc.webhook_url_registered
+            ? `${data.total_received} delivery(ies) received`
+            : "Kotani is not posting to this URL yet"
+        } />
+        <ChecklistRow
+          ok={cc.signature_invalid_count === 0 && cc.webhook_url_registered}
+          label={
+            cc.signature_invalid_count > 0
+              ? `${cc.signature_invalid_count} delivery(ies) failed signature verification`
+              : "Signatures verifying cleanly"
+          }
+        />
+      </View>
+
+      {/* Recommended events to subscribe */}
+      <Text style={[s.microLabel, { marginTop: spacing.md }]}>SUBSCRIBE TO THESE EVENTS</Text>
+      <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 6, marginTop: 6 }}>
+        {data.recommended_events.map((e) => (
+          <View key={e} style={s.eventChip}>
+            <Text style={s.eventChipText}>{e}</Text>
+          </View>
+        ))}
+      </View>
+
+      {/* Deliveries list */}
+      <Text style={[s.microLabel, { marginTop: spacing.md }]}>LATEST DELIVERIES</Text>
+      {noneYet ? (
+        <View style={[s.emptyBox, { paddingVertical: spacing.md }]}>
+          <Ionicons name="hourglass-outline" size={20} color={colors.onSurfaceTertiary} />
+          <Text style={s.emptyText}>
+            No webhooks received yet. Configure the URL above in Kotani → Settings, then hit &ldquo;Fire test delivery&rdquo;.
+          </Text>
+        </View>
+      ) : (
+        <View style={{ gap: 6, marginTop: 6 }}>
+          {deliveries.slice(0, 6).map((d, i) => (
+            <View key={i} style={s.deliveryRow}>
+              <Ionicons
+                name={d.signature_valid ? "checkmark-circle" : "close-circle"}
+                size={14}
+                color={d.signature_valid ? colors.success : colors.error}
+              />
+              <View style={{ flex: 1, minWidth: 0 }}>
+                <Text style={s.deliveryEvent} numberOfLines={1}>
+                  {d.event_header || "(no event header — direct callback)"}
+                </Text>
+                <Text style={s.deliveryTime}>
+                  {new Date(d.received_at).toLocaleString()}
+                </Text>
+              </View>
+            </View>
+          ))}
+        </View>
+      )}
+
+      {/* Replay button — fire a synthetic webhook end-to-end */}
+      <View style={s.footerRow}>
+        <Text style={s.footerText} numberOfLines={1}>
+          {replayStatus || "Verify dispatcher end-to-end:"}
+        </Text>
+        <Pressable onPress={onReplay} style={s.refreshBtn} hitSlop={8}>
+          <Ionicons name="flash" size={14} color={colors.brand} />
+          <Text style={s.refreshBtnText}>Fire test delivery</Text>
+        </Pressable>
+      </View>
+    </View>
+  );
+}
+
+
 const s = StyleSheet.create({
   container: { flex: 1, backgroundColor: colors.background },
   header: {
@@ -1069,4 +1299,41 @@ const s = StyleSheet.create({
   miniStat: { flex: 1, alignItems: "center" },
   miniStatNum: { fontSize: 18, fontWeight: "800", color: colors.onSurface, letterSpacing: -0.5 },
   miniStatLabel: { fontSize: 10, color: colors.onSurfaceSecondary, marginTop: 2, letterSpacing: 0.3, textAlign: "center" },
+
+  // KotaniWebhookEchoCard
+  webhookUrlBox: {
+    backgroundColor: colors.surfaceSecondary,
+    borderRadius: radius.sm,
+    padding: 10,
+    borderWidth: 1, borderColor: colors.border,
+  },
+  webhookUrl: {
+    flex: 1,
+    fontSize: 11.5,
+    fontFamily: "Menlo",
+    color: colors.onSurface,
+    lineHeight: 16,
+  },
+  copyBtn: {
+    padding: 6,
+    borderRadius: radius.sm,
+    backgroundColor: colors.brand + "18",
+  },
+  checklistRow: { flexDirection: "row", alignItems: "center", gap: 8, paddingVertical: 3 },
+  checklistText: { fontSize: 12, color: colors.onSurface, flex: 1 },
+  eventChip: {
+    paddingHorizontal: 8, paddingVertical: 4,
+    borderRadius: radius.pill,
+    backgroundColor: colors.brand + "15",
+    borderWidth: 1, borderColor: colors.brand + "40",
+  },
+  eventChipText: { fontSize: 10, color: colors.brandDeep, fontFamily: "Menlo" },
+  deliveryRow: {
+    flexDirection: "row", alignItems: "center", gap: 8,
+    paddingVertical: 6, paddingHorizontal: 8,
+    backgroundColor: colors.surfaceSecondary,
+    borderRadius: radius.sm,
+  },
+  deliveryEvent: { fontSize: 11.5, color: colors.onSurface, fontWeight: "600" },
+  deliveryTime: { fontSize: 10, color: colors.onSurfaceTertiary, marginTop: 1 },
 });

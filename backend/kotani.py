@@ -501,10 +501,46 @@ async def offramp_status(reference_id: str) -> dict:
 
 
 # ---- Webhook signature verification ---------------------------------------
+# Kotani v3 signed webhooks (see
+# https://documentation.kotanipay.com/v3/essentials/webhooks):
+#
+#   • Header `X-Kotani-Signature` is `sha256=<hmac-sha256-hex>`
+#   • HMAC input is JSON.stringify({event, data}) i.e. the body JSON with
+#     the top-level `signature` field removed and *then* re-serialized.
+#     Verifying against the raw bytes we received will fail because
+#     Kotani's JSON serializer might produce different whitespace / key
+#     ordering from ours.
+#   • When no webhook secret is configured on the Kotani dashboard, Kotani
+#     POSTs directly to the per-transaction `callbackUrl` with NO signature
+#     header at all — we must accept these too (dev / early-sandbox mode).
+import json as _json
+
+
+def _canonical_signed_body(parsed: dict) -> bytes:
+    """Reproduce Kotani's `JSON.stringify({event, data})` as closely as
+    possible so our HMAC matches theirs.
+
+    Node's `JSON.stringify` uses: no spaces, keys in insertion order,
+    ASCII-escapes non-ASCII by default *only when* `JSON.stringify` is
+    told to — the default is UTF-8 passthrough. Python's `json.dumps`
+    defaults to `ensure_ascii=True` which escapes non-ASCII; we flip to
+    `ensure_ascii=False` to match. `separators=(",", ":")` strips the
+    cosmetic spaces Python adds by default.
+    """
+    envelope = {"event": parsed.get("event"), "data": parsed.get("data")}
+    return _json.dumps(envelope, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
+
+
 def verify_webhook_signature(payload: bytes, signature_header: Optional[str]) -> bool:
-    """Verify X-Kotani-Signature is a valid HMAC-SHA256 of the raw body
-    using the shared webhook secret. Returns True in dev / mock mode when
-    no secret is configured (matches Kotani's un-signed delivery mode).
+    """Verify `X-Kotani-Signature` on signed webhooks.
+
+    Returns `True` when:
+      • No webhook secret is configured locally (we accept everything —
+        matches Kotani's un-signed `callbackUrl` delivery mode), OR
+      • The header is `sha256=<hex>` and matches our HMAC-SHA256 of the
+        canonical `{event, data}` serialization.
+
+    Returns `False` otherwise. Caller should 401 the request.
     """
     secret = _webhook_secret()
     if not secret:
@@ -513,8 +549,198 @@ def verify_webhook_signature(payload: bytes, signature_header: Optional[str]) ->
     if not signature_header:
         logger.warning("[kotani-webhook] missing X-Kotani-Signature header")
         return False
-    expected = hmac.new(secret.encode(), payload, hashlib.sha256).hexdigest()
-    return hmac.compare_digest(expected, signature_header.strip())
+
+    # Strip the "sha256=" prefix if present (Kotani always sends it, but
+    # some proxies lowercase or strip it — handle both).
+    sig = signature_header.strip()
+    if sig.lower().startswith("sha256="):
+        sig = sig.split("=", 1)[1]
+
+    # Try canonical {event, data} serialization first (Kotani's signed mode).
+    try:
+        parsed = _json.loads(payload.decode("utf-8"))
+        if isinstance(parsed, dict) and "event" in parsed and "data" in parsed:
+            canonical = _canonical_signed_body(parsed)
+            expected_canonical = hmac.new(secret.encode(), canonical, hashlib.sha256).hexdigest()
+            if hmac.compare_digest(expected_canonical, sig):
+                return True
+    except Exception as e:  # noqa: BLE001
+        logger.warning("[kotani-webhook] canonical sig check parse failed: %s", e)
+
+    # Fallback: HMAC the raw body (older Kotani deployments / direct
+    # callbacks that still sign). Keeps us compatible if Kotani changes
+    # scheme or we migrate to raw-body signing later.
+    expected_raw = hmac.new(secret.encode(), payload, hashlib.sha256).hexdigest()
+    return hmac.compare_digest(expected_raw, sig)
+
+
+# ---- Status-enum helpers --------------------------------------------------
+# Kotani v3 settles on `SUCCESSFUL` / `FAILED` for all transaction events
+# (deposit, withdrawal, onramp, offramp). We keep `SUCCESS` in the match
+# set so legacy mock responses from this module (and any live Kotani
+# instance that still returns the shorter form) continue to work.
+TERMINAL_SUCCESS = {"SUCCESSFUL", "SUCCESS", "COMPLETED", "COMPLETE"}
+TERMINAL_FAILURE = {"FAILED", "FAILURE", "ERROR", "CANCELLED", "CANCELED", "REJECTED"}
+TERMINAL_REFUND = {"REFUNDED", "REVERSED"}
+TERMINAL_REFUND_PENDING = {"REFUND_PENDING", "INVOICE_NEEDED"}
+
+
+def classify_status(status: Optional[str]) -> str:
+    """Map a Kotani status string to a Vaulted-internal bucket:
+    "settled" | "failed" | "refunded" | "refund_pending" | "processing".
+
+    Centralised so the webhook handler + status poller agree on terminal
+    state regardless of which Kotani spelling comes down the wire.
+    """
+    s = (status or "").upper().strip()
+    if s in TERMINAL_SUCCESS:
+        return "settled"
+    if s in TERMINAL_FAILURE:
+        return "failed"
+    if s in TERMINAL_REFUND:
+        return "refunded"
+    if s in TERMINAL_REFUND_PENDING:
+        return "refund_pending"
+    return "processing"
+
+
+# ---- Onramp booking (fiat → crypto) ---------------------------------------
+# Real endpoint: POST /api/v3/onramp
+# Body: {fiatAmount, currency, chain, token, referenceId, rateId,
+#        mobileMoneyPayer:{customerKey} | bankPayer:{...},
+#        receiverAddress, callbackUrl}
+async def create_onramp(
+    *,
+    fiat_amount: float,
+    currency: str,           # source fiat (NGN, KES, ...)
+    chain: str,              # POLYGON, BASE, CELO, STELLAR, ...
+    token: str,              # USDC / USDT
+    reference_id: str,
+    customer_key: str,
+    rate_id: str,
+    receiver_address: str,
+    callback_url: str,
+) -> dict:
+    """Book a fiat → crypto on-ramp with Kotani. Returns the Kotani
+    envelope with `data.referenceId` + payment instructions (STK push,
+    bank transfer details, etc.) under `data.paymentInstructions`.
+    """
+    payload = {
+        "fiatAmount": fiat_amount,
+        "currency": currency.upper(),
+        "chain": chain.upper(),
+        "token": token.upper(),
+        "referenceId": reference_id,
+        "mobileMoneyPayer": {"customerKey": customer_key},
+        "receiverAddress": receiver_address,
+        "callbackUrl": callback_url,
+        "rateId": rate_id,
+    }
+    if not live_mode():
+        return _mock_create_onramp(payload)
+    return await _post("/api/v3/onramp", payload)
+
+
+async def onramp_status(reference_id: str) -> dict:
+    """Poll a single on-ramp's terminal state."""
+    if not live_mode():
+        return _mock_onramp_status(reference_id)
+    return await _get(f"/api/v3/onramp/{reference_id}")
+
+
+def _mock_create_onramp(payload: dict) -> dict:
+    ref = payload.get("referenceId") or _mock_reference_id()
+    return {
+        "success": True,
+        "message": "Onramp has been successfully created (mocked)",
+        "data": {
+            "referenceId": ref,
+            "status": "PENDING",
+            "depositStatus": "AWAITING_PAYMENT",
+            "onchainStatus": "PENDING",
+            "fiatAmount": payload.get("fiatAmount"),
+            "fiatCurrency": payload.get("currency"),
+            "chain": payload.get("chain"),
+            "token": payload.get("token"),
+            "receiverAddress": payload.get("receiverAddress"),
+            "paymentInstructions": {
+                "channel": "MOBILE_MONEY",
+                "narration": f"Pay {payload.get('fiatAmount')} {payload.get('currency')} via STK push",
+                "shortCode": "174379",
+            },
+            "created_at": _now_iso(),
+            "updated_at": _now_iso(),
+            "_mock": True,
+            "_note": "Simulated: no fiat will be collected, no crypto delivered.",
+        },
+    }
+
+
+def _mock_onramp_status(reference_id: str) -> dict:
+    status = "SUCCESSFUL" if reference_id.startswith("kp_mock_") else "PENDING"
+    return {
+        "success": True,
+        "message": "Onramp status (mocked)",
+        "data": {
+            "referenceId": reference_id,
+            "status": status,
+            "depositStatus": "SUCCESSFUL" if status == "SUCCESSFUL" else "AWAITING_PAYMENT",
+            "onchainStatus": "SUCCESSFUL" if status == "SUCCESSFUL" else "PENDING",
+            "transactionHash": "0xMOCK" + reference_id[-16:] if status == "SUCCESSFUL" else None,
+            "_mock": True,
+        },
+    }
+
+
+# ---- Webhook event parsing -------------------------------------------------
+# Kotani uses two casings depending on the event (see docs → "Casing
+# conventions"): deposit payloads are snake_case, everything else is
+# camelCase. These helpers paper over the difference so router code can
+# just call `pick(data, "reference_id")` and get the right value.
+_SNAKE_TO_CAMEL = {
+    "reference_id": "referenceId",
+    "customer_key": "customerKey",
+    "wallet_id": "walletId",
+    "transaction_amount": "transactionAmount",
+    "transaction_cost": "transactionCost",
+    "callback_url": "callbackUrl",
+    "telco_id": "telcoId",
+    "confirmation_id": "confirmationId",
+    "created_at": "createdAt",
+    "fiat_currency": "fiatCurrency",
+    "fiat_amount": "fiatAmount",
+    "crypto_amount": "cryptoAmount",
+}
+
+
+def pick(data: dict, snake_key: str, default=None):
+    """Read a field from a Kotani payload accepting either snake or camel
+    case (depending on the event type)."""
+    if not isinstance(data, dict):
+        return default
+    if snake_key in data:
+        return data[snake_key]
+    camel = _SNAKE_TO_CAMEL.get(snake_key)
+    if camel and camel in data:
+        return data[camel]
+    return default
+
+
+def extract_mpesa_receipt(data: dict) -> Optional[str]:
+    """Pull the mobile-money confirmation code (e.g. M-Pesa code) from a
+    Kotani webhook data block. Kotani surfaces this as `telcoId`
+    (camelCase, offramp/withdrawal) or `telco_id` (snake_case, deposit).
+    Older sandbox builds also returned `receipt.mpesaReceipt`.
+    """
+    if not isinstance(data, dict):
+        return None
+    direct = pick(data, "telco_id")
+    if direct:
+        return direct
+    receipt = data.get("receipt")
+    if isinstance(receipt, dict):
+        return receipt.get("mpesaReceipt") or receipt.get("telcoId")
+    return pick(data, "confirmation_id")
 
 
 # ---- Utility: expose config to admin diagnostics --------------------------

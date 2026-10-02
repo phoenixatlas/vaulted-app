@@ -66,6 +66,12 @@ class EventType:
     OFFRAMP_MPESA_FAILED = "offramp.mpesa_failed"
     OFFRAMP_MPESA_REFUNDED = "offramp.mpesa_refunded"
     OFFRAMP_WEBHOOK_INVALID_SIGNATURE = "offramp.webhook_invalid_signature"
+    OFFRAMP_WEBHOOK_RECEIVED = "offramp.webhook_received"
+
+    # On-ramp (Kotani Pay / inbound Africa → UK/EU) lifecycle
+    ONRAMP_INITIATED = "onramp.initiated"
+    ONRAMP_SUCCESS = "onramp.success"
+    ONRAMP_FAILED = "onramp.failed"
 
     # Manual EDD (Enhanced Due Diligence) — admin overrides Stripe Identity
     # when automated verification fails for a legitimate user (algorithm
