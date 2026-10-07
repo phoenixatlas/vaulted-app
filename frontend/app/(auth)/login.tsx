@@ -3,7 +3,7 @@ import {
   View, Text, TextInput, Pressable, StyleSheet, KeyboardAvoidingView,
   Platform, ScrollView, ActivityIndicator, Image,
 } from "react-native";
-import { Link, useRouter } from "expo-router";
+import { Link, useRouter, useLocalSearchParams } from "expo-router";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { useAuth } from "@/src/lib/auth";
 import { useI18n } from "@/src/lib/i18n";
@@ -13,6 +13,25 @@ export default function Login() {
   const { login } = useAuth();
   const { t } = useI18n();
   const router = useRouter();
+  // Honour a `?returnTo=/admin` query param so screens that bounce the
+  // user here on session-expiry (e.g. /admin) can land them back at the
+  // exact page they came from, not the wallet dashboard. We URI-decode
+  // to be safe against routes containing slashes and encoded chars.
+  const params = useLocalSearchParams<{ returnTo?: string }>();
+  const rawReturnTo = typeof params.returnTo === "string" ? params.returnTo : "";
+  const safeReturnTo = (() => {
+    if (!rawReturnTo) return null;
+    try {
+      const decoded = decodeURIComponent(rawReturnTo);
+      // Only accept same-origin absolute paths — never an external URL.
+      // Prevents an open-redirect pattern via a crafted login link.
+      if (decoded.startsWith("/") && !decoded.startsWith("//")) return decoded;
+      return null;
+    } catch {
+      return null;
+    }
+  })();
+
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [loading, setLoading] = useState(false);
@@ -23,7 +42,12 @@ export default function Login() {
     setLoading(true);
     try {
       await login(email.trim(), password);
-      router.replace("/(tabs)/wallet");
+      // After a successful sign-in, prefer the operator-supplied returnTo
+      // (if any) over the default wallet route. `router.replace` ensures
+      // the login screen is swapped out of history so the native back
+      // gesture doesn't bounce them back to a form that would overwrite
+      // their fresh token.
+      router.replace((safeReturnTo || "/(tabs)/wallet") as any);
     } catch (e: any) {
       setErr(e.message);
     } finally {

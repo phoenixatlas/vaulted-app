@@ -417,7 +417,10 @@ export default function AdminHome() {
               settings are safe.
             </Text>
             <Pressable
-              onPress={() => router.replace("/(auth)/login" as any)}
+              onPress={() => router.replace({
+                pathname: "/(auth)/login",
+                params: { returnTo: "/admin" },
+              } as any)}
               style={s.expiredBtn}
             >
               <Ionicons name="log-in-outline" size={16} color={colors.onBrand} />
