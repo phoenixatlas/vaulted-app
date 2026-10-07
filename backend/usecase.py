@@ -508,8 +508,20 @@ def build_psb_usecase_pdf(**overrides) -> bytes:
                             leading=1.4)
         y -= 1.5 * mm
 
-    # ---- Sign-off ----
-    y -= 2 * mm
+    # ---- Sign-off (anchored above footer so it never overlaps) ----------
+    # The footer sits in the bottom 24mm of the page (gold rule at 24mm,
+    # company lines down to 15mm). We pin the sign-off block to start
+    # ~58mm from the page bottom so there's a clean 10mm gap between the
+    # founder's email line and the footer rule — comfortable enough to
+    # read even if the printer trims a few mm off the margin.
+    SIGNOFF_ANCHOR_Y = 58 * mm  # top of "Yours sincerely," from page bottom
+
+    # If the body content has already dipped below the anchor, we respect
+    # whichever is lower (i.e. don't force an overlap up top). Otherwise
+    # we jump straight to the anchor so Next-steps keeps its generous
+    # breathing room above the sign-off.
+    y = min(y, SIGNOFF_ANCHOR_Y)
+
     c.setFillColor(INK)
     c.setFont("Helvetica", 10)
     c.drawString(left_margin, y, "Yours sincerely,")
@@ -520,7 +532,7 @@ def build_psb_usecase_pdf(**overrides) -> bytes:
     c.setFillColor(INK_SUBTLE)
     c.setFont("Helvetica", 9.5)
     c.drawString(left_margin, y, "Founder & Chief Executive, Phoenix-Atlas Technologies Ltd")
-    y -= 4 * mm
+    y -= 4.5 * mm
     c.setFillColor(GOLD_DEEP)
     c.setFont("Helvetica-Bold", 9.5)
     c.drawString(left_margin, y, "umar.sani@phoenix-atlas.com")
