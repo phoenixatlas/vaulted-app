@@ -86,6 +86,7 @@ from routers.transactions import router as transactions_router
 from routers.letterhead_router import router as letterhead_router
 from routers.usecase_router import router as usecase_router
 from routers.contacts_router import router as contacts_router
+from routers.digest_router import router as digest_router
 
 api.include_router(wallet_router)
 api.include_router(multichain_router)
@@ -94,6 +95,7 @@ api.include_router(transactions_router)
 api.include_router(letterhead_router)
 api.include_router(usecase_router)
 api.include_router(contacts_router)
+api.include_router(digest_router)
 api.include_router(admin_router)
 api.include_router(referrals_router)
 api.include_router(offramp_router)
@@ -187,5 +189,37 @@ async def _ensure_refresh_token_indexes():
         await _ensure_rt_indexes()
     except Exception as e:
         logger.warning(f"refresh_tokens index creation failed: {e}")
+
+
+@app.on_event("startup")
+async def _start_digest_scheduler():
+    """Weekly settlement digest ticker. Wakes every 15 minutes and consults
+    `digest_config` to decide whether to fire. Idempotent — the scheduler
+    tick itself gates on `last_sent_at` so an app restart during the
+    firing window doesn't double-send.
+
+    This is deliberately in-process (vs. an external cron) so a fresh
+    Render deploy doesn't skip the Monday send if the developer forgets
+    to re-wire the cron webhook. External cron can still hit
+    `/api/admin/digest/cron` with `DIGEST_CRON_SECRET` for belt-and-braces.
+    """
+    import asyncio
+
+    async def _loop():
+        # First tick after a short delay so we don't block startup if
+        # the DB is slow to connect.
+        await asyncio.sleep(60)
+        while True:
+            try:
+                from digest import digest_scheduler_tick
+                await digest_scheduler_tick()
+            except Exception as e:  # noqa: BLE001
+                logger.warning(f"[digest] scheduler tick failed: {e}")
+            # 15 min cadence — gives us up to 4 chances inside the hour
+            # window the digest is configured to fire in.
+            await asyncio.sleep(15 * 60)
+
+    asyncio.create_task(_loop())
+    logger.info("[digest] in-process weekly scheduler armed")
 
 

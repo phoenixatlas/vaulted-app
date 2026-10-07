@@ -144,3 +144,42 @@ MONGO_URL, DB_NAME=vaulted, JWT_SECRET, STRIPE_API_KEY (live, rotated), STRIPE_W
 - **Root cause**: `src/components/AdminBiometricGate.tsx` imported `Ionicons` from `@react-native-vector-icons/ionicons`, a package not installed in `package.json` (rest of the app uses `@expo/vector-icons`).
 - **Fix**: Switched import to `@expo/vector-icons`. Local `yarn expo export --platform web` now completes cleanly (3.17 MB bundle).
 - **Action for user**: Push to `main` (or hit **Redeploy** on Vercel) to get production back on the latest commit.
+
+## 🧹 Admin Dashboard Refactor + Weekly Digest (Iter 51, 2026-10)
+
+### Admin split
+- `/app/frontend/app/admin/index.tsx`: 2539 → 329 lines. Now a thin orchestrator owning data-fetch, 401 session takeover and per-card error routing.
+- New folder `/app/frontend/src/features/admin/`:
+  - `types.ts` (shared Mongo/API types + CORRIDOR_FLAGS)
+  - `styles.ts` (single StyleSheet — pulled verbatim; zero visual change)
+  - `common.tsx` (ProbeRow + Chip)
+  - `index.ts` (barrel export)
+  - One file per card: `KotaniHealthCard`, `WaitlistCard`, `DailySignupsCard`,
+    `CorridorMatrixCard`, `ReferralLeaderboardCard`, `InvestorLeadsCard`,
+    `BookClicksCard`, `KotaniWebhookEchoCard`, `KotaniSmokeTestCard`,
+    `KotaniSettlementsCard`, `PartnerUseCaseCard`, `LetterheadCard`,
+    `ToolsCard`, `WeeklyDigestCard`.
+- Local `yarn expo export --platform web` passes clean. ESLint clean on all admin files.
+
+### Weekly Settlement Digest (new feature)
+- **Backend `digest.py`**: data collector + HTML renderer + Mongo-persisted
+  config + scheduler tick. Pulls settlements, outstanding tx, waitlist
+  delta, use-case opens and Kotani readiness. Resend-sent via existing
+  `send_email_via_resend`.
+- **Router `routers/digest_router.py`**: `GET/POST /admin/digest/config`,
+  `GET /admin/digest/preview`, `POST /admin/digest/send-now`,
+  `POST /admin/digest/cron` (header-authed via `DIGEST_CRON_SECRET`),
+  `GET /admin/digest/log`.
+- **Scheduler**: in-process 15-min ticker in `server.py` startup fires the
+  digest on the configured weekday (default Monday) + hour (default 07:00 UTC)
+  and gates on `last_sent_at` so a restart during the window never
+  double-sends. External cron providers can hit `/api/admin/digest/cron`
+  for belt-and-braces.
+- **Mongo collections**: `digest_config` (singleton `_id="weekly_digest"`),
+  `digest_log` (one row per send).
+- **Admin UI `WeeklyDigestCard`**: toggle, weekday + hour pickers, recipient
+  CRUD, "Send now" button, inline web-only preview pane, last-sent snapshot
+  stats and error surfacing.
+- **Env vars (optional)**: `DIGEST_WEEKDAY`, `DIGEST_HOUR_UTC`,
+  `DIGEST_DEFAULT_RECIPIENTS`, `DIGEST_CRON_SECRET`, `DIGEST_SUBJECT_PREFIX`.
+  All defaults work out-of-the-box without any env changes.
