@@ -223,3 +223,33 @@ async def _start_digest_scheduler():
     logger.info("[digest] in-process weekly scheduler armed")
 
 
+@app.on_event("startup")
+async def _start_waitlist_sync_scheduler():
+    """Nightly Resend → Mongo waitlist auto-sync.
+
+    Catches signups that landed in Resend but never made it into
+    (or were lost from) Mongo. Runs every 15 min inside a 2-hour window
+    starting at `send_hour_utc` (default 02:00 UTC) and gates on
+    `last_run_at` so a restart or multiple ticks inside the window
+    produce at most one sync per day.
+
+    Set `WAITLIST_SYNC_ENABLED=false` to disable at the env level, or
+    toggle from the admin UI's "Resend reconciliation" card for a
+    runtime switch.
+    """
+    import asyncio
+
+    async def _loop():
+        await asyncio.sleep(90)  # stagger from the digest startup
+        while True:
+            try:
+                from routers.waitlist import waitlist_sync_scheduler_tick
+                await waitlist_sync_scheduler_tick()
+            except Exception as e:  # noqa: BLE001
+                logger.warning(f"[waitlist] sync scheduler tick failed: {e}")
+            await asyncio.sleep(15 * 60)
+
+    asyncio.create_task(_loop())
+    logger.info("[waitlist] in-process nightly Resend sync scheduler armed")
+
+

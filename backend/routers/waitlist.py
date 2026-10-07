@@ -32,6 +32,7 @@ Docs: https://resend.com/docs/api-reference/audiences/create-audience
 from __future__ import annotations
 
 import asyncio
+import os
 import re
 import secrets
 import time
@@ -850,134 +851,17 @@ try:  # avoid a hard import at module top so a missing admin dep doesn't
     # ------------------------------------------------------------------
     # Resend ↔ Mongo reconciliation
     # ------------------------------------------------------------------
-    # If a signup landed in Resend (via /waitlist/join → _add_resend_contact)
-    # but — for any reason (DB blip, deploy restart mid-request, manual
-    # add in the Resend dashboard, data wipe on free-tier Mongo) — the
-    # row never made it into `db.waitlist`, the admin dashboard will
-    # under-count. The pair of endpoints below gives operators a
-    # one-click way to see the gap and import the missing contacts.
-    async def _fetch_resend_audiences_remote() -> list[dict]:
-        """Fresh pull from Resend's /audiences endpoint (not our cache)."""
-        if not RESEND_API_KEY:
-            return []
-        try:
-            async with httpx.AsyncClient(timeout=httpx.Timeout(10.0, connect=5.0)) as cx:
-                r = await cx.get(
-                    "https://api.resend.com/audiences",
-                    headers={"Authorization": f"Bearer {RESEND_API_KEY}"},
-                )
-                if r.status_code != 200:
-                    logger.warning("[waitlist] resend audiences list: %s", r.status_code)
-                    return []
-                body = r.json() or {}
-                data = body.get("data")
-                if isinstance(data, list):
-                    return data
-                return body if isinstance(body, list) else []
-        except Exception as e:  # noqa: BLE001
-            logger.warning("[waitlist] resend audiences list exception: %s", e)
-            return []
-
-    async def _fetch_audience_contacts(audience_id: str) -> list[dict]:
-        """Fetch every contact in a single Resend audience. Resend's
-        audience-contacts endpoint isn't paginated as of 2026-01 — one
-        call returns the full list — but we loop defensively just in
-        case they add cursor pagination later."""
-        if not RESEND_API_KEY or not audience_id:
-            return []
-        contacts: list[dict] = []
-        try:
-            async with httpx.AsyncClient(timeout=httpx.Timeout(15.0, connect=5.0)) as cx:
-                r = await cx.get(
-                    f"https://api.resend.com/audiences/{audience_id}/contacts",
-                    headers={"Authorization": f"Bearer {RESEND_API_KEY}"},
-                )
-                if r.status_code != 200:
-                    logger.warning(
-                        "[waitlist] resend audience contacts %s: %s %s",
-                        audience_id, r.status_code, r.text[:200],
-                    )
-                    return []
-                body = r.json() or {}
-                data = body.get("data")
-                if isinstance(data, dict) and "data" in data:
-                    data = data["data"]
-                if isinstance(data, list):
-                    contacts.extend(data)
-        except Exception as e:  # noqa: BLE001
-            logger.warning("[waitlist] resend contacts exception for %s: %s", audience_id, e)
-        return contacts
-
-    # Decode the acquisition metadata we stashed in last_name on the
-    # Resend side. Format: "[CORRIDOR·dir·source]". If anyone was added
-    # manually from the Resend dashboard this will be blank — we treat
-    # them as XX corridor, outbound direction so they still show up.
-    _META_RE = re.compile(r"\[([A-Z]{2})·(in|out)·([^\]]*)\]")
-
-    def _decode_contact_meta(contact: dict) -> tuple[str, str, str]:
-        last_name = (contact.get("last_name") or "").strip()
-        m = _META_RE.search(last_name)
-        if m:
-            corridor = m.group(1)
-            direction = "inbound" if m.group(2) == "in" else "outbound"
-            source = (m.group(3) or "resend-import").strip() or "resend-import"
-            return corridor, direction, source
-        return "XX", "outbound", "resend-import"
+    # The heavy lifting lives at module scope (see `run_resend_audit` /
+    # `run_resend_sync` below) so a nightly background task in server.py
+    # can call the same code path as the admin endpoint. Endpoints below
+    # are thin HTTP wrappers.
 
     @router.get("/admin/waitlist/audit")
     async def waitlist_audit(_=Depends(require_admin)):
         """Compare the Mongo `waitlist` collection with the live Resend
         audiences. Flags the gap so the operator knows how many contacts
         the admin dashboard is under-counting."""
-        mongo_total = await db.waitlist.count_documents({})
-        mongo_emails = set()
-        async for row in db.waitlist.find({}, {"_id": 0, "email": 1}):
-            e = (row.get("email") or "").lower().strip()
-            if e:
-                mongo_emails.add(e)
-
-        audiences_remote = await _fetch_resend_audiences_remote()
-        per_audience: list[dict] = []
-        all_resend_emails: dict[str, dict] = {}  # email → first-seen contact dict
-        for aud in audiences_remote:
-            aid = aud.get("id")
-            name = aud.get("name") or aid or ""
-            if not aid:
-                continue
-            contacts = await _fetch_audience_contacts(aid)
-            audience_emails = []
-            for c in contacts:
-                em = (c.get("email") or "").lower().strip()
-                if not em:
-                    continue
-                audience_emails.append(em)
-                if em not in all_resend_emails:
-                    all_resend_emails[em] = {**c, "audience_name": name, "audience_id": aid}
-            missing_here = [e for e in audience_emails if e not in mongo_emails]
-            per_audience.append({
-                "audience_id": aid,
-                "audience_name": name,
-                "contacts_count": len(audience_emails),
-                "missing_from_mongo_count": len(missing_here),
-                "sample_missing": missing_here[:5],
-            })
-
-        total_in_resend = len(all_resend_emails)
-        missing_from_mongo = [e for e in all_resend_emails if e not in mongo_emails]
-        missing_from_resend = [e for e in mongo_emails if e not in all_resend_emails]
-
-        return {
-            "mongo_total": mongo_total,
-            "resend_total_unique": total_in_resend,
-            "gap": total_in_resend - mongo_total,
-            "missing_from_mongo_count": len(missing_from_mongo),
-            "missing_from_mongo_sample": missing_from_mongo[:10],
-            "missing_from_resend_count": len(missing_from_resend),
-            "resend_api_configured": bool(RESEND_API_KEY),
-            "audiences": per_audience,
-            "audiences_count": len(per_audience),
-            "checked_at": iso(now_utc()),
-        }
+        return await run_resend_audit()
 
     @router.post("/admin/waitlist/sync-from-resend")
     async def waitlist_sync_from_resend(_=Depends(require_admin)):
@@ -986,81 +870,334 @@ try:  # avoid a hard import at module top so a missing admin dep doesn't
         email) are untouched. Returns a per-audience import count."""
         if not RESEND_API_KEY:
             raise HTTPException(status_code=400, detail="RESEND_API_KEY not configured on backend")
+        return await run_resend_sync(reason="manual")
 
-        mongo_emails = set()
-        async for row in db.waitlist.find({}, {"_id": 0, "email": 1}):
-            e = (row.get("email") or "").lower().strip()
-            if e:
-                mongo_emails.add(e)
+    @router.get("/admin/waitlist/sync-config")
+    async def waitlist_sync_config_get(_=Depends(require_admin)):
+        """Expose the nightly auto-sync config (enabled flag + hour) and
+        the last-run audit/sync log entries so the UI can show when the
+        scheduler last ran and what it did."""
+        return await get_sync_config()
 
-        audiences_remote = await _fetch_resend_audiences_remote()
-        imported: list[dict] = []
-        skipped = 0
-        audiences_summary: list[dict] = []
+    class _SyncConfigIn(BaseModel):
+        enabled: Optional[bool] = None
+        send_hour_utc: Optional[int] = Field(default=None, ge=0, le=23)
 
-        for aud in audiences_remote:
-            aid = aud.get("id")
-            name = aud.get("name") or aid or ""
-            if not aid:
-                continue
-            contacts = await _fetch_audience_contacts(aid)
-            audience_imported = 0
-            for c in contacts:
-                em = (c.get("email") or "").lower().strip()
-                if not em or em not in mongo_emails and em == "":
-                    skipped += 1
-                    continue
-                if em in mongo_emails:
-                    skipped += 1
-                    continue
-                corridor, direction, source = _decode_contact_meta(c)
-                created_at = c.get("created_at") or iso(now_utc())
-                # Normalise Resend's "2026-01-15 14:22:03.123+00:00" → ISO.
-                try:
-                    dt = datetime.fromisoformat(created_at.replace(" ", "T").replace("Z", "+00:00"))
-                    joined_iso = iso(dt)
-                except Exception:
-                    joined_iso = iso(now_utc())
-                doc_set = {
-                    "email": em,
-                    "corridor": corridor if corridor in CORRIDORS else "XX",
-                    "corridor_name": CORRIDORS.get(corridor, CORRIDORS["XX"]),
-                    "direction": direction,
-                    "source": source,
-                    "updated_at": iso(now_utc()),
-                    "resend_contact_id": c.get("id"),
-                    "resend_audience_id": aid,
-                    "imported_from_resend_at": iso(now_utc()),
-                }
-                doc_setoninsert = {
-                    "joined_at": joined_iso,
-                    "referral_count": 0,
-                }
-                await db.waitlist.update_one(
-                    {"email": em},
-                    {"$set": doc_set, "$setOnInsert": doc_setoninsert},
-                    upsert=True,
+    @router.post("/admin/waitlist/sync-config")
+    async def waitlist_sync_config_set(
+        payload: _SyncConfigIn,
+        _=Depends(require_admin),
+    ):
+        return await set_sync_config(
+            enabled=payload.enabled,
+            send_hour_utc=payload.send_hour_utc,
+        )
+except ImportError:
+    pass
+
+
+# ---------------------------------------------------------------------------
+# Resend ↔ Mongo reconciliation — module-scope helpers + public API.
+# Called from the admin endpoints above AND from a nightly scheduler loop
+# in server.py (see _start_waitlist_sync_scheduler). Keeping the actual
+# logic here keeps the sync behaviour and config in one file.
+# ---------------------------------------------------------------------------
+_META_RE = re.compile(r"\[([A-Z]{2})·(in|out)·([^\]]*)\]")
+_SYNC_CONFIG_ID = "waitlist_resend_sync"
+# Nightly default: 02:00 UTC = ~03:00 BST, ~05:00 Nairobi — low-traffic
+# window on both sides of the corridor so we don't collide with user
+# signups or the weekly digest.
+DEFAULT_SYNC_HOUR_UTC = int(os.environ.get("WAITLIST_SYNC_HOUR_UTC", "2"))
+DEFAULT_SYNC_ENABLED = os.environ.get("WAITLIST_SYNC_ENABLED", "true").lower() != "false"
+
+
+async def _fetch_resend_audiences_remote() -> list[dict]:
+    """Fresh pull from Resend's /audiences endpoint (not our Mongo cache)."""
+    if not RESEND_API_KEY:
+        return []
+    try:
+        async with httpx.AsyncClient(timeout=httpx.Timeout(10.0, connect=5.0)) as cx:
+            r = await cx.get(
+                "https://api.resend.com/audiences",
+                headers={"Authorization": f"Bearer {RESEND_API_KEY}"},
+            )
+            if r.status_code != 200:
+                logger.warning("[waitlist] resend audiences list: %s", r.status_code)
+                return []
+            body = r.json() or {}
+            data = body.get("data")
+            if isinstance(data, list):
+                return data
+            return body if isinstance(body, list) else []
+    except Exception as e:  # noqa: BLE001
+        logger.warning("[waitlist] resend audiences list exception: %s", e)
+        return []
+
+
+async def _fetch_audience_contacts(audience_id: str) -> list[dict]:
+    """Fetch every contact in a single Resend audience. Resend's
+    audience-contacts endpoint isn't paginated as of 2026-01 — one call
+    returns the full list — but we loop defensively just in case they
+    add cursor pagination later."""
+    if not RESEND_API_KEY or not audience_id:
+        return []
+    contacts: list[dict] = []
+    try:
+        async with httpx.AsyncClient(timeout=httpx.Timeout(15.0, connect=5.0)) as cx:
+            r = await cx.get(
+                f"https://api.resend.com/audiences/{audience_id}/contacts",
+                headers={"Authorization": f"Bearer {RESEND_API_KEY}"},
+            )
+            if r.status_code != 200:
+                logger.warning(
+                    "[waitlist] resend audience contacts %s: %s %s",
+                    audience_id, r.status_code, r.text[:200],
                 )
-                mongo_emails.add(em)  # avoid double-counting across audiences
-                audience_imported += 1
-                imported.append({"email": em, "audience": name, "corridor": corridor, "direction": direction})
-            audiences_summary.append({
-                "audience_id": aid,
-                "audience_name": name,
-                "imported": audience_imported,
-                "contacts_total": len(contacts),
-            })
+                return []
+            body = r.json() or {}
+            data = body.get("data")
+            if isinstance(data, dict) and "data" in data:
+                data = data["data"]
+            if isinstance(data, list):
+                contacts.extend(data)
+    except Exception as e:  # noqa: BLE001
+        logger.warning("[waitlist] resend contacts exception for %s: %s", audience_id, e)
+    return contacts
 
-        new_total = await db.waitlist.count_documents({})
-        logger.info("[waitlist] resend-sync imported=%d new_total=%d", len(imported), new_total)
-        return {
-            "ok": True,
+
+def _decode_contact_meta(contact: dict) -> tuple[str, str, str]:
+    """Decode the `[CORRIDOR·dir·source]` tag we stash in Resend's
+    last_name field at signup. Manual Resend-dashboard adds have an
+    empty tag — treat as XX / outbound / resend-import so they still
+    land in the dashboard."""
+    last_name = (contact.get("last_name") or "").strip()
+    m = _META_RE.search(last_name)
+    if m:
+        corridor = m.group(1)
+        direction = "inbound" if m.group(2) == "in" else "outbound"
+        source = (m.group(3) or "resend-import").strip() or "resend-import"
+        return corridor, direction, source
+    return "XX", "outbound", "resend-import"
+
+
+async def run_resend_audit() -> dict:
+    """Compute the Mongo-vs-Resend diff without mutating anything."""
+    mongo_total = await db.waitlist.count_documents({})
+    mongo_emails: set[str] = set()
+    async for row in db.waitlist.find({}, {"_id": 0, "email": 1}):
+        e = (row.get("email") or "").lower().strip()
+        if e:
+            mongo_emails.add(e)
+
+    audiences_remote = await _fetch_resend_audiences_remote()
+    per_audience: list[dict] = []
+    all_resend_emails: dict[str, dict] = {}
+    for aud in audiences_remote:
+        aid = aud.get("id")
+        name = aud.get("name") or aid or ""
+        if not aid:
+            continue
+        contacts = await _fetch_audience_contacts(aid)
+        audience_emails = []
+        for c in contacts:
+            em = (c.get("email") or "").lower().strip()
+            if not em:
+                continue
+            audience_emails.append(em)
+            if em not in all_resend_emails:
+                all_resend_emails[em] = {**c, "audience_name": name, "audience_id": aid}
+        missing_here = [e for e in audience_emails if e not in mongo_emails]
+        per_audience.append({
+            "audience_id": aid,
+            "audience_name": name,
+            "contacts_count": len(audience_emails),
+            "missing_from_mongo_count": len(missing_here),
+            "sample_missing": missing_here[:5],
+        })
+
+    total_in_resend = len(all_resend_emails)
+    missing_from_mongo = [e for e in all_resend_emails if e not in mongo_emails]
+    missing_from_resend = [e for e in mongo_emails if e not in all_resend_emails]
+
+    return {
+        "mongo_total": mongo_total,
+        "resend_total_unique": total_in_resend,
+        "gap": total_in_resend - mongo_total,
+        "missing_from_mongo_count": len(missing_from_mongo),
+        "missing_from_mongo_sample": missing_from_mongo[:10],
+        "missing_from_resend_count": len(missing_from_resend),
+        "resend_api_configured": bool(RESEND_API_KEY),
+        "audiences": per_audience,
+        "audiences_count": len(per_audience),
+        "checked_at": iso(now_utc()),
+    }
+
+
+async def run_resend_sync(*, reason: str = "manual") -> dict:
+    """Idempotent upsert of every Resend contact into `db.waitlist`.
+    Logs a row into `waitlist_sync_log` for the admin UI history."""
+    mongo_emails: set[str] = set()
+    async for row in db.waitlist.find({}, {"_id": 0, "email": 1}):
+        e = (row.get("email") or "").lower().strip()
+        if e:
+            mongo_emails.add(e)
+
+    audiences_remote = await _fetch_resend_audiences_remote()
+    imported: list[dict] = []
+    skipped = 0
+    audiences_summary: list[dict] = []
+
+    for aud in audiences_remote:
+        aid = aud.get("id")
+        name = aud.get("name") or aid or ""
+        if not aid:
+            continue
+        contacts = await _fetch_audience_contacts(aid)
+        audience_imported = 0
+        for c in contacts:
+            em = (c.get("email") or "").lower().strip()
+            if not em:
+                skipped += 1
+                continue
+            if em in mongo_emails:
+                skipped += 1
+                continue
+            corridor, direction, source = _decode_contact_meta(c)
+            created_at = c.get("created_at") or iso(now_utc())
+            try:
+                dt = datetime.fromisoformat(created_at.replace(" ", "T").replace("Z", "+00:00"))
+                joined_iso = iso(dt)
+            except Exception:
+                joined_iso = iso(now_utc())
+            doc_set = {
+                "email": em,
+                "corridor": corridor if corridor in CORRIDORS else "XX",
+                "corridor_name": CORRIDORS.get(corridor, CORRIDORS["XX"]),
+                "direction": direction,
+                "source": source,
+                "updated_at": iso(now_utc()),
+                "resend_contact_id": c.get("id"),
+                "resend_audience_id": aid,
+                "imported_from_resend_at": iso(now_utc()),
+                "imported_reason": reason,
+            }
+            doc_setoninsert = {
+                "joined_at": joined_iso,
+                "referral_count": 0,
+            }
+            await db.waitlist.update_one(
+                {"email": em},
+                {"$set": doc_set, "$setOnInsert": doc_setoninsert},
+                upsert=True,
+            )
+            mongo_emails.add(em)
+            audience_imported += 1
+            imported.append({"email": em, "audience": name, "corridor": corridor, "direction": direction})
+        audiences_summary.append({
+            "audience_id": aid,
+            "audience_name": name,
+            "imported": audience_imported,
+            "contacts_total": len(contacts),
+        })
+
+    new_total = await db.waitlist.count_documents({})
+    now_iso = iso(now_utc())
+    result = {
+        "ok": True,
+        "imported_count": len(imported),
+        "skipped_count": skipped,
+        "new_mongo_total": new_total,
+        "audiences": audiences_summary,
+        "sample_imported": imported[:10],
+        "completed_at": now_iso,
+        "reason": reason,
+    }
+    # Persist last-run snapshot + append to history log.
+    try:
+        await db.waitlist_sync_config.update_one(
+            {"_id": _SYNC_CONFIG_ID},
+            {"$set": {
+                "last_run_at": now_iso,
+                "last_run_reason": reason,
+                "last_imported_count": len(imported),
+                "last_new_mongo_total": new_total,
+            }},
+            upsert=True,
+        )
+        await db.waitlist_sync_log.insert_one({
+            "ran_at": now_iso,
+            "reason": reason,
             "imported_count": len(imported),
             "skipped_count": skipped,
             "new_mongo_total": new_total,
-            "audiences": audiences_summary,
-            "sample_imported": imported[:10],
-            "completed_at": iso(now_utc()),
-        }
-except ImportError:
-    pass
+            "sample_imported": imported[:5],
+        })
+    except Exception as e:  # noqa: BLE001
+        logger.warning("[waitlist] sync log persist failed: %s", e)
+    logger.info(
+        "[waitlist] resend-sync imported=%d skipped=%d new_total=%d reason=%s",
+        len(imported), skipped, new_total, reason,
+    )
+    return result
+
+
+async def get_sync_config() -> dict:
+    """Config + last-run snapshot. Hydrates defaults on first read."""
+    doc = await db.waitlist_sync_config.find_one({"_id": _SYNC_CONFIG_ID}) or {}
+    public = {
+        "enabled": bool(doc.get("enabled", DEFAULT_SYNC_ENABLED)),
+        "send_hour_utc": int(doc.get("send_hour_utc", DEFAULT_SYNC_HOUR_UTC)),
+        "last_run_at": doc.get("last_run_at"),
+        "last_run_reason": doc.get("last_run_reason"),
+        "last_imported_count": doc.get("last_imported_count"),
+        "last_new_mongo_total": doc.get("last_new_mongo_total"),
+    }
+    recent = await db.waitlist_sync_log.find(
+        {}, {"_id": 0}
+    ).sort("ran_at", -1).limit(5).to_list(length=5)
+    public["recent_runs"] = recent
+    return public
+
+
+async def set_sync_config(
+    *,
+    enabled: Optional[bool] = None,
+    send_hour_utc: Optional[int] = None,
+) -> dict:
+    updates: dict = {}
+    if enabled is not None:
+        updates["enabled"] = bool(enabled)
+    if send_hour_utc is not None:
+        updates["send_hour_utc"] = max(0, min(23, int(send_hour_utc)))
+    if updates:
+        await db.waitlist_sync_config.update_one(
+            {"_id": _SYNC_CONFIG_ID}, {"$set": updates}, upsert=True
+        )
+    return await get_sync_config()
+
+
+async def waitlist_sync_scheduler_tick() -> dict:
+    """Called every ~15 min from server startup. Fires an auto-sync if
+    enabled, the hour matches configuration AND we haven't already run
+    today. Idempotent — a restart inside the firing window won't trigger
+    a duplicate run because `last_run_at` gates against < 20h ago."""
+    cfg = await get_sync_config()
+    if not cfg.get("enabled"):
+        return {"skipped": "disabled"}
+    if not RESEND_API_KEY:
+        return {"skipped": "no_resend_key"}
+    now = now_utc()
+    if now.hour < cfg["send_hour_utc"] or now.hour > cfg["send_hour_utc"] + 1:
+        # Only fire inside a 2h window starting at `send_hour_utc` so
+        # the 15-min cadence catches at least one tick cleanly.
+        return {"skipped": "outside_window", "hour": now.hour}
+    last_run_at = cfg.get("last_run_at")
+    if last_run_at:
+        try:
+            last_dt = datetime.fromisoformat(last_run_at.replace("Z", "+00:00"))
+            if (now - last_dt).total_seconds() < 20 * 3600:
+                return {"skipped": "already_ran_today", "last_run_at": last_run_at}
+        except Exception:
+            pass
+    logger.info("[waitlist] nightly auto-sync firing")
+    return await run_resend_sync(reason="scheduler")

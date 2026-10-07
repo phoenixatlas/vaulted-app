@@ -5,16 +5,18 @@
  * Resend audiences actually contained several — classic ESP vs DB drift
  * from a mid-request restart or free-tier Mongo wipe.
  *
- * Flow:
- *   1. On mount, fetch /admin/waitlist/audit to see Mongo vs Resend
- *      counts and the gap.
- *   2. If a gap is detected, show a prominent "Import N missing signups"
- *      button that calls /admin/waitlist/sync-from-resend.
- *   3. On success, trigger the parent's refetch so the Waitlist card
- *      above re-renders with the new totals.
+ * Capabilities:
+ *   1. On mount, fetch /admin/waitlist/audit + /admin/waitlist/sync-config
+ *      to show Mongo vs Resend counts, the gap and the nightly scheduler
+ *      status.
+ *   2. If a gap is detected, prominent "Import N missing signups" button
+ *      that calls /admin/waitlist/sync-from-resend.
+ *   3. Toggle + hour picker for the nightly auto-sync so operators never
+ *      have to tap "Import" manually again.
+ *   4. Shows last-run timestamp + recent run history (5 rows).
  */
 import { useCallback, useEffect, useState } from "react";
-import { View, Text, Pressable, ActivityIndicator } from "react-native";
+import { View, Text, Pressable, TextInput, ActivityIndicator } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { api } from "@/src/lib/api";
 import { colors, spacing } from "@/src/lib/theme";
@@ -48,24 +50,45 @@ type SyncResp = {
   sample_imported: { email: string; audience: string; corridor: string; direction: string }[];
 };
 
-type Props = {
-  onSynced?: () => void;
+type SyncConfig = {
+  enabled: boolean;
+  send_hour_utc: number;
+  last_run_at: string | null;
+  last_run_reason: string | null;
+  last_imported_count: number | null;
+  last_new_mongo_total: number | null;
+  recent_runs: {
+    ran_at: string;
+    reason: string;
+    imported_count: number;
+    skipped_count: number;
+    new_mongo_total: number;
+  }[];
 };
+
+type Props = { onSynced?: () => void };
 
 export function WaitlistSyncCard({ onSynced }: Props) {
   const [audit, setAudit] = useState<AuditResp | null>(null);
+  const [config, setConfig] = useState<SyncConfig | null>(null);
   const [loading, setLoading] = useState(true);
   const [syncing, setSyncing] = useState(false);
+  const [savingConfig, setSavingConfig] = useState(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [syncResult, setSyncResult] = useState<SyncResp | null>(null);
   const [expanded, setExpanded] = useState(false);
+  const [historyOpen, setHistoryOpen] = useState(false);
 
-  const runAudit = useCallback(async () => {
+  const loadAll = useCallback(async () => {
     setLoading(true);
     setErrorMsg(null);
     try {
-      const data = await api<AuditResp>("/admin/waitlist/audit");
-      setAudit(data);
+      const [a, c] = await Promise.all([
+        api<AuditResp>("/admin/waitlist/audit"),
+        api<SyncConfig>("/admin/waitlist/sync-config").catch(() => null),
+      ]);
+      setAudit(a);
+      if (c) setConfig(c);
     } catch (e: any) {
       setErrorMsg(e?.message || "Audit failed");
     } finally {
@@ -73,7 +96,21 @@ export function WaitlistSyncCard({ onSynced }: Props) {
     }
   }, []);
 
-  useEffect(() => { runAudit(); }, [runAudit]);
+  useEffect(() => { loadAll(); }, [loadAll]);
+
+  const patchConfig = useCallback(async (updates: Partial<SyncConfig>) => {
+    setSavingConfig(true);
+    try {
+      const next = await api<SyncConfig>("/admin/waitlist/sync-config", {
+        method: "POST", body: updates,
+      });
+      setConfig(next);
+    } catch (e: any) {
+      setErrorMsg(e?.message || "Config save failed");
+    } finally {
+      setSavingConfig(false);
+    }
+  }, []);
 
   const runSync = useCallback(async () => {
     setSyncing(true);
@@ -84,16 +121,14 @@ export function WaitlistSyncCard({ onSynced }: Props) {
         method: "POST", body: {},
       });
       setSyncResult(res);
-      // Refresh the audit so the gap updates and the Waitlist card above
-      // picks up the new totals.
-      await runAudit();
+      await loadAll();
       onSynced?.();
     } catch (e: any) {
       setErrorMsg(e?.message || "Sync failed");
     } finally {
       setSyncing(false);
     }
-  }, [onSynced, runAudit]);
+  }, [loadAll, onSynced]);
 
   if (loading && !audit) {
     return (
@@ -128,6 +163,7 @@ export function WaitlistSyncCard({ onSynced }: Props) {
 
   const inSync = audit.gap === 0 && audit.missing_from_mongo_count === 0;
   const gap = audit.missing_from_mongo_count;
+  const autoEnabled = config?.enabled ?? false;
 
   return (
     <View style={s.card}>
@@ -156,7 +192,9 @@ export function WaitlistSyncCard({ onSynced }: Props) {
             {inSync
               ? "Every Resend contact has a corresponding row in your Mongo waitlist. Dashboard counts are accurate."
               : `${gap} signup${gap !== 1 ? "s" : ""} present in Resend but missing from Mongo. ` +
-                "The dashboard is under-counting until you import them."}
+                (autoEnabled
+                  ? "The nightly auto-sync will pick these up — or import now."
+                  : "The dashboard is under-counting until you import them.")}
           </Text>
 
           {/* Side-by-side counts */}
@@ -228,10 +266,109 @@ export function WaitlistSyncCard({ onSynced }: Props) {
             </Text>
           )}
 
+          {/* Nightly auto-sync config */}
+          {config ? (
+            <View style={{ marginTop: spacing.md, padding: 10, backgroundColor: colors.surfaceSecondary, borderRadius: 8 }}>
+              <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center" }}>
+                <Text style={s.microLabel}>NIGHTLY AUTO-SYNC</Text>
+                <View style={[s.modePill, autoEnabled ? s.modePillReady : s.modePillMock]}>
+                  <Text style={s.modePillText}>{autoEnabled ? "ARMED" : "PAUSED"}</Text>
+                </View>
+              </View>
+
+              <Pressable
+                onPress={() => patchConfig({ enabled: !autoEnabled })}
+                disabled={savingConfig}
+                style={{ flexDirection: "row", alignItems: "center", gap: 10, paddingVertical: 6, marginTop: 4 }}
+                hitSlop={4}
+              >
+                <Ionicons
+                  name={autoEnabled ? "toggle" : "toggle-outline"}
+                  size={26}
+                  color={autoEnabled ? colors.success : colors.onSurfaceTertiary}
+                />
+                <View style={{ flex: 1 }}>
+                  <Text style={s.toolTitle}>
+                    {autoEnabled ? "Running every night" : "Automatic sync is off"}
+                  </Text>
+                  <Text style={s.toolSub}>
+                    {autoEnabled
+                      ? `Imports any Resend contacts missing from Mongo at ${String(config.send_hour_utc).padStart(2, "0")}:00 UTC`
+                      : "Enable to auto-import new Resend contacts every night"}
+                  </Text>
+                </View>
+              </Pressable>
+
+              <View style={{ flexDirection: "row", alignItems: "center", gap: 10, marginTop: 6 }}>
+                <Text style={s.inputLabel}>Hour (UTC)</Text>
+                <TextInput
+                  value={String(config.send_hour_utc)}
+                  onChangeText={(v) => {
+                    const n = parseInt(v, 10);
+                    if (!Number.isNaN(n) && n >= 0 && n <= 23) {
+                      patchConfig({ send_hour_utc: n });
+                    }
+                  }}
+                  keyboardType="numeric"
+                  style={[s.input, { width: 60 }]}
+                  editable={!savingConfig}
+                />
+                <Text style={[s.subtle, { fontSize: 11 }]}>
+                  {`${String(config.send_hour_utc).padStart(2, "0")}:00 UTC`} ·
+                  ~{String((config.send_hour_utc + 1) % 24).padStart(2, "0")}:00 BST ·
+                  ~{String((config.send_hour_utc + 3) % 24).padStart(2, "0")}:00 Nairobi
+                </Text>
+              </View>
+
+              {config.last_run_at ? (
+                <Text style={[s.footerText, { marginTop: 8 }]}>
+                  Last run · {new Date(config.last_run_at).toLocaleString()} ·
+                  reason: {config.last_run_reason} ·
+                  imported {config.last_imported_count ?? 0}
+                </Text>
+              ) : (
+                <Text style={[s.footerText, { marginTop: 8 }]}>
+                  Scheduler has not run yet — will fire at the next {String(config.send_hour_utc).padStart(2, "0")}:00 UTC window.
+                </Text>
+              )}
+
+              {config.recent_runs.length > 0 ? (
+                <>
+                  <Pressable
+                    onPress={() => setHistoryOpen((v) => !v)}
+                    style={{ paddingVertical: 6, marginTop: 4 }}
+                    hitSlop={4}
+                  >
+                    <Text style={s.disclosureBtn}>
+                      {historyOpen ? "▾ Hide" : "▸ Show"} recent runs ({config.recent_runs.length})
+                    </Text>
+                  </Pressable>
+                  {historyOpen ? (
+                    <View style={{ gap: 4, marginTop: 2 }}>
+                      {config.recent_runs.map((r, i) => (
+                        <View key={i} style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
+                          <Ionicons
+                            name="checkmark-circle-outline"
+                            size={12}
+                            color={colors.success}
+                          />
+                          <Text style={[s.footerText, { flex: 1 }]} numberOfLines={1}>
+                            {new Date(r.ran_at).toLocaleString()} · {r.reason} ·
+                            {" "}+{r.imported_count} new · total {r.new_mongo_total}
+                          </Text>
+                        </View>
+                      ))}
+                    </View>
+                  ) : null}
+                </>
+              ) : null}
+            </View>
+          ) : null}
+
           {/* Action buttons */}
           <View style={{ flexDirection: "row", gap: 8, marginTop: spacing.md }}>
             <Pressable
-              onPress={runAudit}
+              onPress={loadAll}
               disabled={loading || syncing}
               style={[s.downloadBtn, { flex: 1, justifyContent: "center" }, (loading || syncing) && { opacity: 0.5 }]}
               hitSlop={6}

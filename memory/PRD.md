@@ -200,3 +200,22 @@ MONGO_URL, DB_NAME=vaulted, JWT_SECRET, STRIPE_API_KEY (live, rotated), STRIPE_W
     "Import N from Resend" action.
   - On successful sync, parent `admin/index.tsx` refetches so Waitlist +
     Daily signups + Corridor matrix cards update immediately.
+
+## 🌙 Nightly Resend → Mongo Auto-Sync (Iter 53, 2026-10)
+- Extended Iter 52 reconciliation with a scheduled job so missing
+  signups never require a manual tap again.
+- **Backend**: refactored sync helpers to module scope in
+  `routers/waitlist.py` and exposed `run_resend_sync()`,
+  `run_resend_audit()`, `waitlist_sync_scheduler_tick()`,
+  `get_sync_config()`, `set_sync_config()`.
+- **Scheduler**: in-process 15-min ticker added to `server.py` startup.
+  Fires inside the configured hour window (default 02:00 UTC) and gates
+  on `last_run_at < 20h` so restarts never cause double runs.
+- **Endpoints**: `GET/POST /api/admin/waitlist/sync-config` for toggle +
+  hour; `GET /api/admin/waitlist/audit`,
+  `POST /api/admin/waitlist/sync-from-resend` already shipped.
+- **Mongo collections**: `waitlist_sync_config` (singleton), `waitlist_sync_log` (history).
+- **UI**: `WaitlistSyncCard` now shows nightly config (ARMED / PAUSED pill,
+  toggle, UTC hour input + BST/Nairobi preview), last-run timestamp +
+  5-row recent history disclosure.
+- **Env vars**: `WAITLIST_SYNC_ENABLED` (default true), `WAITLIST_SYNC_HOUR_UTC` (default 2).
