@@ -266,6 +266,12 @@ export default function AdminHome() {
   const [cardErrors, setCardErrors] = useState<Record<string, string>>({});
 
   const load = useCallback(async () => {
+    // Switch into a loading state so skeleton rows + button spinners
+    // can render immediately. Previously load() silently refetched —
+    // taps on "Re-probe" / "Pull-to-refresh" felt dead even though the
+    // request was firing. We keep `refreshing` under the caller's
+    // control so pull-to-refresh keeps its native indicator.
+    setLoading(true);
     setErr(null);
     const errors: Record<string, string> = {};
     let any401 = false;
@@ -530,11 +536,24 @@ export default function AdminHome() {
               {/* Last checked + refresh */}
               <View style={s.footerRow}>
                 <Text style={s.footerText}>
-                  Last checked · {new Date(health.checked_at).toLocaleString()}
+                  {loading
+                    ? "Re-probing…"
+                    : `Last checked · ${new Date(health.checked_at).toLocaleString()}`}
                 </Text>
-                <Pressable onPress={load} style={s.refreshBtn} hitSlop={8}>
-                  <Ionicons name="refresh" size={14} color={colors.brand} />
-                  <Text style={s.refreshBtnText}>Re-probe</Text>
+                <Pressable
+                  onPress={() => load()}
+                  disabled={loading}
+                  style={[s.refreshBtn, loading && { opacity: 0.6 }]}
+                  hitSlop={10}
+                >
+                  {loading ? (
+                    <ActivityIndicator size="small" color={colors.brand} />
+                  ) : (
+                    <Ionicons name="refresh" size={14} color={colors.brand} />
+                  )}
+                  <Text style={s.refreshBtnText}>
+                    {loading ? "Probing…" : "Re-probe"}
+                  </Text>
                 </Pressable>
               </View>
             </>
