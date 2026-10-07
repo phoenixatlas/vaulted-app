@@ -102,3 +102,14 @@ MONGO_URL, DB_NAME=vaulted, JWT_SECRET, STRIPE_API_KEY (live, rotated), STRIPE_W
 - **Content sections**: Opportunity (4 stat tiles) · Strategic fit (4 bullets) · Technical integration model (Rail API, Compliance stack, Settlement engine, White-label SDK) · Commercial options (Per-tx fee / Exclusive corridor licence / Strategic equity) · Roadmap (60d integration · 90d pilot · 12m exclusive rail) · Next steps.
 - **Routes** (`routers/usecase_router.py`): `GET /api/usecase/psb.pdf` and `.docx`. Both accept `bank_name`, `bank_short`, `recipient_*` as query params so Umar can regenerate for MoMo / SmartCash / Hope PSB from the same codebase.
 - **Admin UI**: new "Partner use case · 9PSB" card on `/admin` with DOCX + PDF download buttons and inline tip for per-bank customisation.
+
+## 📬 One-Click PSB Use Case Dispatcher (Iter 47, 2026-10)
+- **Backend**: 3 new routes
+  - `POST /api/admin/usecase/send` — composes branded cover email + attaches PDF + sends via Resend. Returns `send_id` and `resend_id`. Idempotent on `send_id`.
+  - `GET /api/admin/usecase/sends` — paginated history with status counters (sent / delivered / opened).
+  - `POST /api/admin/usecase/resend-webhook` — public endpoint that correlates Resend `email.delivered/opened/clicked/bounced` events to `usecase_sends` rows via `send_id` tag.
+- **Cover email**: `usecase.build_usecase_cover_html` — dark gold-on-ink Vaulted-branded body with optional per-recipient `cover_note` override + optional "Book a working session" CTA.
+- **Reply tracking**: Resend tags carry `send_id`; webhook writes `delivered_at`, `opened_at`, `clicked_at` back on the send row. Replies land directly in `umar.sani@phoenix-atlas.com` via `reply_to`.
+- **DB**: new `usecase_sends` collection.
+- **Admin UI**: `PartnerUseCaseCard` replaces previous download-only card. Inline form (bank_short, bank_name, recipient_email/name/title, optional cover note) + Send button + Preview/Edit links + collapsible send history with per-row status chips (SENT / DELIVERED / OPENED / BOUNCED / FAILED).
+- **Resend webhook config**: In Resend dashboard, add webhook URL `https://vaulted-app.onrender.com/api/admin/usecase/resend-webhook` subscribed to `email.*` events for full reply tracking.

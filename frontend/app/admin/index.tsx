@@ -13,7 +13,7 @@
 import { useCallback, useEffect, useState } from "react";
 import {
   View, Text, Pressable, StyleSheet, ScrollView,
-  ActivityIndicator, RefreshControl, Linking, Platform,
+  ActivityIndicator, RefreshControl, Linking, Platform, TextInput,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { useRouter } from "expo-router";
@@ -171,6 +171,34 @@ type SettlementsResp = {
   daily: SettlementDay[];
 };
 
+type UseCaseSendRow = {
+  send_id: string;
+  resend_id?: string | null;
+  status: string;
+  recipient_email: string;
+  recipient_name?: string;
+  recipient_title?: string | null;
+  bank_short: string;
+  bank_name?: string;
+  subject: string;
+  sent_at?: string | null;
+  attempted_at?: string;
+  delivered_at?: string | null;
+  opened_at?: string | null;
+  clicked_at?: string | null;
+  error?: string | null;
+  sent_by?: string | null;
+  cover_note_present?: boolean;
+};
+
+type UseCaseSendsResp = {
+  total: number;
+  sent_count: number;
+  delivered_count: number;
+  opened_count: number;
+  rows: UseCaseSendRow[];
+};
+
 type KotaniWebhookEchoResp = {
   expected_webhook_url: string | null;
   host_type: "unset" | "preview" | "render" | "localhost" | "custom";
@@ -212,6 +240,7 @@ export default function AdminHome() {
   const [smokeRunning, setSmokeRunning] = useState(false);
   const [smokeCorridor, setSmokeCorridor] = useState<string>("KE");
   const [settlements, setSettlements] = useState<SettlementsResp | null>(null);
+  const [useCaseSends, setUseCaseSends] = useState<UseCaseSendsResp | null>(null);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [err, setErr] = useState<string | null>(null);
@@ -241,7 +270,7 @@ export default function AdminHome() {
     // special-cased with `catch (e) => { throw e; }` which rejected the
     // whole Promise.all whenever Kotani returned "Not authenticated",
     // leaving the other 5 cards with an empty errorMsg.
-    const [h, w, inv, daily, refs, clicks, echo, settle] = await Promise.all([
+    const [h, w, inv, daily, refs, clicks, echo, settle, sends] = await Promise.all([
       grab<KotaniHealth>("kotani", "/admin/kotani/health"),
       grab<WaitlistStats>("waitlist", "/admin/waitlist/stats"),
       grab<InvestorLeadsResp>("investors", "/admin/investor/leads"),
@@ -250,6 +279,7 @@ export default function AdminHome() {
       grab<BookClicksResp>("bookClicks", "/admin/investor/book-clicks"),
       grab<KotaniWebhookEchoResp>("webhookEcho", "/admin/kotani/webhook-echo"),
       grab<SettlementsResp>("settlements", "/admin/kotani/settlements?days=30"),
+      grab<UseCaseSendsResp>("usecaseSends", "/admin/usecase/sends?limit=20"),
     ]);
     setHealth(h);
     setWaitlist(w);
@@ -259,12 +289,13 @@ export default function AdminHome() {
     setBookClicks(clicks);
     setWebhookEcho(echo);
     setSettlements(settle);
+    setUseCaseSends(sends);
     setCardErrors(errors);
     // Full-page banner only when EVERY card failed — avoids drowning
     // out individual card errors.
     const allFailed =
-      !h && !w && !inv && !daily && !refs && !clicks && !echo && !settle &&
-      Object.keys(errors).length >= 8;
+      !h && !w && !inv && !daily && !refs && !clicks && !echo && !settle && !sends &&
+      Object.keys(errors).length >= 9;
     if (allFailed) {
       const first = errors.kotani || errors.waitlist || Object.values(errors)[0] || "Unknown error";
       setErr(first.includes("403") || first.toLowerCase().includes("admin")
@@ -527,60 +558,13 @@ export default function AdminHome() {
           </Pressable>
         </View>
 
-        {/* Partner / investor use case downloads (parameterised per PSB) */}
-        <View style={s.card}>
-          <View style={s.cardHeaderRow}>
-            <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
-              <Ionicons name="briefcase-outline" size={18} color={colors.brand} />
-              <Text style={s.cardTitle}>Partner use case · 9PSB</Text>
-            </View>
-            <View style={s.modePill}>
-              <Text style={s.modePillText}>INFRA PITCH</Text>
-            </View>
-          </View>
-          <Text style={s.subtle}>
-            Two-page letterhead-branded brief pitching Vaulted as the stablecoin→Naira
-            infrastructure 9PSB plugs into. Positions Vaulted as a rail, not a
-            competitor. Edit the DOCX for other PSBs (MoMo, SmartCash, Hope).
-          </Text>
-          <Pressable
-            style={s.toolRow}
-            onPress={() => {
-              const url = `${API_BASE}/api/usecase/psb.docx`;
-              if (Platform.OS === "web") window.open(url, "_blank");
-              else Linking.openURL(url).catch(() => {});
-            }}
-          >
-            <Ionicons name="document-text-outline" size={18} color={colors.brand} />
-            <View style={{ flex: 1 }}>
-              <Text style={s.toolTitle}>Editable Word brief (.docx)</Text>
-              <Text style={s.toolSub}>Tweak recipient / commercials before sending</Text>
-            </View>
-            <Ionicons name="download-outline" size={16} color={colors.onSurfaceTertiary} />
-          </Pressable>
-          <Pressable
-            style={s.toolRow}
-            onPress={() => {
-              const url = `${API_BASE}/api/usecase/psb.pdf`;
-              if (Platform.OS === "web") window.open(url, "_blank");
-              else Linking.openURL(url).catch(() => {});
-            }}
-          >
-            <Ionicons name="document-outline" size={18} color={colors.brand} />
-            <View style={{ flex: 1 }}>
-              <Text style={s.toolTitle}>Print-ready PDF</Text>
-              <Text style={s.toolSub}>Attach to the intro email as-is</Text>
-            </View>
-            <Ionicons name="download-outline" size={16} color={colors.onSurfaceTertiary} />
-          </Pressable>
-          <Text style={[s.subtle, { marginTop: 8, fontSize: 10.5 }]}>
-            Tip: regenerate for other PSBs by appending{" "}
-            <Text style={{ fontFamily: "Menlo", color: colors.brandDeep }}>
-              ?bank_short=MoMo&bank_name=MoMo+PSB
-            </Text>{" "}
-            to the URL.
-          </Text>
-        </View>
+        {/* Partner / investor use case downloads + one-click dispatcher */}
+        <PartnerUseCaseCard
+          sendsData={useCaseSends}
+          loading={loading}
+          errorMsg={cardErrors.usecaseSends}
+          onSent={() => load()}
+        />
 
         {/* Quick links */}
         <View style={s.card}>
@@ -1547,7 +1531,356 @@ function KotaniSettlementsCard({
 }
 
 
+// PartnerUseCaseCard — one-click dispatcher + download panel for the PSB
+// use-case brief. Combines three capabilities in a single card:
+//   • Form to fill in recipient + optional cover note, then "Send via Resend"
+//   • Direct PDF / DOCX downloads if you want to review before sending
+//   • Sent-history list with delivery / open status (populated by Resend
+//     webhook → /api/admin/usecase/resend-webhook)
+function PartnerUseCaseCard({
+  sendsData,
+  loading,
+  errorMsg,
+  onSent,
+}: {
+  sendsData: UseCaseSendsResp | null;
+  loading: boolean;
+  errorMsg?: string;
+  onSent: () => void;
+}) {
+  const [bankShort, setBankShort] = useState("9PSB");
+  const [bankName, setBankName] = useState("9mobile 9Payment Service Bank Ltd");
+  const [recipientEmail, setRecipientEmail] = useState("");
+  const [recipientName, setRecipientName] = useState("");
+  const [recipientTitle, setRecipientTitle] = useState("");
+  const [coverNote, setCoverNote] = useState("");
+  const [sending, setSending] = useState(false);
+  const [sendResult, setSendResult] = useState<{ ok: boolean; msg: string } | null>(null);
+  const [expanded, setExpanded] = useState(false);
+  const [showHistory, setShowHistory] = useState(false);
+
+  const canSend =
+    recipientEmail.includes("@") && recipientEmail.includes(".") &&
+    bankShort.trim().length > 0 && !sending;
+
+  const onSend = async () => {
+    if (!canSend) return;
+    setSending(true);
+    setSendResult(null);
+    try {
+      const res = await api<{ ok: boolean; send_id: string; status: string; error?: string }>(
+        "/admin/usecase/send",
+        {
+          method: "POST",
+          body: {
+            recipient_email: recipientEmail.trim(),
+            recipient_name: recipientName.trim(),
+            recipient_title: recipientTitle.trim() || undefined,
+            bank_short: bankShort.trim(),
+            bank_name: bankName.trim() || undefined,
+            cover_note: coverNote.trim() || undefined,
+          },
+        }
+      );
+      if (res.ok) {
+        setSendResult({ ok: true, msg: `✓ Sent to ${recipientEmail}` });
+        setCoverNote("");
+        // Refresh sends list so the new row appears.
+        setTimeout(() => onSent(), 500);
+      } else {
+        setSendResult({ ok: false, msg: `✗ ${res.error || "Send failed"}` });
+      }
+    } catch (e: any) {
+      setSendResult({ ok: false, msg: `✗ ${e?.message || "Network error"}` });
+    } finally {
+      setSending(false);
+    }
+  };
+
+  const statusChip = (row: UseCaseSendRow): { label: string; color: string } => {
+    if (row.opened_at) return { label: "OPENED", color: colors.success };
+    if (row.clicked_at) return { label: "CLICKED", color: colors.success };
+    if (row.delivered_at) return { label: "DELIVERED", color: colors.brand };
+    if (row.status === "bounced") return { label: "BOUNCED", color: colors.error };
+    if (row.status === "failed") return { label: "FAILED", color: colors.error };
+    if (row.status === "sent") return { label: "SENT", color: colors.onSurfaceSecondary };
+    return { label: row.status.toUpperCase(), color: colors.onSurfaceTertiary };
+  };
+
+  return (
+    <View style={s.card}>
+      <View style={s.cardHeaderRow}>
+        <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
+          <Ionicons name="briefcase-outline" size={18} color={colors.brand} />
+          <Text style={s.cardTitle}>Partner use case · {bankShort}</Text>
+        </View>
+        <View style={s.modePill}>
+          <Text style={s.modePillText}>INFRA PITCH</Text>
+        </View>
+      </View>
+      <Text style={s.subtle}>
+        Fill in the recipient, add a personal note, hit send. Vaulted
+        attaches the 2-page PDF and emails via Resend from your reply-to
+        address — any reply lands back in your inbox.
+      </Text>
+
+      {/* Minimal form */}
+      <View style={{ marginTop: 10, gap: 8 }}>
+        <View style={{ flexDirection: "row", gap: 8 }}>
+          <View style={{ flex: 1 }}>
+            <Text style={s.inputLabel}>Bank short</Text>
+            <TextInput
+              value={bankShort}
+              onChangeText={setBankShort}
+              placeholder="9PSB"
+              placeholderTextColor={colors.onSurfaceTertiary}
+              style={s.input}
+              autoCapitalize="characters"
+            />
+          </View>
+          <View style={{ flex: 2 }}>
+            <Text style={s.inputLabel}>Bank name</Text>
+            <TextInput
+              value={bankName}
+              onChangeText={setBankName}
+              placeholder="e.g. 9mobile 9PSB Ltd"
+              placeholderTextColor={colors.onSurfaceTertiary}
+              style={s.input}
+            />
+          </View>
+        </View>
+        <View>
+          <Text style={s.inputLabel}>Recipient email *</Text>
+          <TextInput
+            value={recipientEmail}
+            onChangeText={setRecipientEmail}
+            placeholder="director@9psb.com.ng"
+            placeholderTextColor={colors.onSurfaceTertiary}
+            style={s.input}
+            autoCapitalize="none"
+            keyboardType="email-address"
+          />
+        </View>
+        <View style={{ flexDirection: "row", gap: 8 }}>
+          <View style={{ flex: 1 }}>
+            <Text style={s.inputLabel}>Recipient name</Text>
+            <TextInput
+              value={recipientName}
+              onChangeText={setRecipientName}
+              placeholder="Dr. Branka Mracajac"
+              placeholderTextColor={colors.onSurfaceTertiary}
+              style={s.input}
+            />
+          </View>
+          <View style={{ flex: 1 }}>
+            <Text style={s.inputLabel}>Title</Text>
+            <TextInput
+              value={recipientTitle}
+              onChangeText={setRecipientTitle}
+              placeholder="Managing Director"
+              placeholderTextColor={colors.onSurfaceTertiary}
+              style={s.input}
+            />
+          </View>
+        </View>
+        <Pressable onPress={() => setExpanded((v) => !v)} hitSlop={6}>
+          <Text style={s.disclosureBtn}>
+            {expanded ? "▾ Hide cover note" : "▸ Add a personal cover note (optional)"}
+          </Text>
+        </Pressable>
+        {expanded ? (
+          <TextInput
+            value={coverNote}
+            onChangeText={setCoverNote}
+            placeholder="e.g. 'Following up on our call last week — attached is the detailed brief we discussed.'"
+            placeholderTextColor={colors.onSurfaceTertiary}
+            style={[s.input, { height: 80, textAlignVertical: "top", paddingVertical: 10 }]}
+            multiline
+          />
+        ) : null}
+      </View>
+
+      {/* Send button + result */}
+      <Pressable
+        onPress={onSend}
+        disabled={!canSend}
+        style={[s.sendBtn, !canSend && s.sendBtnDisabled]}
+      >
+        {sending ? (
+          <ActivityIndicator size="small" color={colors.onBrand} />
+        ) : (
+          <>
+            <Ionicons name="paper-plane" size={16} color={colors.onBrand} />
+            <Text style={s.sendBtnText}>Send use case to {bankShort}</Text>
+          </>
+        )}
+      </Pressable>
+      {sendResult ? (
+        <Text style={[s.sendResult, sendResult.ok ? s.sendResultOk : s.sendResultErr]}>
+          {sendResult.msg}
+        </Text>
+      ) : null}
+
+      {/* Download / preview links */}
+      <View style={s.downloadStrip}>
+        <Pressable
+          onPress={() => {
+            const q = `?bank_short=${encodeURIComponent(bankShort)}&bank_name=${encodeURIComponent(bankName)}`;
+            const url = `${API_BASE}/api/usecase/psb.pdf${q}`;
+            if (Platform.OS === "web") window.open(url, "_blank");
+            else Linking.openURL(url).catch(() => {});
+          }}
+          style={s.downloadBtn}
+          hitSlop={6}
+        >
+          <Ionicons name="document-outline" size={13} color={colors.brand} />
+          <Text style={s.downloadBtnText}>Preview PDF</Text>
+        </Pressable>
+        <Pressable
+          onPress={() => {
+            const q = `?bank_short=${encodeURIComponent(bankShort)}&bank_name=${encodeURIComponent(bankName)}`;
+            const url = `${API_BASE}/api/usecase/psb.docx${q}`;
+            if (Platform.OS === "web") window.open(url, "_blank");
+            else Linking.openURL(url).catch(() => {});
+          }}
+          style={s.downloadBtn}
+          hitSlop={6}
+        >
+          <Ionicons name="document-text-outline" size={13} color={colors.brand} />
+          <Text style={s.downloadBtnText}>Edit DOCX</Text>
+        </Pressable>
+      </View>
+
+      {/* Send history (collapsed by default) */}
+      {sendsData && sendsData.total > 0 ? (
+        <>
+          <Pressable
+            onPress={() => setShowHistory((v) => !v)}
+            style={s.historyToggle}
+            hitSlop={6}
+          >
+            <Text style={s.historyToggleText}>
+              {showHistory ? "▾" : "▸"} Sent history ({sendsData.total})
+            </Text>
+            <View style={{ flexDirection: "row", gap: 10 }}>
+              <Text style={s.historyStat}>
+                📬 {sendsData.delivered_count} delivered
+              </Text>
+              <Text style={s.historyStat}>
+                👀 {sendsData.opened_count} opened
+              </Text>
+            </View>
+          </Pressable>
+          {showHistory ? (
+            <View style={{ gap: 6, marginTop: 6 }}>
+              {sendsData.rows.slice(0, 10).map((row) => {
+                const chip = statusChip(row);
+                return (
+                  <View key={row.send_id} style={s.historyRow}>
+                    <View style={{ flex: 1, minWidth: 0 }}>
+                      <Text style={s.historyRecipient} numberOfLines={1}>
+                        {row.recipient_name || row.recipient_email}
+                        <Text style={{ color: colors.onSurfaceTertiary }}>
+                          {"  ·  "}{row.bank_short}
+                        </Text>
+                      </Text>
+                      <Text style={s.historyMeta} numberOfLines={1}>
+                        {row.recipient_email} · {new Date(row.attempted_at || "").toLocaleString()}
+                      </Text>
+                    </View>
+                    <View style={[s.historyChip, { borderColor: chip.color + "60", backgroundColor: chip.color + "20" }]}>
+                      <Text style={[s.historyChipText, { color: chip.color }]}>{chip.label}</Text>
+                    </View>
+                  </View>
+                );
+              })}
+            </View>
+          ) : null}
+        </>
+      ) : null}
+
+      {errorMsg && !sendsData ? (
+        <Text style={[s.subtle, { color: colors.error, marginTop: 8, fontSize: 11 }]}>
+          History unavailable: {errorMsg}
+        </Text>
+      ) : null}
+    </View>
+  );
+}
+
+
 const s = StyleSheet.create({
+  // PartnerUseCaseCard dispatcher
+  inputLabel: {
+    fontSize: 10, fontWeight: "700", color: colors.onSurfaceSecondary,
+    letterSpacing: 0.4, textTransform: "uppercase", marginBottom: 4,
+  },
+  input: {
+    paddingHorizontal: 10, paddingVertical: 8,
+    borderWidth: 1, borderColor: colors.border,
+    borderRadius: radius.sm,
+    backgroundColor: colors.surfaceSecondary,
+    color: colors.onSurface,
+    fontSize: 13,
+  },
+  disclosureBtn: {
+    fontSize: 11.5, color: colors.brandDeep, fontWeight: "600",
+    marginTop: 2, paddingVertical: 4,
+  },
+  sendBtn: {
+    marginTop: 14,
+    flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 8,
+    paddingVertical: 11, paddingHorizontal: 16,
+    backgroundColor: colors.brand,
+    borderRadius: radius.md,
+    minHeight: 44,
+  },
+  sendBtnDisabled: {
+    backgroundColor: colors.border,
+    opacity: 0.7,
+  },
+  sendBtnText: {
+    color: colors.onBrand, fontSize: 13.5, fontWeight: "700", letterSpacing: 0.2,
+  },
+  sendResult: { fontSize: 12, marginTop: 8, textAlign: "center" },
+  sendResultOk: { color: colors.success, fontWeight: "600" },
+  sendResultErr: { color: colors.error, fontWeight: "600" },
+  downloadStrip: {
+    flexDirection: "row", gap: 8, marginTop: 10, flexWrap: "wrap",
+  },
+  downloadBtn: {
+    flexDirection: "row", alignItems: "center", gap: 5,
+    paddingHorizontal: 10, paddingVertical: 6,
+    borderWidth: 1, borderColor: colors.border,
+    borderRadius: radius.pill,
+    backgroundColor: colors.surfaceSecondary,
+  },
+  downloadBtnText: {
+    fontSize: 11, color: colors.brand, fontWeight: "600", letterSpacing: 0.2,
+  },
+  historyToggle: {
+    flexDirection: "row", justifyContent: "space-between", alignItems: "center",
+    paddingVertical: 8, paddingHorizontal: 2,
+    marginTop: 10,
+    borderTopWidth: 1, borderTopColor: colors.border,
+  },
+  historyToggleText: { fontSize: 12, fontWeight: "700", color: colors.onSurface },
+  historyStat: { fontSize: 10.5, color: colors.onSurfaceSecondary },
+  historyRow: {
+    flexDirection: "row", alignItems: "center", gap: 10,
+    paddingVertical: 7, paddingHorizontal: 10,
+    backgroundColor: colors.surfaceSecondary,
+    borderRadius: radius.sm,
+  },
+  historyRecipient: { fontSize: 12, fontWeight: "700", color: colors.onSurface },
+  historyMeta: { fontSize: 10, color: colors.onSurfaceTertiary, marginTop: 2 },
+  historyChip: {
+    paddingHorizontal: 7, paddingVertical: 3,
+    borderRadius: radius.pill,
+    borderWidth: 1,
+  },
+  historyChipText: { fontSize: 9.5, fontWeight: "800", letterSpacing: 0.3 },
+
   // KotaniSmokeTestCard
   smokeCorridorRow: {
     flexDirection: "row", flexWrap: "wrap", gap: 6, marginTop: 10,

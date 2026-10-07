@@ -10,7 +10,7 @@ import hashlib
 import os
 from typing import Any, Optional
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 
 from audit import (
     ALL_EVENT_TYPES,
@@ -901,3 +901,220 @@ async def admin_kotani_settlements(
         },
         "daily": rows_out,
     }
+
+
+# ============================================================================
+# ADMIN — One-click PSB use case email dispatcher
+# ============================================================================
+# Sends the branded 2-page PSB use case PDF as a Resend attachment with
+# Umar's cover email. Every send is logged to `usecase_sends` so the
+# admin UI can show a history ("sent 02 Oct to MD @ 9PSB · delivered") and
+# correlate reply tracking via Resend webhooks.
+#
+# Design notes:
+#   • `reply_to` defaults to `umar.sani@phoenix-atlas.com` so every reply
+#     lands in Umar's personal inbox — the recipient never sees `noreply`.
+#   • We attach a Resend `tag` with the send_id so delivery / open / click
+#     webhooks posted to `/api/admin/usecase/resend-webhook` can be
+#     correlated to the source send row for reply tracking.
+#   • Idempotency: if `send_id` is provided by the client we honour it;
+#     otherwise we mint a uuid4 so retries from a flaky network don't
+#     fire duplicate emails if the client is well-behaved.
+from pydantic import BaseModel, EmailStr, Field
+from typing import List
+
+
+class UseCaseSendIn(BaseModel):
+    recipient_email: EmailStr
+    recipient_name: str = Field(default="", max_length=120)
+    recipient_title: Optional[str] = Field(default=None, max_length=120)
+    bank_short: str = Field(default="9PSB", max_length=24)
+    bank_name: Optional[str] = Field(default=None, max_length=160)
+    recipient_address_1: Optional[str] = Field(default=None, max_length=160)
+    recipient_address_2: Optional[str] = Field(default=None, max_length=160)
+    cover_note: Optional[str] = Field(default=None, max_length=2000)
+    cc: Optional[List[str]] = Field(default=None)
+    subject_override: Optional[str] = Field(default=None, max_length=200)
+    booking_url: Optional[str] = Field(default=None, max_length=400)
+    send_id: Optional[str] = Field(default=None, max_length=64)
+
+
+@router.post("/admin/usecase/send")
+async def admin_usecase_send(
+    payload: UseCaseSendIn,
+    admin=Depends(require_admin),
+):
+    """One-click dispatch of the PSB use case PDF via Resend.
+
+    Returns `{send_id, resend_id, status}` so the UI can render an
+    immediate confirmation and later poll for delivery status.
+    """
+    import uuid
+    from datetime import datetime as _dt, timezone as _tz
+    import usecase
+    from emails import send_email_via_resend_with_attachment
+
+    send_id = payload.send_id or f"ucs_{uuid.uuid4().hex[:16]}"
+
+    # Guard against accidental duplicate sends from double-click.
+    existing = await db.usecase_sends.find_one({"send_id": send_id}, {"_id": 0})
+    if existing and existing.get("status") in {"sent", "delivered"}:
+        return {"ok": True, "send_id": send_id, "already_sent": True,
+                "resend_id": existing.get("resend_id"), "sent_at": existing.get("sent_at")}
+
+    pdf_overrides = {
+        "bank_short": payload.bank_short,
+        "bank_name": payload.bank_name,
+        "recipient_name": payload.recipient_name or "The Managing Director",
+        "recipient_title": payload.recipient_title,
+        "recipient_address_1": payload.recipient_address_1,
+        "recipient_address_2": payload.recipient_address_2,
+    }
+    pdf_overrides = {k: v for k, v in pdf_overrides.items() if v}
+    try:
+        pdf_bytes = usecase.build_psb_usecase_pdf(**pdf_overrides)
+    except Exception as e:  # noqa: BLE001
+        logger.exception("[usecase-send] PDF build failed: %s", e)
+        raise HTTPException(status_code=500, detail=f"PDF build failed: {e}")
+
+    html = usecase.build_usecase_cover_html(
+        recipient_name=payload.recipient_name or payload.bank_short,
+        bank_short=payload.bank_short,
+        bank_name=payload.bank_name,
+        cover_note=payload.cover_note,
+        booking_url=payload.booking_url,
+    )
+    subject = (
+        payload.subject_override
+        or f"Vaulted — Strategic Use Case for {payload.bank_short}"
+    )
+    filename = f"Vaulted-UseCase-{payload.bank_short.replace(' ', '-')}.pdf"
+
+    tags = [
+        {"name": "artefact", "value": "psb_usecase"},
+        {"name": "send_id", "value": send_id},
+        {"name": "bank_short", "value": payload.bank_short.lower()},
+    ]
+
+    result = await send_email_via_resend_with_attachment(
+        to=payload.recipient_email,
+        subject=subject,
+        html=html,
+        attachment_bytes=pdf_bytes,
+        attachment_filename=filename,
+        cc=payload.cc or None,
+        tags=tags,
+    )
+
+    now = _dt.now(_tz.utc).isoformat()
+    status = "sent" if result.get("ok") else "failed"
+    row = {
+        "send_id": send_id,
+        "resend_id": result.get("resend_id"),
+        "status": status,
+        "error": result.get("error"),
+        "sent_at": now if status == "sent" else None,
+        "attempted_at": now,
+        "sent_by": admin.get("email") if isinstance(admin, dict) else None,
+        "recipient_email": payload.recipient_email,
+        "recipient_name": payload.recipient_name,
+        "recipient_title": payload.recipient_title,
+        "bank_short": payload.bank_short,
+        "bank_name": payload.bank_name or f"{payload.bank_short} Ltd",
+        "subject": subject,
+        "cover_note_present": bool(payload.cover_note),
+        "cc": payload.cc or [],
+        "delivered_at": None,
+        "opened_at": None,
+        "clicked_at": None,
+        "last_event_at": now,
+        "events": [],
+    }
+
+    await db.usecase_sends.update_one(
+        {"send_id": send_id}, {"$set": row}, upsert=True
+    )
+
+    if not result.get("ok"):
+        return {"ok": False, "send_id": send_id, "status": status, "error": result.get("error")}
+    return {"ok": True, "send_id": send_id, "resend_id": result.get("resend_id"),
+            "sent_at": now, "status": status}
+
+
+@router.get("/admin/usecase/sends")
+async def admin_usecase_sends(
+    limit: int = 25,
+    _admin=Depends(require_admin),
+):
+    """List recent use-case email dispatches with their current delivery
+    status (populated by the Resend webhook)."""
+    limit = max(1, min(limit, 100))
+    rows = await db.usecase_sends \
+        .find({}, {"_id": 0, "events": 0}) \
+        .sort("attempted_at", -1) \
+        .limit(limit).to_list(length=limit)
+    total = await db.usecase_sends.count_documents({})
+    sent = await db.usecase_sends.count_documents({"status": {"$in": ["sent", "delivered"]}})
+    delivered = await db.usecase_sends.count_documents({"delivered_at": {"$ne": None}})
+    opened = await db.usecase_sends.count_documents({"opened_at": {"$ne": None}})
+    return {
+        "total": total,
+        "sent_count": sent,
+        "delivered_count": delivered,
+        "opened_count": opened,
+        "rows": rows,
+    }
+
+
+@router.post("/admin/usecase/resend-webhook")
+async def admin_usecase_resend_webhook(request: Request):
+    """Resend webhook sink — correlates delivery / open / click events to
+    our `usecase_sends` rows via the `send_id` tag.
+
+    Resend posts: `{type, created_at, data: {email_id, to, tags: [...]}}`
+    The `tags` list carries our `send_id` for look-up.
+    """
+    try:
+        body = await request.json()
+    except Exception as e:  # noqa: BLE001
+        raise HTTPException(status_code=400, detail=f"Invalid JSON: {e}")
+
+    etype = (body.get("type") or "").strip()
+    data = body.get("data") or {}
+    tags = data.get("tags") or []
+    send_id = None
+    for t in tags if isinstance(tags, list) else []:
+        if isinstance(t, dict) and t.get("name") == "send_id":
+            send_id = t.get("value")
+            break
+    if not send_id:
+        logger.info("[usecase-webhook] event w/o send_id tag: %s", etype)
+        return {"ok": True, "handled": "no_send_id"}
+
+    from datetime import datetime as _dt, timezone as _tz
+    now = _dt.now(_tz.utc).isoformat()
+    updates: dict = {"last_event_at": now}
+    if etype == "email.delivered":
+        updates["delivered_at"] = now
+        updates["status"] = "delivered"
+    elif etype == "email.opened":
+        updates["opened_at"] = now
+    elif etype == "email.clicked":
+        updates["clicked_at"] = now
+    elif etype == "email.bounced":
+        updates["status"] = "bounced"
+        updates["bounce_reason"] = (data.get("reason") or "")[:200]
+    elif etype == "email.complained":
+        updates["status"] = "complained"
+
+    event_log = {
+        "type": etype,
+        "at": now,
+        "resend_event": data.get("email_id"),
+    }
+    await db.usecase_sends.update_one(
+        {"send_id": send_id},
+        {"$set": updates, "$push": {"events": event_log}},
+    )
+    return {"ok": True, "send_id": send_id, "event": etype}
+

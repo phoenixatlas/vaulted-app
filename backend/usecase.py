@@ -766,3 +766,96 @@ def build_psb_usecase_docx(**overrides) -> bytes:
     buf = BytesIO()
     doc.save(buf)
     return buf.getvalue()
+
+
+# ============================================================================
+# COVER EMAIL — HTML body + default subject for the one-click dispatcher
+# ============================================================================
+# Dark gold-on-ink aesthetic consistent with the password-reset / receipt
+# templates. Umar can override the body via `cover_note` on the admin
+# dispatcher form; whatever he types is inserted verbatim as a signed
+# message between the greeting and the PDF-attached call-out.
+def build_usecase_cover_html(
+    *,
+    recipient_name: str,
+    bank_short: str = "9PSB",
+    bank_name: Optional[str] = None,
+    sender_name: str = "Umar Sani",
+    sender_title: str = "Founder & Chief Executive, Phoenix-Atlas Technologies Ltd",
+    sender_email: str = "umar.sani@phoenix-atlas.com",
+    cover_note: Optional[str] = None,
+    booking_url: Optional[str] = None,
+) -> str:
+    """Build the HTML email body for the one-click PSB use case dispatch.
+
+    `cover_note` is the single most important override — Umar can tailor
+    the opening paragraph per recipient (e.g. "Following up on our call
+    last week…") without touching the brand chrome or the attached PDF.
+    """
+    salutation_name = (recipient_name or "").strip().split()[-1] if recipient_name else bank_short
+    greeting = f"Dear {salutation_name}," if salutation_name else "Hello,"
+
+    default_note = (
+        f"Attached is a two-page brief on how {bank_short} can build its cross-border "
+        "remittance proposition on Vaulted's compliant stablecoin-to-Naira "
+        "infrastructure. We've outlined the technical integration, three "
+        "commercial options (per-transaction, exclusive corridor licence, "
+        "and strategic equity), and a 60/90/365-day roadmap we believe lands "
+        "a working rail inside the quarter."
+    )
+    note = (cover_note or default_note).strip()
+
+    booking_block = ""
+    if booking_url:
+        booking_block = f"""
+      <div style="margin:28px 0 20px">
+        <a href="{booking_url}"
+           style="display:inline-block;background:#C9A35B;color:#0F0B08;
+                  text-decoration:none;font-weight:700;padding:12px 22px;
+                  border-radius:999px;font-size:13px;letter-spacing:0.3px">
+          Book a 45-min working session
+        </a>
+      </div>
+    """
+
+    return f"""
+    <div style="font-family:-apple-system,Helvetica,Arial,sans-serif;max-width:580px;margin:auto;padding:36px 28px;background:#0F0B08;color:#F5E9C9;border-radius:14px">
+      <div style="font-size:24px;font-weight:700;color:#C9A35B;letter-spacing:-0.4px;margin-bottom:4px">Vaulted</div>
+      <div style="font-size:10.5px;color:#B8AFA1;letter-spacing:2px;text-transform:uppercase;margin-bottom:28px">A product of Phoenix-Atlas Technologies Ltd</div>
+
+      <div style="font-size:16px;color:#F5E9C9;margin-bottom:18px">{greeting}</div>
+
+      <p style="font-size:14px;color:#F5E9C9;line-height:22px;margin:0 0 20px">{note}</p>
+
+      <div style="background:#1C1612;border:1px solid #2a2320;border-radius:12px;padding:16px 18px;margin:22px 0 18px">
+        <div style="font-size:11px;color:#B8AFA1;letter-spacing:1.5px;text-transform:uppercase;margin-bottom:6px">Attached</div>
+        <div style="font-size:14px;color:#F5E9C9;font-weight:600">
+          Vaulted — {bank_short} Strategic Use Case <span style="color:#8A6D2E">(2 pages, PDF)</span>
+        </div>
+      </div>
+
+      <p style="font-size:13px;color:#B8AFA1;line-height:20px;margin:0 0 8px">
+        I'm happy to walk your product and strategy leads through the architecture
+        at a time that suits. Any reply to this email reaches me directly.
+      </p>
+
+      {booking_block}
+
+      <div style="margin:28px 0 0;font-size:13px;color:#F5E9C9">
+        Yours sincerely,
+      </div>
+      <div style="margin-top:16px">
+        <div style="font-size:15px;font-weight:700;color:#F5E9C9">{sender_name}</div>
+        <div style="font-size:12px;color:#B8AFA1;margin-top:2px">{sender_title}</div>
+        <div style="font-size:12px;color:#C9A35B;margin-top:4px;font-weight:600">
+          <a href="mailto:{sender_email}" style="color:#C9A35B;text-decoration:none">{sender_email}</a>
+        </div>
+      </div>
+
+      <div style="border-top:1px solid #2a2320;margin:28px 0 14px"></div>
+      <p style="font-size:10.5px;color:#6d7a73;margin:0;line-height:16px">
+        Phoenix-Atlas Technologies Ltd · Companies House 16712430 · Registered in England &amp; Wales ·<br/>
+        Registered office: 71-75 Shelton Street, London WC2H 9JQ, United Kingdom
+      </p>
+    </div>
+    """

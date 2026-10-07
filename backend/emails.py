@@ -78,45 +78,61 @@ async def send_email_via_resend_with_attachment(
     attachment_bytes: bytes,
     attachment_filename: str,
     attachment_mime: str = "application/pdf",
-) -> bool:
-    """Same as `send_email_via_resend` but with a base64 attachment.
+    cc: Optional[list] = None,
+    bcc: Optional[list] = None,
+    reply_to: Optional[str] = None,
+    from_address: Optional[str] = None,
+    tags: Optional[list] = None,
+) -> dict:
+    """Send an email with a single base-64 attachment, returning Resend's
+    `{"id": "..."}` response envelope so callers can persist the send id
+    for reply tracking.
 
-    Resend's `attachments` array takes `{filename, content (base64), content_type}`.
-    Used for settlement receipts (PDF). Keeps the single-attachment API
-    narrow — if we ever need multi-attachment flows we'll generalise then.
+    Previously returned `bool`. We now return the structured response
+    (or `{"ok": False, "error": "..."}` on failure) so admin dispatchers
+    can log `resend_id` and later correlate webhook delivery / open /
+    click events to the original send row.
     """
     if not RESEND_API_KEY:
         logger.warning("RESEND_API_KEY not set; email+attachment to %s skipped", to)
-        return False
+        return {"ok": False, "error": "RESEND_API_KEY not configured"}
     import base64
     try:
-        async with httpx.AsyncClient(timeout=20) as cx:
+        body: dict = {
+            "from": from_address or get_resend_from(),
+            "to": [to],
+            "subject": subject,
+            "html": html,
+            "reply_to": reply_to or RESEND_REPLY_TO,
+            "attachments": [{
+                "filename": attachment_filename,
+                "content": base64.b64encode(attachment_bytes).decode("ascii"),
+                "content_type": attachment_mime,
+            }],
+        }
+        if cc:
+            body["cc"] = cc
+        if bcc:
+            body["bcc"] = bcc
+        if tags:
+            body["tags"] = tags
+        async with httpx.AsyncClient(timeout=25) as cx:
             r = await cx.post(
                 "https://api.resend.com/emails",
                 headers={
                     "Authorization": f"Bearer {RESEND_API_KEY}",
                     "Content-Type": "application/json",
                 },
-                json={
-                    "from": get_resend_from(),
-                    "to": [to],
-                    "subject": subject,
-                    "html": html,
-                    "reply_to": RESEND_REPLY_TO,
-                    "attachments": [{
-                        "filename": attachment_filename,
-                        "content": base64.b64encode(attachment_bytes).decode("ascii"),
-                        "content_type": attachment_mime,
-                    }],
-                },
+                json=body,
             )
             if r.status_code >= 400:
-                logger.warning("resend send+attach failed %s: %s", r.status_code, r.text[:300])
-                return False
-            return True
+                logger.warning("resend send+attach failed %s: %s", r.status_code, r.text[:400])
+                return {"ok": False, "status_code": r.status_code, "error": r.text[:400]}
+            data = r.json() if r.text else {}
+            return {"ok": True, "resend_id": data.get("id"), "status_code": r.status_code}
     except Exception as e:  # noqa: BLE001
         logger.warning("resend send+attach exception: %s", e)
-        return False
+        return {"ok": False, "error": str(e)}
 
 
 async def send_offramp_receipt_email(
@@ -137,13 +153,14 @@ async def send_offramp_receipt_email(
     ref = ((tx.get("kotani") or {}).get("reference_id")) or tx.get("id") or "receipt"
     # Sanitise filename — Resend rejects certain characters.
     safe_ref = "".join(c for c in str(ref) if c.isalnum() or c in "-_") or "receipt"
-    return await send_email_via_resend_with_attachment(
+    result = await send_email_via_resend_with_attachment(
         to=to,
         subject=f"Your Vaulted payout receipt — {safe_ref}",
         html=html,
         attachment_bytes=pdf_bytes,
         attachment_filename=f"vaulted-receipt-{safe_ref}.pdf",
     )
+    return bool(result.get("ok"))
 
 
 def password_reset_email_html(name: str, reset_url: str) -> str:
