@@ -527,6 +527,61 @@ export default function AdminHome() {
           </Pressable>
         </View>
 
+        {/* Partner / investor use case downloads (parameterised per PSB) */}
+        <View style={s.card}>
+          <View style={s.cardHeaderRow}>
+            <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
+              <Ionicons name="briefcase-outline" size={18} color={colors.brand} />
+              <Text style={s.cardTitle}>Partner use case · 9PSB</Text>
+            </View>
+            <View style={s.modePill}>
+              <Text style={s.modePillText}>INFRA PITCH</Text>
+            </View>
+          </View>
+          <Text style={s.subtle}>
+            Two-page letterhead-branded brief pitching Vaulted as the stablecoin→Naira
+            infrastructure 9PSB plugs into. Positions Vaulted as a rail, not a
+            competitor. Edit the DOCX for other PSBs (MoMo, SmartCash, Hope).
+          </Text>
+          <Pressable
+            style={s.toolRow}
+            onPress={() => {
+              const url = `${API_BASE}/api/usecase/psb.docx`;
+              if (Platform.OS === "web") window.open(url, "_blank");
+              else Linking.openURL(url).catch(() => {});
+            }}
+          >
+            <Ionicons name="document-text-outline" size={18} color={colors.brand} />
+            <View style={{ flex: 1 }}>
+              <Text style={s.toolTitle}>Editable Word brief (.docx)</Text>
+              <Text style={s.toolSub}>Tweak recipient / commercials before sending</Text>
+            </View>
+            <Ionicons name="download-outline" size={16} color={colors.onSurfaceTertiary} />
+          </Pressable>
+          <Pressable
+            style={s.toolRow}
+            onPress={() => {
+              const url = `${API_BASE}/api/usecase/psb.pdf`;
+              if (Platform.OS === "web") window.open(url, "_blank");
+              else Linking.openURL(url).catch(() => {});
+            }}
+          >
+            <Ionicons name="document-outline" size={18} color={colors.brand} />
+            <View style={{ flex: 1 }}>
+              <Text style={s.toolTitle}>Print-ready PDF</Text>
+              <Text style={s.toolSub}>Attach to the intro email as-is</Text>
+            </View>
+            <Ionicons name="download-outline" size={16} color={colors.onSurfaceTertiary} />
+          </Pressable>
+          <Text style={[s.subtle, { marginTop: 8, fontSize: 10.5 }]}>
+            Tip: regenerate for other PSBs by appending{" "}
+            <Text style={{ fontFamily: "Menlo", color: colors.brandDeep }}>
+              ?bank_short=MoMo&bank_name=MoMo+PSB
+            </Text>{" "}
+            to the URL.
+          </Text>
+        </View>
+
         {/* Quick links */}
         <View style={s.card}>
           <Text style={s.cardTitle}>Tools</Text>

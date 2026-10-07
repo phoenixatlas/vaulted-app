@@ -95,3 +95,10 @@ MONGO_URL, DB_NAME=vaulted, JWT_SECRET, STRIPE_API_KEY (live, rotated), STRIPE_W
 - **User-facing re-download**: `GET /api/transactions/{tx_id}/receipt.pdf` — gated to tx owner + settled status.
 - **Live settlement rollup** (`GET /api/admin/kotani/settlements?days=30`): daily aggregation of settled offramps with per-currency reconciliation (quoted vs settled fiat delta). `delta_pct > 0.5%` auto-highlighted as warning in UI.
 - **UI**: Three new cards on `/admin` — `KotaniSmokeTestCard` (6-corridor pills + stepper + verdict banner), `KotaniSettlementsCard` (4-stat grid + 7-day breakdown with reconciliation chips).
+
+## 📄 Partner Use Case Generator — 9PSB (Iter 46, 2026-10)
+- **New module** `backend/usecase.py`: parameterised 2-page PSB brief with `UseCaseContent` dataclass.
+- **Positioning**: Vaulted framed as **infrastructure/rail**, not consumer wallet. Opening and strategic-fit sections lead with "developer-grade API, SDK, settlement engine" and "deliberately invisible to end user".
+- **Content sections**: Opportunity (4 stat tiles) · Strategic fit (4 bullets) · Technical integration model (Rail API, Compliance stack, Settlement engine, White-label SDK) · Commercial options (Per-tx fee / Exclusive corridor licence / Strategic equity) · Roadmap (60d integration · 90d pilot · 12m exclusive rail) · Next steps.
+- **Routes** (`routers/usecase_router.py`): `GET /api/usecase/psb.pdf` and `.docx`. Both accept `bank_name`, `bank_short`, `recipient_*` as query params so Umar can regenerate for MoMo / SmartCash / Hope PSB from the same codebase.
+- **Admin UI**: new "Partner use case · 9PSB" card on `/admin` with DOCX + PDF download buttons and inline tip for per-bank customisation.
