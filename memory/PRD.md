@@ -113,3 +113,10 @@ MONGO_URL, DB_NAME=vaulted, JWT_SECRET, STRIPE_API_KEY (live, rotated), STRIPE_W
 - **DB**: new `usecase_sends` collection.
 - **Admin UI**: `PartnerUseCaseCard` replaces previous download-only card. Inline form (bank_short, bank_name, recipient_email/name/title, optional cover note) + Send button + Preview/Edit links + collapsible send history with per-row status chips (SENT / DELIVERED / OPENED / BOUNCED / FAILED).
 - **Resend webhook config**: In Resend dashboard, add webhook URL `https://vaulted-app.onrender.com/api/admin/usecase/resend-webhook` subscribed to `email.*` events for full reply tracking.
+
+## 🔒 Session Expiry UX + Re-probe Fix (Iter 48, 2026-10)
+- **`api.ts`**: New `ApiError` class exposing HTTP status; module-level 401 handler registry so any 401 from any screen triggers a global sign-out + "session expired" state. Auto-clears stale JWT so subsequent cold starts land on `/sign-in` cleanly.
+- **`admin/index.tsx`**: Full-screen "Session expired" takeover (lock icon + explanation + "Sign in again" + retry link) replaces the previous nine "Not authenticated" error cards.
+- **`app/(auth)/login.tsx`**: Reads `?returnTo=/admin` query param (same-origin only, defends against open-redirect) so operators land back on `/admin` after re-authentication instead of being bounced to the wallet.
+- **Re-probe fix**: `load()` now sets `setLoading(true)` at the start — previously the fetch fired silently with no visual feedback. "Re-probe" button shows spinner + "Probing…" label and is disabled during the request.
+- **PDF signoff**: 9PSB use-case PDF sign-off block is now anchored 58mm from the page bottom so "Yours sincerely / Umar Sani / Founder & CE / email" never collides with the Phoenix-Atlas footer, regardless of body length above it.
