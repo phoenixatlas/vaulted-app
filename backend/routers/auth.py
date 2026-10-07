@@ -28,6 +28,13 @@ from eth_account import Account
 from fastapi import APIRouter, Depends, HTTPException
 
 from audit import EventType, write_event as audit_write
+from auth_tokens import (
+    ACCESS_TOKEN_MINUTES,
+    issue_refresh_token,
+    revoke_all_for_user,
+    revoke_by_token,
+    rotate_refresh_token,
+)
 from deps import (
     APP_PUBLIC_URL,
     JWT_ALG,
@@ -49,6 +56,8 @@ from emails import (
 from models import (
     ForgotPasswordIn,
     LoginIn,
+    LogoutIn,
+    RefreshIn,
     RegisterIn,
     ResetPasswordIn,
     TokenOut,
@@ -109,7 +118,12 @@ async def register(body: RegisterIn):
                 "referrer_user_id": row["referrer_user_id"],
                 "referred_by_code": row["referred_by_code"],
             })
-    return TokenOut(access_token=make_token(uid), user=public_user(user_doc))
+    return TokenOut(
+        access_token=make_token(uid),
+        refresh_token=await issue_refresh_token(uid),
+        expires_in=ACCESS_TOKEN_MINUTES * 60,
+        user=public_user(user_doc),
+    )
 
 
 @router.post("/auth/login", response_model=TokenOut)
@@ -117,7 +131,58 @@ async def login(body: LoginIn):
     u = await db.users.find_one({"email": body.email.lower()}, {"_id": 0})
     if not u or not pwd_ctx.verify(body.password, u["password_hash"]):
         raise HTTPException(status_code=401, detail="Invalid email or password")
-    return TokenOut(access_token=make_token(u["id"]), user=public_user(u))
+    return TokenOut(
+        access_token=make_token(u["id"]),
+        refresh_token=await issue_refresh_token(u["id"]),
+        expires_in=ACCESS_TOKEN_MINUTES * 60,
+        user=public_user(u),
+    )
+
+
+@router.post("/auth/refresh", response_model=TokenOut)
+async def refresh_session(body: RefreshIn):
+    """Rotate a refresh token: issues a new access token + new refresh token,
+    marks the old refresh token as used. If the token has already been used
+    (replay / stolen), the whole family is revoked and we return 401.
+
+    Called transparently by the frontend `api()` helper on every 401 so the
+    admin dashboard can stay authenticated past the 1h access-token
+    window without re-prompting."""
+    new_raw, user_id, err = await rotate_refresh_token(body.refresh_token)
+    if err:
+        # Reuse detection is a security event — audit it so we can spot
+        # patterns in /admin/audit.
+        if err in {"reuse_detected", "race_or_reuse"}:
+            try:
+                await audit_write(db, EventType.AUTH_PASSWORD_RESET_INVALID_TOKEN, user=None,
+                                  data={"reason": f"refresh_{err}"})
+            except Exception:  # noqa: BLE001
+                pass
+        raise HTTPException(status_code=401, detail="Session expired. Please sign in again.")
+
+    u = await db.users.find_one({"id": user_id}, {"_id": 0})
+    if not u:
+        # User deleted while refresh was pending — hard revoke their family.
+        await revoke_all_for_user(user_id, reason="user_missing")
+        raise HTTPException(status_code=401, detail="Session invalid")
+    return TokenOut(
+        access_token=make_token(user_id),
+        refresh_token=new_raw,
+        expires_in=ACCESS_TOKEN_MINUTES * 60,
+        user=public_user(u),
+    )
+
+
+@router.post("/auth/logout")
+async def logout(body: LogoutIn):
+    """Idempotent sign-out. Revokes the presented refresh token's whole
+    family so parallel sessions on the same device sign out together.
+    Clients should also wipe the local access token after calling this —
+    the server has no way to invalidate a bearer JWT mid-flight."""
+    if body.refresh_token:
+        revoked = await revoke_by_token(body.refresh_token, reason="logout")
+        return {"ok": True, "revoked": revoked}
+    return {"ok": True, "revoked": 0}
 
 
 @router.get("/auth/me")

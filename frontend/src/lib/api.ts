@@ -8,18 +8,12 @@ const RAW_BASE =
   "https://vaulted-app.onrender.com";
 const BASE = /^https?:\/\//i.test(RAW_BASE) ? RAW_BASE : `https://${RAW_BASE}`;
 const TOKEN_KEY = "vaulted_token";
+const REFRESH_KEY = "vaulted_refresh_token";
 
 // Exposed so views that need to build full URLs for downloads
 // (e.g. /admin letterhead download card) don't have to re-derive this.
 export const API_BASE = BASE;
 
-/**
- * Specialised Error subclass so UI code can distinguish auth failures
- * (session expired, missing admin role, invalid token) from everything
- * else without string-matching on error messages. Set on every non-2xx
- * response so screens can `if (e instanceof ApiError && e.status === 401)
- * // redirect to login`.
- */
 export class ApiError extends Error {
   status: number;
   code?: string;
@@ -40,26 +34,70 @@ export async function getToken(): Promise<string | null> {
   return storage.secureGet<string>(TOKEN_KEY, "");
 }
 
+export async function setRefreshToken(token: string | null) {
+  if (token) await storage.secureSet(REFRESH_KEY, token);
+  else await storage.secureRemove(REFRESH_KEY);
+}
+
+export async function getRefreshToken(): Promise<string | null> {
+  return storage.secureGet<string>(REFRESH_KEY, "");
+}
+
 /**
- * Optional global 401 handler. Screens that want to auto-redirect on
- * session expiry (e.g. /admin) register once at mount; the handler is
- * called with the ApiError whenever any api() call surfaces a 401 so
- * the screen can clear state, show a "session expired" toast, and
- * push the user back to /sign-in.
- *
- * Kept as module-level state (rather than a React context) so a 401 from
- * a utility fetch deep inside a hook can still trigger the redirect
- * without threading context down through every call site.
+ * Store BOTH tokens from a login/register/refresh response. Centralised so
+ * callers can't accidentally forget to persist the refresh token.
  */
+export async function saveSession(resp: { access_token?: string; refresh_token?: string | null }) {
+  if (resp.access_token) await setToken(resp.access_token);
+  if (resp.refresh_token !== undefined) {
+    await setRefreshToken(resp.refresh_token || null);
+  }
+}
+
 type UnauthorizedHandler = (err: ApiError) => void;
 let _onUnauthorized: UnauthorizedHandler | null = null;
 export function registerUnauthorizedHandler(handler: UnauthorizedHandler | null) {
   _onUnauthorized = handler;
 }
 
+// Single-flight refresh lock — if 7 cards all 401 at once we fire ONE
+// /auth/refresh and let all callers await the same promise. Prevents a
+// burst from rotating the same refresh token concurrently (which would
+// trigger reuse-detection on the server and nuke the session family).
+let _refreshInFlight: Promise<string | null> | null = null;
+
+async function refreshAccessToken(): Promise<string | null> {
+  if (_refreshInFlight) return _refreshInFlight;
+  _refreshInFlight = (async () => {
+    const rt = await getRefreshToken();
+    if (!rt) return null;
+    try {
+      const r = await fetch(`${BASE}/api/auth/refresh`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ refresh_token: rt }),
+      });
+      if (!r.ok) {
+        // Refresh itself failed — session is dead; clear both tokens so
+        // the next cold start lands on /sign-in rather than looping.
+        await setToken(null);
+        await setRefreshToken(null);
+        return null;
+      }
+      const data = await r.json();
+      if (data?.access_token) await setToken(data.access_token);
+      if (data?.refresh_token) await setRefreshToken(data.refresh_token);
+      return (data?.access_token as string) || null;
+    } catch {
+      return null;
+    }
+  })().finally(() => { _refreshInFlight = null; });
+  return _refreshInFlight;
+}
+
 type Options = { method?: string; body?: any; auth?: boolean };
 
-export async function api<T = any>(path: string, opts: Options = {}): Promise<T> {
+export async function api<T = any>(path: string, opts: Options = {}, _retried = false): Promise<T> {
   const headers: Record<string, string> = { "Content-Type": "application/json" };
   if (opts.auth !== false) {
     const t = await getToken();
@@ -71,18 +109,27 @@ export async function api<T = any>(path: string, opts: Options = {}): Promise<T>
     body: opts.body ? JSON.stringify(opts.body) : undefined,
   });
   const data = await res.json().catch(() => ({}));
+
   if (!res.ok) {
     const detail = (data && (data.detail || data.message)) || `Request failed (${res.status})`;
     const message = typeof detail === "string" ? detail : JSON.stringify(detail);
     const err = new ApiError(message, res.status);
 
-    // 401 → session expired or missing token. Nuke the local token so
-    // the next cold start lands on /sign-in instead of looping with a
-    // stale JWT, then poke the global handler so the current screen can
-    // react (redirect, toast, etc). We still throw so individual callers
-    // that want their own fallback still get one.
+    // 401 → try a silent refresh exactly once, then retry the original
+    // request. Skip the refresh for /auth/refresh itself or we'd loop.
+    if (res.status === 401 && !_retried && path !== "/auth/refresh" && opts.auth !== false) {
+      const fresh = await refreshAccessToken();
+      if (fresh) {
+        // Retry transparently with the new token.
+        return api<T>(path, opts, true);
+      }
+    }
+
     if (res.status === 401) {
-      try { await setToken(null); } catch { /* non-fatal */ }
+      try {
+        await setToken(null);
+        await setRefreshToken(null);
+      } catch { /* non-fatal */ }
       if (_onUnauthorized) {
         try { _onUnauthorized(err); } catch { /* handler must not re-raise */ }
       }

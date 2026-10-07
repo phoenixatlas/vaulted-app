@@ -28,7 +28,20 @@ class LoginIn(BaseModel):
 class TokenOut(BaseModel):
     access_token: str
     token_type: str = "bearer"
+    # Optional: present when the client is on the new refresh-token flow.
+    # Old clients that don't know about this field simply ignore it, so we
+    # can roll refresh out without a lock-step client release.
+    refresh_token: Optional[str] = None
+    expires_in: Optional[int] = None  # seconds until access_token expiry
     user: dict
+
+
+class RefreshIn(BaseModel):
+    refresh_token: str
+
+
+class LogoutIn(BaseModel):
+    refresh_token: Optional[str] = None
 
 
 class UpdateLanguageIn(BaseModel):

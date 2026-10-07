@@ -1,5 +1,5 @@
 import React, { createContext, useContext, useEffect, useState, ReactNode } from "react";
-import { api, getToken, setToken } from "./api";
+import { api, getToken, getRefreshToken, saveSession, setToken, setRefreshToken } from "./api";
 import { registerForPush } from "./push";
 
 type User = {
@@ -64,12 +64,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, [user?.id]);
 
   const login = async (email: string, password: string) => {
-    const res = await api<{ access_token: string; user: User }>("/auth/login", {
-      method: "POST",
-      body: { email, password },
-      auth: false,
-    });
-    await setToken(res.access_token);
+    const res = await api<{ access_token: string; refresh_token?: string | null; user: User }>(
+      "/auth/login",
+      { method: "POST", body: { email, password }, auth: false },
+    );
+    await saveSession(res);
     setUser(res.user);
   };
 
@@ -78,17 +77,27 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     if (referredByCode && referredByCode.trim()) {
       body.referred_by_code = referredByCode.trim().toUpperCase();
     }
-    const res = await api<{ access_token: string; user: User }>("/auth/register", {
-      method: "POST",
-      body,
-      auth: false,
-    });
-    await setToken(res.access_token);
+    const res = await api<{ access_token: string; refresh_token?: string | null; user: User }>(
+      "/auth/register",
+      { method: "POST", body, auth: false },
+    );
+    await saveSession(res);
     setUser(res.user);
   };
 
   const logout = async () => {
+    // Best-effort server-side revoke so the refresh family can't be
+    // replayed by anything that scraped the device. Non-blocking —
+    // even if the request fails (offline, etc.) we still wipe local
+    // state so the UX of signing out is immediate.
+    try {
+      const rt = await getRefreshToken();
+      if (rt) {
+        await api("/auth/logout", { method: "POST", body: { refresh_token: rt } }).catch(() => undefined);
+      }
+    } catch { /* non-fatal */ }
     await setToken(null);
+    await setRefreshToken(null);
     setUser(null);
   };
 

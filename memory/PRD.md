@@ -120,3 +120,20 @@ MONGO_URL, DB_NAME=vaulted, JWT_SECRET, STRIPE_API_KEY (live, rotated), STRIPE_W
 - **`app/(auth)/login.tsx`**: Reads `?returnTo=/admin` query param (same-origin only, defends against open-redirect) so operators land back on `/admin` after re-authentication instead of being bounced to the wallet.
 - **Re-probe fix**: `load()` now sets `setLoading(true)` at the start — previously the fetch fired silently with no visual feedback. "Re-probe" button shows spinner + "Probing…" label and is disabled during the request.
 - **PDF signoff**: 9PSB use-case PDF sign-off block is now anchored 58mm from the page bottom so "Yours sincerely / Umar Sani / Founder & CE / email" never collides with the Phoenix-Atlas footer, regardless of body length above it.
+
+## 🔐 Session Refresh + Biometric Gate + Contact Book (Iter 49, 2026-10)
+
+### Feature 1 — Refresh Tokens
+- **Backend**: `auth_tokens.py` module (SHA-256 hashed-at-rest refresh tokens, 30d TTL, rotation on every use, reuse detection → family revocation, TTL index). Three new routes: `POST /auth/refresh`, `POST /auth/logout`, plus `/auth/login` + `/auth/register` now return `refresh_token` + `expires_in`.
+- **Frontend**: `api.ts` extended with `getRefreshToken`/`saveSession`/`refreshAccessToken`. Single-flight refresh lock prevents concurrent 401s from rotating the same token. On 401, api() silently refreshes once and retries the original request transparently.
+- **Env**: `ACCESS_TOKEN_MINUTES=60`, `REFRESH_TOKEN_DAYS=30` added (backwards-compat with legacy 7-day access tokens if env unset).
+- **Live-tested**: login→rotate→replay→family-revoke→logout flow all pass.
+
+### Feature 2 — Admin Biometric Gate
+- **New component**: `src/components/AdminBiometricGate.tsx` wraps `/admin` behind Face ID / Touch ID / device PIN using `expo-local-authentication`.
+- **Opt-in**: `AdminBiometricNudge` shows a one-time "Enable Face ID?" prompt after first successful admin visit. Preference stored in SecureStore (`admin_biometric_enabled`), independent of the wallet-level biometric.
+- **Graceful fallbacks**: pass-through on web, no-hardware, or no-enrolment devices. Toggleable from Tools card.
+
+### Feature 3 — Partner Contact Book
+- **Backend**: `routers/contacts_router.py` with full CRUD on `partner_contacts` collection. `POST /admin/contacts/{id}/touch` for recency ranking. First contact per bank auto-promoted to primary.
+- **Frontend**: Dispatcher card now auto-fills recipient fields from the primary contact when `bank_short` changes. "N saved contacts" expander shows grouped list for one-tap application. "+ Save to contacts" button on new recipients.

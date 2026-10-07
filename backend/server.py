@@ -85,6 +85,7 @@ from routers.remit import router as remit_router
 from routers.transactions import router as transactions_router
 from routers.letterhead_router import router as letterhead_router
 from routers.usecase_router import router as usecase_router
+from routers.contacts_router import router as contacts_router
 
 api.include_router(wallet_router)
 api.include_router(multichain_router)
@@ -92,6 +93,7 @@ api.include_router(remit_router)
 api.include_router(transactions_router)
 api.include_router(letterhead_router)
 api.include_router(usecase_router)
+api.include_router(contacts_router)
 api.include_router(admin_router)
 api.include_router(referrals_router)
 api.include_router(offramp_router)
@@ -174,5 +176,16 @@ async def _ensure_audit_indexes():
         await db.credit_ledger.create_index([("user_id", 1), ("created_at", -1)])
     except Exception as e:
         logger.warning(f"audit_events index creation failed: {e}")
+
+
+@app.on_event("startup")
+async def _ensure_refresh_token_indexes():
+    """Refresh-token storage indexes (idempotent). TTL on expires_at
+    auto-deletes stale rows so the collection doesn't grow unbounded."""
+    try:
+        from auth_tokens import ensure_indexes as _ensure_rt_indexes
+        await _ensure_rt_indexes()
+    except Exception as e:
+        logger.warning(f"refresh_tokens index creation failed: {e}")
 
 

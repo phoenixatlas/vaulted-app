@@ -44,6 +44,9 @@ db = client[os.environ["DB_NAME"]]
 # ---------------------------- Config -------------------------------------
 JWT_SECRET = os.environ.get("JWT_SECRET", "vaulted-dev-secret-change-me")
 JWT_ALG = "HS256"
+# Legacy fallback — only used if ACCESS_TOKEN_MINUTES isn't set in env.
+# When refresh tokens are rolled out we switch to the shorter window per
+# auth_tokens.ACCESS_TOKEN_MINUTES; this constant is kept for back-compat.
 JWT_EXPIRE_HOURS = 24 * 7
 
 STRIPE_API_KEY = os.environ.get("STRIPE_API_KEY", "")
@@ -82,10 +85,26 @@ def iso(dt: datetime) -> str:
 
 
 def make_token(user_id: str) -> str:
+    """Issue a short-lived access JWT. Lifetime is driven by the
+    ACCESS_TOKEN_MINUTES env var (default 60 min, legacy fallback 7 days).
+    Access tokens carry `typ=access` so the refresh endpoint can
+    categorically reject one being used as a refresh token."""
+    minutes_env = os.environ.get("ACCESS_TOKEN_MINUTES")
+    if minutes_env:
+        try:
+            minutes = max(1, int(minutes_env))
+        except ValueError:
+            minutes = JWT_EXPIRE_HOURS * 60
+    else:
+        # Legacy mode — ACCESS_TOKEN_MINUTES not set, use the old 7-day window
+        # so staged rollouts don't break existing clients.
+        minutes = JWT_EXPIRE_HOURS * 60
+    now = now_utc()
     payload = {
         "sub": user_id,
-        "iat": int(now_utc().timestamp()),
-        "exp": int((now_utc() + timedelta(hours=JWT_EXPIRE_HOURS)).timestamp()),
+        "typ": "access",
+        "iat": int(now.timestamp()),
+        "exp": int((now + timedelta(minutes=minutes)).timestamp()),
     }
     return jwt.encode(payload, JWT_SECRET, algorithm=JWT_ALG)
 

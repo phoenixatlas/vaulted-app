@@ -10,7 +10,7 @@
  * Only accessible to users whose email is in the backend's ADMIN_EMAILS
  * env var. Backend enforces via require_admin — this screen is UI only.
  */
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   View, Text, Pressable, StyleSheet, ScrollView,
   ActivityIndicator, RefreshControl, Linking, Platform, TextInput,
@@ -19,6 +19,7 @@ import { SafeAreaView } from "react-native-safe-area-context";
 import { useRouter } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
 import { api, API_BASE, ApiError, registerUnauthorizedHandler } from "@/src/lib/api";
+import { AdminBiometricGate, AdminBiometricNudge, adminBiometric } from "@/src/components/AdminBiometricGate";
 import { colors, spacing, radius } from "@/src/lib/theme";
 import { DailySignupChart, CorridorMatrixHeatmap, ReferralLeaderboard } from "@/src/components/AdminCharts";
 
@@ -171,6 +172,23 @@ type SettlementsResp = {
   daily: SettlementDay[];
 };
 
+type Contact = {
+  id: string;
+  bank_short: string;
+  bank_name?: string;
+  name: string;
+  title?: string | null;
+  email: string;
+  notes?: string | null;
+  is_primary: boolean;
+  last_used_at?: string | null;
+};
+type ContactsResp = {
+  total: number;
+  by_bank: Record<string, Contact[]>;
+  contacts: Contact[];
+};
+
 type UseCaseSendRow = {
   send_id: string;
   resend_id?: string | null;
@@ -227,6 +245,17 @@ const CORRIDOR_FLAGS: Record<string, string> = {
 };
 
 export default function AdminHome() {
+  // Wrap the real admin UI behind a biometric gate (opt-in, per-device).
+  // The gate is a no-op on web and on devices without biometric hardware,
+  // so this doesn't lock desktop operators out of the dashboard.
+  return (
+    <AdminBiometricGate>
+      <AdminHomeInner />
+    </AdminBiometricGate>
+  );
+}
+
+function AdminHomeInner() {
   const router = useRouter();
   const [health, setHealth] = useState<KotaniHealth | null>(null);
   const [waitlist, setWaitlist] = useState<WaitlistStats | null>(null);
@@ -452,6 +481,7 @@ export default function AdminHome() {
         contentContainerStyle={s.scrollContent}
         refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={colors.brand} />}
       >
+        <AdminBiometricNudge />
         {/* Kotani health card */}
         <View style={s.card}>
           <View style={s.cardHeaderRow}>
@@ -667,6 +697,29 @@ export default function AdminHome() {
             <View style={{ flex: 1 }}>
               <Text style={s.toolTitle}>Manual EDD approval</Text>
               <Text style={s.toolSub}>Upgrade a user{"\u2019"}s KYC tier with documented evidence</Text>
+            </View>
+            <Ionicons name="chevron-forward" size={16} color={colors.onSurfaceTertiary} />
+          </Pressable>
+          <Pressable
+            style={s.toolRow}
+            onPress={async () => {
+              const on = await adminBiometric.isEnabled();
+              if (on) {
+                await adminBiometric.disable();
+              } else {
+                await adminBiometric.enable();
+              }
+              // Nudge the user to re-open the screen so the gate state
+              // picks up on next mount.
+              router.replace("/admin" as any);
+            }}
+          >
+            <Ionicons name="finger-print" size={18} color={colors.brand} />
+            <View style={{ flex: 1 }}>
+              <Text style={s.toolTitle}>Biometric lock</Text>
+              <Text style={s.toolSub}>
+                Toggle Face ID / Touch ID gate for this device (web unaffected).
+              </Text>
             </View>
             <Ionicons name="chevron-forward" size={16} color={colors.onSurfaceTertiary} />
           </Pressable>
@@ -1650,9 +1703,78 @@ function PartnerUseCaseCard({
   const [expanded, setExpanded] = useState(false);
   const [showHistory, setShowHistory] = useState(false);
 
+  // Contact book — pulled lazily when the card mounts so we don't block
+  // initial admin load on a secondary endpoint.
+  const [contacts, setContacts] = useState<ContactsResp | null>(null);
+  const [showContacts, setShowContacts] = useState(false);
+  const [savingContact, setSavingContact] = useState(false);
+  const reloadContacts = useCallback(async () => {
+    try {
+      const res = await api<ContactsResp>("/admin/contacts");
+      setContacts(res);
+    } catch {
+      /* non-fatal — card still works without contacts */
+    }
+  }, []);
+  useEffect(() => { reloadContacts(); }, [reloadContacts]);
+
+  // When the user types a new bank_short, auto-pick its primary contact
+  // from the contact book (no overwrite if they've already typed).
+  useEffect(() => {
+    if (!contacts || recipientEmail || recipientName) return;
+    const bank = (bankShort || "").toUpperCase();
+    const list = contacts.by_bank[bank];
+    if (!list?.length) return;
+    const primary = list.find((c) => c.is_primary) || list[0];
+    if (primary) {
+      setRecipientEmail(primary.email);
+      setRecipientName(primary.name);
+      if (primary.title) setRecipientTitle(primary.title);
+      if (primary.bank_name && !bankName) setBankName(primary.bank_name);
+    }
+  }, [bankShort, contacts]); // eslint-disable-line react-hooks/exhaustive-deps -- auto-fill only runs when fields empty
+
+  const applyContact = useCallback(async (c: Contact) => {
+    setRecipientEmail(c.email);
+    setRecipientName(c.name);
+    setRecipientTitle(c.title || "");
+    setBankShort(c.bank_short);
+    if (c.bank_name) setBankName(c.bank_name);
+    setShowContacts(false);
+    // Fire-and-forget touch so this contact ranks higher next time.
+    api(`/admin/contacts/${c.id}/touch`, { method: "POST", body: {} }).catch(() => undefined);
+  }, []);
+
+  const saveCurrentAsContact = useCallback(async () => {
+    if (!recipientEmail.includes("@") || !recipientName.trim() || !bankShort.trim()) return;
+    setSavingContact(true);
+    try {
+      await api("/admin/contacts", {
+        method: "POST",
+        body: {
+          bank_short: bankShort.trim(),
+          bank_name: bankName.trim() || undefined,
+          name: recipientName.trim(),
+          title: recipientTitle.trim() || undefined,
+          email: recipientEmail.trim(),
+        },
+      });
+      await reloadContacts();
+    } catch {
+      /* swallow — minor UX feature */
+    } finally {
+      setSavingContact(false);
+    }
+  }, [bankName, bankShort, recipientEmail, recipientName, recipientTitle, reloadContacts]);
+
   const canSend =
     recipientEmail.includes("@") && recipientEmail.includes(".") &&
     bankShort.trim().length > 0 && !sending;
+
+  const currentContactSaved = useMemo(() => {
+    if (!contacts || !recipientEmail) return false;
+    return contacts.contacts.some((c) => c.email.toLowerCase() === recipientEmail.toLowerCase());
+  }, [contacts, recipientEmail]);
 
   const onSend = async () => {
     if (!canSend) return;
@@ -1752,6 +1874,58 @@ function PartnerUseCaseCard({
             keyboardType="email-address"
           />
         </View>
+
+        {/* Contact book picker + save-as-contact action */}
+        {contacts && contacts.total > 0 ? (
+          <View style={{ flexDirection: "row", alignItems: "center", gap: 10, marginTop: -2 }}>
+            <Pressable onPress={() => setShowContacts((v) => !v)} hitSlop={6}>
+              <Text style={s.disclosureBtn}>
+                {showContacts ? "▾" : "▸"} {contacts.total} saved contact{contacts.total !== 1 ? "s" : ""}
+              </Text>
+            </Pressable>
+            {recipientEmail && !currentContactSaved ? (
+              <Pressable
+                onPress={saveCurrentAsContact}
+                disabled={savingContact}
+                hitSlop={6}
+                style={{ marginLeft: "auto" }}
+              >
+                <Text style={[s.disclosureBtn, { color: colors.success }]}>
+                  {savingContact ? "Saving…" : "+ Save to contacts"}
+                </Text>
+              </Pressable>
+            ) : null}
+          </View>
+        ) : null}
+        {showContacts && contacts ? (
+          <View style={{ gap: 4, marginTop: 2 }}>
+            {Object.entries(contacts.by_bank).map(([bank, list]) => (
+              <View key={bank}>
+                <Text style={[s.inputLabel, { marginTop: 6, marginBottom: 4 }]}>{bank}</Text>
+                {list.map((c) => (
+                  <Pressable
+                    key={c.id}
+                    onPress={() => applyContact(c)}
+                    style={s.contactRow}
+                    hitSlop={4}
+                  >
+                    <View style={{ flex: 1, minWidth: 0 }}>
+                      <Text style={s.contactName} numberOfLines={1}>
+                        {c.name}{" "}
+                        {c.is_primary ? <Text style={s.contactPrimary}>· primary</Text> : null}
+                      </Text>
+                      <Text style={s.contactMeta} numberOfLines={1}>
+                        {c.email}{c.title ? ` · ${c.title}` : ""}
+                      </Text>
+                    </View>
+                    <Ionicons name="arrow-forward-circle-outline" size={16} color={colors.brand} />
+                  </Pressable>
+                ))}
+              </View>
+            ))}
+          </View>
+        ) : null}
+
         <View style={{ flexDirection: "row", gap: 8 }}>
           <View style={{ flex: 1 }}>
             <Text style={s.inputLabel}>Recipient name</Text>
@@ -2012,6 +2186,18 @@ const s = StyleSheet.create({
     borderWidth: 1,
   },
   historyChipText: { fontSize: 9.5, fontWeight: "800", letterSpacing: 0.3 },
+
+  // Contact book
+  contactRow: {
+    flexDirection: "row", alignItems: "center", gap: 8,
+    paddingVertical: 8, paddingHorizontal: 10,
+    backgroundColor: colors.surfaceSecondary,
+    borderRadius: radius.sm,
+    marginTop: 4,
+  },
+  contactName: { fontSize: 12, fontWeight: "700", color: colors.onSurface },
+  contactPrimary: { fontSize: 10, color: colors.brandDeep, fontWeight: "600" },
+  contactMeta: { fontSize: 10.5, color: colors.onSurfaceTertiary, marginTop: 2 },
 
   // KotaniSmokeTestCard
   smokeCorridorRow: {
