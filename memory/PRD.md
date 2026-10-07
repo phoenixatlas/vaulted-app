@@ -183,3 +183,20 @@ MONGO_URL, DB_NAME=vaulted, JWT_SECRET, STRIPE_API_KEY (live, rotated), STRIPE_W
 - **Env vars (optional)**: `DIGEST_WEEKDAY`, `DIGEST_HOUR_UTC`,
   `DIGEST_DEFAULT_RECIPIENTS`, `DIGEST_CRON_SECRET`, `DIGEST_SUBJECT_PREFIX`.
   All defaults work out-of-the-box without any env changes.
+
+## 🔄 Waitlist Resend Reconciliation (Iter 52, 2026-10)
+- **Issue**: Production admin dashboard showed 0 waitlist signups while
+  Resend audiences contained real contacts captured via phoenix-atlas.com.
+  Likely root cause: Mongo data loss between signup time and view time
+  (Render free-tier reset, redeploy with different `MONGO_URL`, etc.).
+- **Fix**: Added Resend-as-source-of-truth reconciliation.
+  - `GET /api/admin/waitlist/audit` — compares Mongo count vs live Resend
+    audience contact counts, lists missing emails and per-audience gaps.
+  - `POST /api/admin/waitlist/sync-from-resend` — idempotent import that
+    upserts every Resend contact into `db.waitlist`, decoding corridor /
+    direction / source from the `last_name` tag we stash at write time.
+  - New `WaitlistSyncCard` on `/admin` showing side-by-side counts, gap,
+    sample missing emails, per-audience breakdown and a one-click
+    "Import N from Resend" action.
+  - On successful sync, parent `admin/index.tsx` refetches so Waitlist +
+    Daily signups + Corridor matrix cards update immediately.

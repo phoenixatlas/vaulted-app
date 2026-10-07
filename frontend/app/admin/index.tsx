@@ -33,6 +33,7 @@ import {
   LetterheadCard,
   ToolsCard,
   WeeklyDigestCard,
+  WaitlistSyncCard,
   adminStyles as s,
   type KotaniHealth,
   type WaitlistStats,
@@ -281,6 +282,8 @@ function AdminHomeInner() {
           />
 
           <WaitlistCard stats={waitlist} loading={loading} errorMsg={cardErrors.waitlist} />
+
+          <WaitlistSyncCard onSynced={load} />
 
           <KotaniWebhookEchoCard
             data={webhookEcho}
