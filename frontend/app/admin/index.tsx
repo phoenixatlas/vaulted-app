@@ -18,7 +18,7 @@ import {
 import { SafeAreaView } from "react-native-safe-area-context";
 import { useRouter } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
-import { api, API_BASE } from "@/src/lib/api";
+import { api, API_BASE, ApiError, registerUnauthorizedHandler } from "@/src/lib/api";
 import { colors, spacing, radius } from "@/src/lib/theme";
 import { DailySignupChart, CorridorMatrixHeatmap, ReferralLeaderboard } from "@/src/components/AdminCharts";
 
@@ -244,6 +244,20 @@ export default function AdminHome() {
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [err, setErr] = useState<string | null>(null);
+  // Set to true when ANY admin endpoint returns 401 — flips the whole
+  // screen into a "session expired" state so the operator sees ONE clear
+  // "sign in again" prompt instead of 9 cards each saying "Not
+  // authenticated". Reset on successful load after re-login.
+  const [sessionExpired, setSessionExpired] = useState(false);
+
+  // Register a global 401 handler so even side-effect fetches (replay
+  // webhook, run smoke test, send use case) trigger the session-expired
+  // state. Deregister on unmount so a stale handler can't fire for a
+  // different screen's requests.
+  useEffect(() => {
+    registerUnauthorizedHandler(() => setSessionExpired(true));
+    return () => registerUnauthorizedHandler(null);
+  }, []);
 
   // Per-endpoint error strings — surfaced in each card's "Unavailable"
   // state so operators can actually see which call failed and why
@@ -254,12 +268,19 @@ export default function AdminHome() {
   const load = useCallback(async () => {
     setErr(null);
     const errors: Record<string, string> = {};
+    let any401 = false;
     // Collect each endpoint's error separately so we can tag it on the
-    // card instead of showing a generic "Unavailable" message.
+    // card instead of showing a generic "Unavailable" message. Also
+    // detect 401s via the ApiError.status field so we can flip the
+    // whole screen into "session expired" mode rather than making the
+    // operator read nine identical error strings.
     const grab = async <T,>(key: string, path: string): Promise<T | null> => {
       try {
         return await api<T>(path);
       } catch (e: any) {
+        if (e instanceof ApiError && e.status === 401) {
+          any401 = true;
+        }
         errors[key] = e?.message ? String(e.message) : "Request failed";
         return null;
       }
@@ -291,6 +312,15 @@ export default function AdminHome() {
     setSettlements(settle);
     setUseCaseSends(sends);
     setCardErrors(errors);
+    // If anything returned 401, pivot the whole screen to session-expired
+    // mode and stop here — no point showing nine identical error cards.
+    if (any401) {
+      setSessionExpired(true);
+      setLoading(false);
+      setRefreshing(false);
+      return;
+    }
+    setSessionExpired(false);
     // Full-page banner only when EVERY card failed — avoids drowning
     // out individual card errors.
     const allFailed =
@@ -369,6 +399,44 @@ export default function AdminHome() {
           <Text style={s.headerSub}>Operator tools & health probes</Text>
         </View>
       </View>
+
+      {sessionExpired ? (
+        /* Full-screen takeover when every call returned 401. Clearer
+         * than nine identical "Not authenticated" cards, and gives the
+         * operator a single primary action. */
+        <View style={s.expiredWrap}>
+          <View style={s.expiredCard}>
+            <View style={s.expiredIcon}>
+              <Ionicons name="lock-closed" size={28} color={colors.brand} />
+            </View>
+            <Text style={s.expiredTitle}>Session expired</Text>
+            <Text style={s.expiredBody}>
+              Your sign-in has timed out. Admin endpoints need a fresh
+              authentication token. Please sign in again — nothing has
+              changed on the backend, and all your Kotani / Resend
+              settings are safe.
+            </Text>
+            <Pressable
+              onPress={() => router.replace("/(auth)/login" as any)}
+              style={s.expiredBtn}
+            >
+              <Ionicons name="log-in-outline" size={16} color={colors.onBrand} />
+              <Text style={s.expiredBtnText}>Sign in again</Text>
+            </Pressable>
+            <Pressable
+              onPress={() => {
+                setSessionExpired(false);
+                setLoading(true);
+                load();
+              }}
+              hitSlop={8}
+              style={{ marginTop: 10 }}
+            >
+              <Text style={s.expiredRetry}>Retry without signing in</Text>
+            </Pressable>
+          </View>
+        </View>
+      ) : (
 
       <ScrollView
         style={{ flex: 1 }}
@@ -582,6 +650,7 @@ export default function AdminHome() {
           </Pressable>
         </View>
       </ScrollView>
+      )}
     </SafeAreaView>
   );
 }
@@ -1810,6 +1879,47 @@ function PartnerUseCaseCard({
 
 
 const s = StyleSheet.create({
+  // Session-expired takeover
+  expiredWrap: {
+    flex: 1, alignItems: "center", justifyContent: "center",
+    paddingHorizontal: 24, paddingBottom: 60,
+  },
+  expiredCard: {
+    width: "100%", maxWidth: 420,
+    backgroundColor: colors.surface,
+    borderRadius: radius.lg,
+    borderWidth: 1, borderColor: colors.border,
+    padding: 28, alignItems: "center",
+  },
+  expiredIcon: {
+    width: 60, height: 60, borderRadius: 30,
+    backgroundColor: colors.brand + "20",
+    alignItems: "center", justifyContent: "center",
+    marginBottom: 16,
+  },
+  expiredTitle: {
+    fontSize: 20, fontWeight: "800", color: colors.onSurface,
+    letterSpacing: -0.3, marginBottom: 10,
+  },
+  expiredBody: {
+    fontSize: 13, color: colors.onSurfaceSecondary,
+    lineHeight: 19, textAlign: "center", marginBottom: 22,
+  },
+  expiredBtn: {
+    flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 8,
+    paddingVertical: 11, paddingHorizontal: 24,
+    backgroundColor: colors.brand,
+    borderRadius: radius.md,
+    minWidth: 180, minHeight: 44,
+  },
+  expiredBtnText: {
+    color: colors.onBrand, fontSize: 14, fontWeight: "700", letterSpacing: 0.2,
+  },
+  expiredRetry: {
+    fontSize: 12, color: colors.onSurfaceTertiary,
+    textDecorationLine: "underline",
+  },
+
   // PartnerUseCaseCard dispatcher
   inputLabel: {
     fontSize: 10, fontWeight: "700", color: colors.onSurfaceSecondary,
