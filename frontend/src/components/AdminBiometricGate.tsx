@@ -16,7 +16,7 @@
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { View, Text, Pressable, StyleSheet, Platform, ActivityIndicator } from "react-native";
 import * as LocalAuthentication from "expo-local-authentication";
-import { Ionicons } from "@react-native-vector-icons/ionicons";
+import { Ionicons } from "@expo/vector-icons";
 import { storage } from "@/src/utils/storage";
 import { colors, spacing, radius } from "@/src/lib/theme";
 
