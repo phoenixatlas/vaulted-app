@@ -137,3 +137,10 @@ MONGO_URL, DB_NAME=vaulted, JWT_SECRET, STRIPE_API_KEY (live, rotated), STRIPE_W
 ### Feature 3 — Partner Contact Book
 - **Backend**: `routers/contacts_router.py` with full CRUD on `partner_contacts` collection. `POST /admin/contacts/{id}/touch` for recency ranking. First contact per bank auto-promoted to primary.
 - **Frontend**: Dispatcher card now auto-fills recipient fields from the primary contact when `bank_short` changes. "N saved contacts" expander shows grouped list for one-tap application. "+ Save to contacts" button on new recipients.
+
+
+## 🛠️ Vercel Build Hotfix (Iter 50, 2026-10)
+- **Issue**: Production deploy on commit `9bee927` failed with `yarn expo export --platform web --output-dir dist` exit 1.
+- **Root cause**: `src/components/AdminBiometricGate.tsx` imported `Ionicons` from `@react-native-vector-icons/ionicons`, a package not installed in `package.json` (rest of the app uses `@expo/vector-icons`).
+- **Fix**: Switched import to `@expo/vector-icons`. Local `yarn expo export --platform web` now completes cleanly (3.17 MB bundle).
+- **Action for user**: Push to `main` (or hit **Redeploy** on Vercel) to get production back on the latest commit.
