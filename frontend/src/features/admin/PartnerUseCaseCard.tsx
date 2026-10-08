@@ -81,6 +81,7 @@ export function PartnerUseCaseCard({ sendsData, loading, errorMsg, onSent }: Pro
   const [showHistory, setShowHistory] = useState(false);
   const [sending, setSending] = useState(false);
   const [savingDraft, setSavingDraft] = useState(false);
+  const [refreshingStatus, setRefreshingStatus] = useState(false);
   const [sendResult, setSendResult] = useState<{ ok: boolean; msg: string } | null>(null);
 
   // Signals when the active draft has been touched since last save, so
@@ -769,9 +770,40 @@ export function PartnerUseCaseCard({ sendsData, loading, errorMsg, onSent }: Pro
             <Text style={s.historyToggleText}>
               {showHistory ? "▾" : "▸"} Sent history ({groupedHistory.length})
             </Text>
-            <View style={{ flexDirection: "row", gap: 10 }}>
+            <View style={{ flexDirection: "row", gap: 10, alignItems: "center" }}>
               <Text style={s.historyStat}>📬 {sendsData.delivered_count} delivered</Text>
               <Text style={s.historyStat}>👀 {sendsData.opened_count} opened</Text>
+              <Pressable
+                onPress={async (e) => {
+                  // stopPropagation so the parent toggle doesn't swallow the tap
+                  (e as any).stopPropagation?.();
+                  setRefreshingStatus(true);
+                  try {
+                    const r = await api<{ updated: number; checked: number }>(
+                      "/admin/usecase/sends/refresh",
+                      { method: "POST", body: {} }
+                    );
+                    setSendResult({
+                      ok: true,
+                      msg: `✓ Checked ${r.checked} · updated ${r.updated} delivery status${r.updated !== 1 ? "es" : ""}`,
+                    });
+                    onSent();
+                  } catch (err: any) {
+                    setSendResult({ ok: false, msg: `✗ Refresh failed: ${err?.message || "error"}` });
+                  } finally {
+                    setRefreshingStatus(false);
+                  }
+                }}
+                disabled={refreshingStatus}
+                hitSlop={6}
+                style={{ padding: 2 }}
+              >
+                {refreshingStatus ? (
+                  <ActivityIndicator size="small" color={colors.brand} />
+                ) : (
+                  <Ionicons name="refresh" size={14} color={colors.brand} />
+                )}
+              </Pressable>
             </View>
           </Pressable>
           {showHistory ? (

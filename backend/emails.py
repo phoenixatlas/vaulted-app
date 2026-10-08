@@ -83,15 +83,17 @@ async def send_email_via_resend_with_attachment(
     reply_to: Optional[str] = None,
     from_address: Optional[str] = None,
     tags: Optional[list] = None,
+    headers: Optional[dict] = None,
 ) -> dict:
     """Send an email with a single base-64 attachment, returning Resend's
     `{"id": "..."}` response envelope so callers can persist the send id
     for reply tracking.
 
-    Previously returned `bool`. We now return the structured response
-    (or `{"ok": False, "error": "..."}` on failure) so admin dispatchers
-    can log `resend_id` and later correlate webhook delivery / open /
-    click events to the original send row.
+    `headers` lets callers attach custom message headers (e.g.
+    `X-Vaulted-Send-Id`). Resend accepts them as a dict and surfaces
+    them back on inbound webhook events — useful as a fallback for
+    correlating delivery events when Resend's `tags` array shape
+    shifts between API versions.
     """
     if not RESEND_API_KEY:
         logger.warning("RESEND_API_KEY not set; email+attachment to %s skipped", to)
@@ -116,6 +118,8 @@ async def send_email_via_resend_with_attachment(
             body["bcc"] = bcc
         if tags:
             body["tags"] = tags
+        if headers:
+            body["headers"] = headers
         async with httpx.AsyncClient(timeout=25) as cx:
             r = await cx.post(
                 "https://api.resend.com/emails",

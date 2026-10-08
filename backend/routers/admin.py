@@ -1094,6 +1094,14 @@ async def admin_usecase_send(
             {"name": "bank_short", "value": payload.bank_short.lower()},
         ]
 
+        # Custom header is a belt-and-braces correlation key in case
+        # Resend's tag format shifts out from under us — the webhook
+        # handler falls back to this when no tag matches.
+        custom_headers = {
+            "X-Vaulted-Send-Id": send_id,
+            "X-Vaulted-Artefact": "psb_usecase",
+        }
+
         result = await send_email_via_resend_with_attachment(
             to=rcpt,
             subject=subject,
@@ -1102,6 +1110,7 @@ async def admin_usecase_send(
             attachment_filename=filename,
             cc=payload.cc or None,
             tags=tags,
+            headers=custom_headers,
         )
 
         now = _dt.now(_tz.utc).isoformat()
@@ -1192,6 +1201,81 @@ async def admin_usecase_sends(
         "delivered_count": delivered,
         "opened_count": opened,
         "rows": rows,
+    }
+
+
+@router.post("/admin/usecase/sends/refresh")
+async def admin_usecase_sends_refresh(_admin=Depends(require_admin)):
+    """Poll Resend directly for the status of every recent send so we're
+    not blind if the webhook never fired (misconfigured endpoint,
+    outbound firewall, Resend tag-format drift, etc.).
+
+    Walks the most recent 50 sends that are still missing a delivery
+    confirmation, hits Resend's GET /emails/{id} for each, and patches
+    `delivered_at` / `opened_at` / `last_event_at` directly on the row.
+    Idempotent — repeated calls are no-ops once the row is already
+    marked delivered.
+    """
+    import httpx
+    from datetime import datetime as _dt, timedelta as _td, timezone as _tz
+    from emails import RESEND_API_KEY
+
+    if not RESEND_API_KEY:
+        raise HTTPException(status_code=400, detail="RESEND_API_KEY not configured")
+
+    cutoff = (_dt.now(_tz.utc) - _td(days=14)).isoformat()
+    cursor = db.usecase_sends.find(
+        {
+            "attempted_at": {"$gte": cutoff},
+            "resend_id": {"$ne": None},
+            "$or": [{"delivered_at": None}, {"delivered_at": {"$exists": False}}],
+        },
+        {"_id": 0, "send_id": 1, "resend_id": 1},
+    ).sort("attempted_at", -1).limit(50)
+    pending = await cursor.to_list(length=50)
+
+    checked = 0
+    updated = 0
+    errors: list[str] = []
+    async with httpx.AsyncClient(timeout=httpx.Timeout(10.0, connect=5.0)) as cx:
+        for row in pending:
+            rid = row.get("resend_id")
+            if not rid:
+                continue
+            try:
+                r = await cx.get(
+                    f"https://api.resend.com/emails/{rid}",
+                    headers={"Authorization": f"Bearer {RESEND_API_KEY}"},
+                )
+                checked += 1
+                if r.status_code != 200:
+                    errors.append(f"{rid}: HTTP {r.status_code}")
+                    continue
+                em = r.json() or {}
+                last_event = em.get("last_event") or em.get("status")
+                updates: dict = {}
+                if last_event in {"delivered", "sent"} and em.get("delivered_at"):
+                    updates["delivered_at"] = em.get("delivered_at") or em.get("created_at")
+                    updates["status"] = "delivered"
+                # Resend's /emails/{id} doesn't currently return opened_at,
+                # but when it does we'll pick it up here.
+                for ok in ("opened_at", "clicked_at"):
+                    if em.get(ok):
+                        updates[ok] = em.get(ok)
+                if updates:
+                    updates["last_event_at"] = _dt.now(_tz.utc).isoformat()
+                    await db.usecase_sends.update_one(
+                        {"send_id": row["send_id"]}, {"$set": updates}
+                    )
+                    updated += 1
+            except Exception as e:  # noqa: BLE001
+                errors.append(f"{rid}: {e}")
+    return {
+        "ok": True,
+        "checked": checked,
+        "updated": updated,
+        "pending_count": len(pending),
+        "errors": errors[:10],
     }
 
 
@@ -1419,8 +1503,14 @@ async def admin_usecase_resend_webhook(request: Request):
     """Resend webhook sink — correlates delivery / open / click events to
     our `usecase_sends` rows via the `send_id` tag.
 
-    Resend posts: `{type, created_at, data: {email_id, to, tags: [...]}}`
-    The `tags` list carries our `send_id` for look-up.
+    Resend's webhook payload has evolved; we accept any of the known
+    shapes for tags:
+      1. list of `{"name":"send_id","value":"..."}` (classic)
+      2. dict like `{"send_id":"..."}` (newer v2 format)
+      3. nested under `data.email` instead of `data` (some endpoints)
+    We also fall back to the `headers` list for the `X-Vaulted-Send-Id`
+    header we attach at send time, so delivery tracking survives Resend
+    rolling out another schema tweak.
     """
     try:
         body = await request.json()
@@ -1429,15 +1519,42 @@ async def admin_usecase_resend_webhook(request: Request):
 
     etype = (body.get("type") or "").strip()
     data = body.get("data") or {}
-    tags = data.get("tags") or []
-    send_id = None
-    for t in tags if isinstance(tags, list) else []:
-        if isinstance(t, dict) and t.get("name") == "send_id":
-            send_id = t.get("value")
-            break
-    if not send_id:
-        logger.info("[usecase-webhook] event w/o send_id tag: %s", etype)
-        return {"ok": True, "handled": "no_send_id"}
+    # Some newer Resend variants nest the email meta under `data.email`.
+    email_block = data.get("email") if isinstance(data.get("email"), dict) else data
+
+    def _extract_tag(container: dict, key: str) -> Optional[str]:
+        """Pull a tag value out of whichever shape Resend sent."""
+        tags = container.get("tags")
+        if isinstance(tags, dict):
+            v = tags.get(key)
+            if isinstance(v, str):
+                return v
+        elif isinstance(tags, list):
+            for t in tags:
+                if isinstance(t, dict) and t.get("name") == key:
+                    return t.get("value")
+        # Fallback: scan `headers` for X-Vaulted-Send-Id-style markers
+        headers = container.get("headers") or []
+        if isinstance(headers, list):
+            for h in headers:
+                if isinstance(h, dict) and h.get("name", "").lower() == f"x-vaulted-{key.replace('_','-')}":
+                    return h.get("value")
+        return None
+
+    send_id = _extract_tag(email_block, "send_id") or _extract_tag(data, "send_id")
+
+    # Final fallback: correlate by Resend's own `email_id` which we
+    # persisted as `resend_id` when the send was made.
+    resend_id = email_block.get("email_id") or data.get("email_id") or data.get("id")
+    row_match: dict
+    if send_id:
+        row_match = {"send_id": send_id}
+    elif resend_id:
+        row_match = {"resend_id": resend_id}
+    else:
+        logger.info("[usecase-webhook] event w/o send_id tag or resend_id: %s payload keys=%s",
+                    etype, list(data.keys()))
+        return {"ok": True, "handled": "no_correlation_key"}
 
     from datetime import datetime as _dt, timezone as _tz
     now = _dt.now(_tz.utc).isoformat()
@@ -1451,18 +1568,34 @@ async def admin_usecase_resend_webhook(request: Request):
         updates["clicked_at"] = now
     elif etype == "email.bounced":
         updates["status"] = "bounced"
-        updates["bounce_reason"] = (data.get("reason") or "")[:200]
+        updates["bounce_reason"] = (data.get("reason") or email_block.get("reason") or "")[:200]
     elif etype == "email.complained":
         updates["status"] = "complained"
+    elif etype == "email.sent":
+        # Rare: Resend confirms the send with its own event; useful if
+        # we never captured the resend_id synchronously.
+        if resend_id:
+            updates["resend_id"] = resend_id
 
     event_log = {
         "type": etype,
         "at": now,
-        "resend_event": data.get("email_id"),
+        "resend_event": resend_id,
     }
-    await db.usecase_sends.update_one(
-        {"send_id": send_id},
+    result = await db.usecase_sends.update_one(
+        row_match,
         {"$set": updates, "$push": {"events": event_log}},
     )
-    return {"ok": True, "send_id": send_id, "event": etype}
+    logger.info(
+        "[usecase-webhook] type=%s match=%s matched=%d modified=%d",
+        etype, row_match, result.matched_count, result.modified_count,
+    )
+    return {
+        "ok": True,
+        "send_id": send_id,
+        "resend_id": resend_id,
+        "event": etype,
+        "matched": result.matched_count,
+        "modified": result.modified_count,
+    }
 

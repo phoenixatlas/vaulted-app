@@ -293,3 +293,28 @@ MONGO_URL, DB_NAME=vaulted, JWT_SECRET, STRIPE_API_KEY (live, rotated), STRIPE_W
 - `BackupCard` on admin dashboard shows last-run doc count + size +
   delivered-to list + manual-trigger button.
 - Env vars: `BACKUP_WEEKDAY`, `BACKUP_HOUR_UTC`, `BACKUP_RECIPIENTS`, `BACKUP_COLLECTIONS`.
+
+## 🔧 Delivery Correlation Hotfix (Iter 56, 2026-10)
+- **Issue**: After Iter 55, `delivered` and `opened` counts stuck at 0 on
+  the admin dashboard — webhook events weren't correlating back to
+  `usecase_sends` rows.
+- **Root cause**: Resend has shifted their webhook payload shape over
+  time — tags sometimes arrive as a list of `{name,value}` objects,
+  other times as a plain `{send_id: ...}` dict. Our old handler only
+  understood the list format and silently returned `no_send_id` for
+  the dict variant.
+- **Fix**:
+  - Webhook handler (`/api/admin/usecase/resend-webhook`) now accepts
+    both tag shapes, nested `data.email` payloads, and a
+    `X-Vaulted-Send-Id` custom header fallback.
+  - As a last-resort correlation key, it falls back to `resend_id`
+    (which we persist synchronously when the send fires).
+  - Every outbound send now stamps `X-Vaulted-Send-Id` + `X-Vaulted-Artefact`
+    custom headers via Resend's `headers` field so the correlation key
+    survives any future tag-format drift.
+  - New endpoint `POST /admin/usecase/sends/refresh` polls Resend's
+    `GET /emails/{id}` directly for every recent send still missing a
+    delivery timestamp — handy if the webhook URL is misconfigured or
+    we need to backfill after a redeploy.
+  - Admin UI: the Sent-history header now has a small refresh icon
+    next to the delivered/opened chips that fires this poll on tap.
