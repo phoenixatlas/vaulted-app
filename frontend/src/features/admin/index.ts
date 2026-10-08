@@ -19,6 +19,8 @@ export { LetterheadCard } from "./LetterheadCard";
 export { ToolsCard } from "./ToolsCard";
 export { WeeklyDigestCard } from "./WeeklyDigestCard";
 export { WaitlistSyncCard } from "./WaitlistSyncCard";
+export { SignupAlertCard } from "./SignupAlertCard";
+export { BackupCard } from "./BackupCard";
 export { ProbeRow, Chip } from "./common";
 export { s as adminStyles } from "./styles";
 export * from "./types";

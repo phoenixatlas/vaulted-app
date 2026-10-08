@@ -597,7 +597,8 @@ async def _add_and_confirm(
     email: str, source: str, corridor: str, direction: str = "outbound",
     referral_code: str = "", position: int = 0, total: int = 0,
 ) -> None:
-    """Background task — Resend contact add + confirmation email."""
+    """Background task — Resend contact add + confirmation email + optional
+    operator notification."""
     contact_id = await _add_resend_contact(email, source, corridor, direction)
     if contact_id:
         try:
@@ -608,6 +609,83 @@ async def _add_and_confirm(
         except Exception as e:  # noqa: BLE001
             logger.warning("[waitlist] persist resend_contact_id failed: %s", e)
     await _send_confirmation_email(email, corridor, direction, referral_code, position, total)
+    # Fire-and-forget operator alert so Umar hears about every new
+    # signup without having to refresh the admin dashboard. Toggleable
+    # via WAITLIST_ALERT_RECIPIENTS env var (comma-separated); default
+    # is "silent" so staging/preview deploys don't spam anyone.
+    try:
+        await _send_signup_alert(email, source, corridor, direction, referral_code, position, total)
+    except Exception as e:  # noqa: BLE001
+        logger.warning("[waitlist] signup alert failed: %s", e)
+
+
+async def _send_signup_alert(
+    email: str, source: str, corridor: str, direction: str,
+    referral_code: str, position: int, total: int,
+) -> None:
+    """Email the operator team the moment a new signup lands. Looks up
+    the recipient list from `waitlist_alert_config` (settable from UI) or
+    the `WAITLIST_ALERT_RECIPIENTS` env var. No-ops if neither is set."""
+    alert_cfg = await db.waitlist_alert_config.find_one({"_id": "signup_alert"}) or {}
+    recipients: list[str] = alert_cfg.get("recipients") or []
+    if not recipients:
+        env_default = os.environ.get("WAITLIST_ALERT_RECIPIENTS", "").strip()
+        if env_default:
+            recipients = [r.strip() for r in env_default.split(",") if r.strip() and "@" in r]
+    if not recipients:
+        return
+    if alert_cfg.get("enabled") is False:
+        return
+
+    from emails import send_email_via_resend
+    flag = CORRIDOR_FLAGS.get(corridor, "🌐") if "CORRIDOR_FLAGS" in globals() else "🌐"
+    corridor_name = CORRIDORS.get(corridor, corridor)
+    dir_arrow = "↙ Africa→UK/EU" if direction == "inbound" else "↗ UK/EU→Africa"
+
+    subject = f"Vaulted · new waitlist signup · {corridor} {direction}"
+    html = f"""
+    <div style="font-family:-apple-system,Helvetica,Arial,sans-serif;max-width:560px;margin:auto;padding:28px 24px;background:#FDFBF7;border-radius:12px;border:1px solid #E5DFD2;color:#1A1510;">
+      <div style="font-size:11px;letter-spacing:1.6px;text-transform:uppercase;color:#6B6253;">Waitlist · new signup</div>
+      <div style="font-size:22px;font-weight:800;margin-top:4px;letter-spacing:-0.4px;">
+        {flag}  {corridor_name}
+      </div>
+      <div style="font-size:12px;color:#6B6253;margin-top:4px;">{dir_arrow} · via {source or 'direct'}</div>
+
+      <table width="100%" cellpadding="0" cellspacing="0" style="margin-top:18px;border:1px solid #E5DFD2;border-radius:8px;background:#fff;">
+        <tr><td style="padding:14px 16px;">
+          <div style="font-size:10px;letter-spacing:1.2px;text-transform:uppercase;color:#6B6253;">Email</div>
+          <div style="font-size:14px;font-weight:700;margin-top:3px;font-family:menlo,monospace;">{email}</div>
+        </td></tr>
+        <tr><td style="padding:10px 16px;border-top:1px solid #E5DFD2;">
+          <div style="font-size:10px;letter-spacing:1.2px;text-transform:uppercase;color:#6B6253;">Waitlist position</div>
+          <div style="font-size:16px;font-weight:800;margin-top:3px;">#{position}  <span style="color:#6B6253;font-size:11px;font-weight:500;">of {total}</span></div>
+        </td></tr>
+        <tr><td style="padding:10px 16px;border-top:1px solid #E5DFD2;">
+          <div style="font-size:10px;letter-spacing:1.2px;text-transform:uppercase;color:#6B6253;">Referral code</div>
+          <div style="font-size:14px;font-weight:700;margin-top:3px;font-family:menlo,monospace;color:#C9A35B;">{referral_code or '—'}</div>
+        </td></tr>
+      </table>
+
+      <div style="margin-top:18px;text-align:center;">
+        <a href="{os.environ.get('APP_PUBLIC_URL','https://app.phoenix-atlas.com')}/admin" style="display:inline-block;background:#C9A35B;color:#0F0B08;padding:10px 20px;border-radius:8px;text-decoration:none;font-weight:800;font-size:12px;letter-spacing:0.3px;">Open admin dashboard</a>
+      </div>
+
+      <div style="margin-top:20px;font-size:10.5px;color:#6B6253;line-height:14px;">
+        Toggle these alerts in Admin → Waitlist alerts. Phoenix-Atlas Technologies Ltd · Companies House 15543001
+      </div>
+    </div>
+    """
+    for r in recipients:
+        try:
+            await send_email_via_resend(r, subject, html)
+        except Exception as e:  # noqa: BLE001
+            logger.warning("[waitlist] alert send to %s failed: %s", r, e)
+
+
+CORRIDOR_FLAGS = {
+    "KE": "🇰🇪", "GH": "🇬🇭", "NG": "🇳🇬", "UG": "🇺🇬",
+    "TZ": "🇹🇿", "ZM": "🇿🇲", "ZA": "🇿🇦", "XX": "🌐",
+}
 
 
 # ---- Position + referral lookup endpoints -------------------------------
@@ -892,6 +970,52 @@ try:  # avoid a hard import at module top so a missing admin dep doesn't
             enabled=payload.enabled,
             send_hour_utc=payload.send_hour_utc,
         )
+
+    # ------------------------------------------------------------------
+    # Signup alert config
+    # ------------------------------------------------------------------
+    @router.get("/admin/waitlist/alert-config")
+    async def waitlist_alert_config_get(_=Depends(require_admin)):
+        """Return the signup-alert recipient list + enabled flag so the
+        admin UI can let operators toggle 'notify me on every signup'."""
+        doc = await db.waitlist_alert_config.find_one({"_id": "signup_alert"}) or {}
+        env_default = [
+            r.strip() for r in os.environ.get("WAITLIST_ALERT_RECIPIENTS", "").split(",")
+            if r.strip() and "@" in r
+        ]
+        recipients = doc.get("recipients") or env_default
+        return {
+            "enabled": bool(doc.get("enabled", bool(recipients))),
+            "recipients": recipients,
+            "has_env_default": bool(env_default),
+        }
+
+    class _AlertConfigIn(BaseModel):
+        enabled: Optional[bool] = None
+        recipients: Optional[List[str]] = None
+
+    @router.post("/admin/waitlist/alert-config")
+    async def waitlist_alert_config_set(
+        payload: _AlertConfigIn,
+        _=Depends(require_admin),
+    ):
+        updates: dict = {}
+        if payload.enabled is not None:
+            updates["enabled"] = bool(payload.enabled)
+        if payload.recipients is not None:
+            cleaned = []
+            for r in payload.recipients:
+                if not r:
+                    continue
+                e = r.strip()
+                if "@" in e and e.lower() not in {c.lower() for c in cleaned}:
+                    cleaned.append(e)
+            updates["recipients"] = cleaned
+        if updates:
+            await db.waitlist_alert_config.update_one(
+                {"_id": "signup_alert"}, {"$set": updates}, upsert=True
+            )
+        return await waitlist_alert_config_get()
 except ImportError:
     pass
 

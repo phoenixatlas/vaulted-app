@@ -796,16 +796,26 @@ def build_usecase_cover_html(
     sender_title: str = "Founder & Chief Executive, Phoenix-Atlas Technologies Ltd",
     sender_email: str = "umar.sani@phoenix-atlas.com",
     cover_note: Optional[str] = None,
+    body_text: Optional[str] = None,
+    greeting_override: Optional[str] = None,
+    cta_text: Optional[str] = None,
     booking_url: Optional[str] = None,
 ) -> str:
     """Build the HTML email body for the one-click PSB use case dispatch.
 
-    `cover_note` is the single most important override — Umar can tailor
-    the opening paragraph per recipient (e.g. "Following up on our call
-    last week…") without touching the brand chrome or the attached PDF.
+    Argument priority (lowest to highest):
+      1. `cover_note` legacy single-paragraph override (back-compat).
+      2. `body_text` multi-paragraph user-authored content from the
+         draft editor. Blank lines become paragraph breaks; HTML is
+         escaped so operators can't accidentally break the template.
+
+    `greeting_override`, `cta_text` and `booking_url` let the draft
+    editor nudge the surrounding chrome without needing raw HTML.
     """
+    import html as _html
+
     salutation_name = (recipient_name or "").strip().split()[-1] if recipient_name else bank_short
-    greeting = f"Dear {salutation_name}," if salutation_name else "Hello,"
+    greeting = (greeting_override or (f"Dear {salutation_name}," if salutation_name else "Hello,")).strip()
 
     default_note = (
         f"Attached is a two-page brief on how {bank_short} can build its cross-border "
@@ -815,7 +825,31 @@ def build_usecase_cover_html(
         "and strategic equity), and a 60/90/365-day roadmap we believe lands "
         "a working rail inside the quarter."
     )
-    note = (cover_note or default_note).strip()
+
+    if body_text and body_text.strip():
+        # Split on blank lines → paragraphs. Escape HTML to prevent
+        # operators pasting content that breaks the template. Line
+        # breaks inside a paragraph become <br> so poetic formatting
+        # survives the trip.
+        paragraphs = [p.strip() for p in body_text.strip().split("\n\n") if p.strip()]
+        body_html = "".join(
+            f'<p style="font-size:14px;color:#F5E9C9;line-height:22px;margin:0 0 16px">'
+            f'{_html.escape(p).replace(chr(10), "<br>")}'
+            f'</p>'
+            for p in paragraphs
+        )
+    else:
+        note = (cover_note or default_note).strip()
+        body_html = (
+            f'<p style="font-size:14px;color:#F5E9C9;line-height:22px;margin:0 0 20px">'
+            f'{_html.escape(note)}</p>'
+        )
+
+    closing_default = (
+        "I'm happy to walk your product and strategy leads through the architecture "
+        "at a time that suits. Any reply to this email reaches me directly."
+    )
+    closing_text = _html.escape(cta_text.strip()) if cta_text and cta_text.strip() else closing_default
 
     booking_block = ""
     if booking_url:
@@ -835,9 +869,9 @@ def build_usecase_cover_html(
       <div style="font-size:24px;font-weight:700;color:#C9A35B;letter-spacing:-0.4px;margin-bottom:4px">Vaulted</div>
       <div style="font-size:10.5px;color:#B8AFA1;letter-spacing:2px;text-transform:uppercase;margin-bottom:28px">A product of Phoenix-Atlas Technologies Ltd</div>
 
-      <div style="font-size:16px;color:#F5E9C9;margin-bottom:18px">{greeting}</div>
+      <div style="font-size:16px;color:#F5E9C9;margin-bottom:18px">{_html.escape(greeting)}</div>
 
-      <p style="font-size:14px;color:#F5E9C9;line-height:22px;margin:0 0 20px">{note}</p>
+      {body_html}
 
       <div style="background:#1C1612;border:1px solid #2a2320;border-radius:12px;padding:16px 18px;margin:22px 0 18px">
         <div style="font-size:11px;color:#B8AFA1;letter-spacing:1.5px;text-transform:uppercase;margin-bottom:6px">Attached</div>
@@ -847,8 +881,7 @@ def build_usecase_cover_html(
       </div>
 
       <p style="font-size:13px;color:#B8AFA1;line-height:20px;margin:0 0 8px">
-        I'm happy to walk your product and strategy leads through the architecture
-        at a time that suits. Any reply to this email reaches me directly.
+        {closing_text}
       </p>
 
       {booking_block}
@@ -871,3 +904,19 @@ def build_usecase_cover_html(
       </p>
     </div>
     """
+
+
+def default_body_text(bank_short: str = "9PSB") -> str:
+    """The plain-text version of the default pitch — used as the
+    starting point for a new draft so operators always have a sane
+    baseline to tweak instead of a blank textarea."""
+    return (
+        f"Attached is a two-page brief on how {bank_short} can build its cross-border "
+        "remittance proposition on Vaulted's compliant stablecoin-to-Naira "
+        "infrastructure.\n\n"
+        "We've outlined the technical integration, three commercial options "
+        "(per-transaction, exclusive corridor licence, and strategic equity), "
+        "and a 60/90/365-day roadmap we believe lands a working rail inside the quarter.\n\n"
+        f"I'd welcome a short call to walk the {bank_short} product and strategy leads "
+        "through the architecture at a time that suits."
+    )

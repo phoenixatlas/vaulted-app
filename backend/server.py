@@ -87,6 +87,7 @@ from routers.letterhead_router import router as letterhead_router
 from routers.usecase_router import router as usecase_router
 from routers.contacts_router import router as contacts_router
 from routers.digest_router import router as digest_router
+from routers.backup_router import router as backup_router
 
 api.include_router(wallet_router)
 api.include_router(multichain_router)
@@ -96,6 +97,7 @@ api.include_router(letterhead_router)
 api.include_router(usecase_router)
 api.include_router(contacts_router)
 api.include_router(digest_router)
+api.include_router(backup_router)
 api.include_router(admin_router)
 api.include_router(referrals_router)
 api.include_router(offramp_router)
@@ -251,5 +253,26 @@ async def _start_waitlist_sync_scheduler():
 
     asyncio.create_task(_loop())
     logger.info("[waitlist] in-process nightly Resend sync scheduler armed")
+
+
+@app.on_event("startup")
+async def _start_backup_scheduler():
+    """Weekly Mongo backup ticker. Mirrors the digest scheduler model —
+    15 min cadence, idempotent via `last_sent_at`, no-ops when disabled
+    or recipient list empty."""
+    import asyncio
+
+    async def _loop():
+        await asyncio.sleep(120)  # stagger from digest + waitlist sync
+        while True:
+            try:
+                from backup import backup_scheduler_tick
+                await backup_scheduler_tick()
+            except Exception as e:  # noqa: BLE001
+                logger.warning(f"[backup] scheduler tick failed: {e}")
+            await asyncio.sleep(15 * 60)
+
+    asyncio.create_task(_loop())
+    logger.info("[backup] in-process weekly Mongo backup scheduler armed")
 
 

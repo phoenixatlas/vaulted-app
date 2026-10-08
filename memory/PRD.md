@@ -242,3 +242,54 @@ MONGO_URL, DB_NAME=vaulted, JWT_SECRET, STRIPE_API_KEY (live, rotated), STRIPE_W
   - "+ Save to contacts" is retained — it saves the first parsed
     address only so operators can still bank one new contact per
     multi-recipient send without creating duplicates.
+
+## 📝 Draft Editor + CC + Grouped History + Signup Alerts + Mongo Backup (Iter 55, 2026-10)
+
+### Full-fat draft editor for the use-case dispatcher
+- New Mongo collection `usecase_drafts` with CRUD + preview + direct-send
+  endpoints under `/api/admin/usecase/drafts/*`.
+- `UseCaseSendIn` extended with `body_text`, `greeting_override`,
+  `cta_text` and `draft_id`. Blank-line-separated paragraphs become
+  `<p>` tags; HTML is escaped so operators cannot accidentally break
+  the brand template.
+- Rewrote `PartnerUseCaseCard` as a true compose/edit/preview/send
+  surface: Subject, Greeting, Body (big multiline), CTA, Booking URL,
+  Draft label — every field is editable and autosaved on Send.
+- Draft drawer at the top of the card lists all unsent drafts plus a
+  "Recently sent" section with one-tap duplicate-to-new-draft.
+- "Save*" button flips to "Saved" after a clean write; Send auto-saves
+  so the archived draft matches what was actually dispatched.
+
+### CC field
+- New `cc` input on the card parses commas/newlines, dedupes, and
+  stashes recipients separately from the primary To list.
+- Backend validator accepts both an array OR comma-strings per entry
+  so pasting from Outlook/Gmail works verbatim.
+
+### Reply-All aware Sent history
+- `usecase_sends` rows now always carry `batch_id` (equal to the
+  base send_id for singles, shared across fan-outs for groups).
+- `SendHistoryGroup` component collapses batches into one row with a
+  per-recipient disclosure. One 3-person 9PSB blast reads as a single
+  entry showing e.g. "3 opened · 9PSB".
+
+### Signup alert email
+- `_add_and_confirm` fires a branded Resend email on every new
+  waitlist signup — includes corridor flag, direction arrow, position,
+  referral code, and a jump-to-admin CTA.
+- `/api/admin/waitlist/alert-config` endpoints + `SignupAlertCard` on
+  the admin dashboard for toggle + recipient CRUD.
+- Env var fallback `WAITLIST_ALERT_RECIPIENTS` for zero-UI setup.
+
+### Weekly Mongo backup snapshot
+- New `backup.py` module + `routers/backup_router.py`.
+- `/api/admin/backup/config` for toggle, weekday, hour and collections list.
+- `/api/admin/backup/run-now` for manual trigger.
+- Dumps 13 critical collections into gzip'd JSON (~10-20x compression)
+  and emails via Resend with filename `vaulted-backup-YYYYMMDD-HHMM.json.gz`.
+- In-process scheduler ticks every 15 min; fires once a week on the
+  configured weekday (default Sunday) + hour (default 03:00 UTC) and
+  gates on `last_sent_at < 6 days` for idempotency.
+- `BackupCard` on admin dashboard shows last-run doc count + size +
+  delivered-to list + manual-trigger button.
+- Env vars: `BACKUP_WEEKDAY`, `BACKUP_HOUR_UTC`, `BACKUP_RECIPIENTS`, `BACKUP_COLLECTIONS`.

@@ -962,19 +962,46 @@ class UseCaseSendIn(BaseModel):
     recipient_address_1: Optional[str] = Field(default=None, max_length=160)
     recipient_address_2: Optional[str] = Field(default=None, max_length=160)
     cover_note: Optional[str] = Field(default=None, max_length=2000)
+    # Multi-paragraph body authored in the draft editor — replaces the
+    # entire opening paragraph when present. Blank lines → <p> breaks.
+    body_text: Optional[str] = Field(default=None, max_length=12000)
+    greeting_override: Optional[str] = Field(default=None, max_length=200)
+    cta_text: Optional[str] = Field(default=None, max_length=600)
     cc: Optional[List[str]] = Field(default=None)
     subject_override: Optional[str] = Field(default=None, max_length=200)
     booking_url: Optional[str] = Field(default=None, max_length=400)
     send_id: Optional[str] = Field(default=None, max_length=64)
+    # When set, flips the matching draft to status="sent" after dispatch
+    # so the UI can hide it from the "unsent drafts" panel.
+    draft_id: Optional[str] = Field(default=None, max_length=64)
 
     @field_validator("recipient_email")
     @classmethod
     def _validate_recipients(cls, v: str) -> str:
-        # Trigger split+validate at parse time so a malformed segment
-        # fails with a specific message rather than letting Resend
-        # bounce the whole send later.
         _split_recipients(v)
         return v
+
+    @field_validator("cc")
+    @classmethod
+    def _validate_cc(cls, v):
+        if not v:
+            return v
+        # Each CC entry can itself be comma-separated so pasting from
+        # Outlook/Gmail works. Flatten everything into a single clean
+        # list of validated email addresses.
+        cleaned: list[str] = []
+        for entry in v:
+            if not entry:
+                continue
+            cleaned.extend(_split_recipients(entry))
+        # Dedupe preserving order.
+        seen: set[str] = set()
+        out: list[str] = []
+        for e in cleaned:
+            if e.lower() not in seen:
+                seen.add(e.lower())
+                out.append(e)
+        return out
 
     def recipient_list(self) -> list[str]:
         return _split_recipients(self.recipient_email)
@@ -1027,6 +1054,9 @@ async def admin_usecase_send(
         bank_short=payload.bank_short,
         bank_name=payload.bank_name,
         cover_note=payload.cover_note,
+        body_text=payload.body_text,
+        greeting_override=payload.greeting_override,
+        cta_text=payload.cta_text,
         booking_url=payload.booking_url,
     )
     subject = (
@@ -1097,7 +1127,8 @@ async def admin_usecase_send(
             "clicked_at": None,
             "last_event_at": now,
             "events": [],
-            "batch_id": base_send_id if len(recipients) > 1 else None,
+            "batch_id": base_send_id if len(recipients) > 1 else base_send_id,
+            "draft_id": payload.draft_id,
         }
         await db.usecase_sends.update_one(
             {"send_id": send_id}, {"$set": row}, upsert=True
@@ -1143,7 +1174,9 @@ async def admin_usecase_sends(
     _admin=Depends(require_admin),
 ):
     """List recent use-case email dispatches with their current delivery
-    status (populated by the Resend webhook)."""
+    status (populated by the Resend webhook). Rows that share a
+    `batch_id` are collapsed on the frontend into a single multi-recipient
+    row so one 3-person blast reads as one entry in the history."""
     limit = max(1, min(limit, 100))
     rows = await db.usecase_sends \
         .find({}, {"_id": 0, "events": 0}) \
@@ -1160,6 +1193,225 @@ async def admin_usecase_sends(
         "opened_count": opened,
         "rows": rows,
     }
+
+
+# ---------------------------------------------------------------------------
+# Draft editor — compose / save / preview / send loop
+# ---------------------------------------------------------------------------
+class UseCaseDraftIn(BaseModel):
+    """Payload for both create and update. All fields are optional on
+    update (the backend merges with the existing doc), which keeps the
+    frontend auto-save simple."""
+    id: Optional[str] = Field(default=None, max_length=64)
+    bank_short: Optional[str] = Field(default=None, max_length=24)
+    bank_name: Optional[str] = Field(default=None, max_length=160)
+    recipient_email: Optional[str] = Field(default=None, max_length=2000)
+    recipient_name: Optional[str] = Field(default=None, max_length=120)
+    recipient_title: Optional[str] = Field(default=None, max_length=120)
+    subject: Optional[str] = Field(default=None, max_length=200)
+    body_text: Optional[str] = Field(default=None, max_length=12000)
+    greeting_override: Optional[str] = Field(default=None, max_length=200)
+    cta_text: Optional[str] = Field(default=None, max_length=600)
+    cover_note: Optional[str] = Field(default=None, max_length=2000)
+    cc: Optional[List[str]] = Field(default=None)
+    booking_url: Optional[str] = Field(default=None, max_length=400)
+    label: Optional[str] = Field(default=None, max_length=120)
+
+
+def _draft_defaults(bank_short: str) -> dict:
+    """Baseline draft content so a brand-new "+ New draft" button
+    gives operators something editable instead of a blank page."""
+    import usecase as _usecase
+    return {
+        "subject": f"Vaulted — Strategic Use Case for {bank_short}",
+        "body_text": _usecase.default_body_text(bank_short),
+        "greeting_override": "",
+        "cta_text": "",
+    }
+
+
+def _coalesce_draft_doc(existing: dict | None, payload: UseCaseDraftIn, *, now_iso: str) -> dict:
+    """Merge an incoming partial draft with any existing persisted doc.
+    `None` fields in the payload leave the stored value untouched, so
+    the frontend can patch a single field (e.g. just the subject) without
+    wiping the body."""
+    base = dict(existing or {})
+    bank_short = (payload.bank_short or base.get("bank_short") or "9PSB").strip()
+    defaults = _draft_defaults(bank_short)
+
+    def _pick(field: str, default_val):
+        v = getattr(payload, field)
+        if v is not None:
+            return v
+        if field in base:
+            return base[field]
+        return default_val
+
+    merged = {
+        "bank_short": bank_short,
+        "bank_name": _pick("bank_name", f"{bank_short} Ltd"),
+        "recipient_email": _pick("recipient_email", ""),
+        "recipient_name": _pick("recipient_name", ""),
+        "recipient_title": _pick("recipient_title", ""),
+        "subject": _pick("subject", defaults["subject"]),
+        "body_text": _pick("body_text", defaults["body_text"]),
+        "greeting_override": _pick("greeting_override", defaults["greeting_override"]),
+        "cta_text": _pick("cta_text", defaults["cta_text"]),
+        "cover_note": _pick("cover_note", ""),
+        "cc": payload.cc if payload.cc is not None else base.get("cc", []),
+        "booking_url": _pick("booking_url", ""),
+        "label": _pick("label", ""),
+        "status": base.get("status", "draft"),
+        "created_at": base.get("created_at", now_iso),
+        "updated_at": now_iso,
+    }
+    return merged
+
+
+@router.get("/admin/usecase/drafts")
+async def admin_usecase_drafts_list(_admin=Depends(require_admin)):
+    """Return every draft, newest first, split into un-sent vs sent so
+    the UI can show the editable panel + a lightweight archive."""
+    rows = await db.usecase_drafts.find({}, {"_id": 0}).sort("updated_at", -1).to_list(length=200)
+    draft = [r for r in rows if r.get("status") != "sent"]
+    sent = [r for r in rows if r.get("status") == "sent"]
+    return {"drafts": draft, "sent_drafts": sent[:20], "total": len(rows)}
+
+
+@router.get("/admin/usecase/drafts/new")
+async def admin_usecase_drafts_scaffold(
+    bank_short: str = "9PSB",
+    _admin=Depends(require_admin),
+):
+    """Return default content for a fresh draft — the frontend uses this
+    as the starting point for the editor without needing to persist
+    anything until the operator starts typing."""
+    import uuid
+    return {
+        "id": f"ucd_{uuid.uuid4().hex[:16]}",
+        "bank_short": bank_short,
+        "bank_name": f"{bank_short} Ltd",
+        **_draft_defaults(bank_short),
+    }
+
+
+@router.get("/admin/usecase/drafts/{draft_id}")
+async def admin_usecase_drafts_get(draft_id: str, _admin=Depends(require_admin)):
+    row = await db.usecase_drafts.find_one({"id": draft_id}, {"_id": 0})
+    if not row:
+        raise HTTPException(status_code=404, detail="Draft not found")
+    return row
+
+
+@router.post("/admin/usecase/drafts")
+async def admin_usecase_drafts_upsert(
+    payload: UseCaseDraftIn,
+    admin=Depends(require_admin),
+):
+    """Create or update a draft. If `id` is omitted a new one is minted.
+    Returns the full merged document so the frontend can hydrate its
+    local state with any defaults it didn't already have."""
+    import uuid
+    from datetime import datetime as _dt, timezone as _tz
+
+    now_iso = _dt.now(_tz.utc).isoformat()
+    draft_id = payload.id or f"ucd_{uuid.uuid4().hex[:16]}"
+    existing = await db.usecase_drafts.find_one({"id": draft_id}, {"_id": 0})
+    merged = _coalesce_draft_doc(existing, payload, now_iso=now_iso)
+    merged["id"] = draft_id
+    if not existing:
+        merged["created_by"] = admin.get("email") if isinstance(admin, dict) else None
+    await db.usecase_drafts.update_one(
+        {"id": draft_id}, {"$set": merged}, upsert=True
+    )
+    return merged
+
+
+class _DraftPreviewIn(BaseModel):
+    """Allow previewing without persisting — the frontend sends the raw
+    editor state and gets back the fully-rendered HTML + resolved
+    subject, so operators can proofread before saving."""
+    bank_short: str = Field(default="9PSB", max_length=24)
+    bank_name: Optional[str] = Field(default=None, max_length=160)
+    recipient_name: Optional[str] = Field(default="", max_length=120)
+    recipient_title: Optional[str] = Field(default=None, max_length=120)
+    subject: Optional[str] = Field(default=None, max_length=200)
+    body_text: Optional[str] = Field(default=None, max_length=12000)
+    greeting_override: Optional[str] = Field(default=None, max_length=200)
+    cta_text: Optional[str] = Field(default=None, max_length=600)
+    booking_url: Optional[str] = Field(default=None, max_length=400)
+
+
+@router.post("/admin/usecase/drafts/preview")
+async def admin_usecase_drafts_preview(
+    payload: _DraftPreviewIn,
+    _admin=Depends(require_admin),
+):
+    import usecase
+    subject = payload.subject or f"Vaulted — Strategic Use Case for {payload.bank_short}"
+    html = usecase.build_usecase_cover_html(
+        recipient_name=payload.recipient_name or payload.bank_short,
+        bank_short=payload.bank_short,
+        bank_name=payload.bank_name,
+        body_text=payload.body_text,
+        greeting_override=payload.greeting_override,
+        cta_text=payload.cta_text,
+        booking_url=payload.booking_url,
+    )
+    return {"subject": subject, "html": html}
+
+
+@router.delete("/admin/usecase/drafts/{draft_id}")
+async def admin_usecase_drafts_delete(draft_id: str, _admin=Depends(require_admin)):
+    r = await db.usecase_drafts.delete_one({"id": draft_id})
+    return {"ok": r.deleted_count > 0, "deleted": r.deleted_count}
+
+
+@router.post("/admin/usecase/drafts/{draft_id}/send")
+async def admin_usecase_drafts_send(
+    draft_id: str,
+    admin=Depends(require_admin),
+):
+    """Convenience: send the draft as-is through the main send pipeline
+    so analytics stay unified. Marks the draft `status="sent"` on success
+    so the UI can archive it."""
+    import uuid
+    from datetime import datetime as _dt, timezone as _tz
+    draft = await db.usecase_drafts.find_one({"id": draft_id}, {"_id": 0})
+    if not draft:
+        raise HTTPException(status_code=404, detail="Draft not found")
+    if not (draft.get("recipient_email") or "").strip():
+        raise HTTPException(status_code=422, detail="Draft has no recipients yet")
+    payload = UseCaseSendIn(
+        recipient_email=draft["recipient_email"],
+        recipient_name=draft.get("recipient_name") or "",
+        recipient_title=draft.get("recipient_title") or None,
+        bank_short=draft.get("bank_short") or "9PSB",
+        bank_name=draft.get("bank_name") or None,
+        body_text=draft.get("body_text") or None,
+        greeting_override=draft.get("greeting_override") or None,
+        cta_text=draft.get("cta_text") or None,
+        cover_note=draft.get("cover_note") or None,
+        cc=draft.get("cc") or None,
+        booking_url=draft.get("booking_url") or None,
+        subject_override=draft.get("subject") or None,
+        draft_id=draft_id,
+        send_id=f"ucs_{uuid.uuid4().hex[:16]}",
+    )
+    result = await admin_usecase_send(payload, admin=admin)  # type: ignore[arg-type]
+    sent_ok = bool(result.get("ok")) or (
+        isinstance(result.get("sent_count"), int) and result["sent_count"] > 0
+    )
+    if sent_ok:
+        await db.usecase_drafts.update_one(
+            {"id": draft_id},
+            {"$set": {
+                "status": "sent",
+                "sent_at": _dt.now(_tz.utc).isoformat(),
+                "last_send_result": result,
+            }},
+        )
+    return {"draft_id": draft_id, "send_result": result}
 
 
 @router.post("/admin/usecase/resend-webhook")
