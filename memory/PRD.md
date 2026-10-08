@@ -219,3 +219,26 @@ MONGO_URL, DB_NAME=vaulted, JWT_SECRET, STRIPE_API_KEY (live, rotated), STRIPE_W
   toggle, UTC hour input + BST/Nairobi preview), last-run timestamp +
   5-row recent history disclosure.
 - **Env vars**: `WAITLIST_SYNC_ENABLED` (default true), `WAITLIST_SYNC_HOUR_UTC` (default 2).
+
+## ✉️ Multi-Recipient Partner Use-Case Send (Iter 54, 2026-10)
+- **Issue**: Pasting a comma-separated list of PSB emails into
+  "Recipient email" triggered a Pydantic `EmailStr` validation error.
+- **Fix**:
+  - Backend `UseCaseSendIn` now accepts a plain string with a custom
+    validator that splits on `,;` or whitespace and validates each
+    segment — same forgiveness as Gmail's To field. Rejects a single
+    malformed address with the offending email in the error message.
+  - Endpoint fans out one send per recipient (unique `send_id` per
+    person for per-recipient open/click tracking) and returns a batch
+    result when more than one address was supplied; single-recipient
+    callers get the legacy response shape so existing integrations keep
+    working.
+  - Frontend `PartnerUseCaseCard` parses the input live, hints
+    "Separate multiple with commas", expands the field into a 2-line
+    textarea when >1 recipient is detected, updates the button copy to
+    `Send to N recipients at 9PSB`, surfaces per-recipient success /
+    failure in the result message, and translates Pydantic
+    `not a valid email` errors into a clearer hint.
+  - "+ Save to contacts" is retained — it saves the first parsed
+    address only so operators can still bank one new contact per
+    multi-recipient send without creating duplicates.

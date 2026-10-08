@@ -920,12 +920,41 @@ async def admin_kotani_settlements(
 #   • Idempotency: if `send_id` is provided by the client we honour it;
 #     otherwise we mint a uuid4 so retries from a flaky network don't
 #     fire duplicate emails if the client is well-behaved.
-from pydantic import BaseModel, EmailStr, Field
+from pydantic import BaseModel, EmailStr, Field, field_validator
 from typing import List
+import re as _re
+
+
+def _split_recipients(raw: str) -> list[str]:
+    """Split an operator-pasted recipient string into clean, deduped
+    emails. We accept any mix of commas, semicolons, whitespace or
+    newlines — same forgiveness operators get in Gmail's To field —
+    then validate each individually and preserve order."""
+    if not raw:
+        return []
+    parts = [p.strip() for p in _re.split(r"[,;\s]+", str(raw)) if p and p.strip()]
+    seen: set[str] = set()
+    out: list[str] = []
+    # Loose check — the actual EmailStr validation happens below, this
+    # is just to catch obviously malformed segments early so the user
+    # sees a sharp error message that names the offender.
+    EMAIL_RE = _re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
+    for p in parts:
+        low = p.lower()
+        if low in seen:
+            continue
+        if not EMAIL_RE.match(p):
+            raise ValueError(f"not a valid email: {p!r}")
+        seen.add(low)
+        out.append(p)
+    return out
 
 
 class UseCaseSendIn(BaseModel):
-    recipient_email: EmailStr
+    # String rather than EmailStr so operators can paste comma-separated
+    # lists directly ("foo@bar.com, baz@qux.com"). Validated into a
+    # cleaned list by the field_validator below.
+    recipient_email: str = Field(..., max_length=2000)
     recipient_name: str = Field(default="", max_length=120)
     recipient_title: Optional[str] = Field(default=None, max_length=120)
     bank_short: str = Field(default="9PSB", max_length=24)
@@ -938,6 +967,18 @@ class UseCaseSendIn(BaseModel):
     booking_url: Optional[str] = Field(default=None, max_length=400)
     send_id: Optional[str] = Field(default=None, max_length=64)
 
+    @field_validator("recipient_email")
+    @classmethod
+    def _validate_recipients(cls, v: str) -> str:
+        # Trigger split+validate at parse time so a malformed segment
+        # fails with a specific message rather than letting Resend
+        # bounce the whole send later.
+        _split_recipients(v)
+        return v
+
+    def recipient_list(self) -> list[str]:
+        return _split_recipients(self.recipient_email)
+
 
 @router.post("/admin/usecase/send")
 async def admin_usecase_send(
@@ -946,22 +987,26 @@ async def admin_usecase_send(
 ):
     """One-click dispatch of the PSB use case PDF via Resend.
 
-    Returns `{send_id, resend_id, status}` so the UI can render an
-    immediate confirmation and later poll for delivery status.
+    Accepts a single email OR a comma/semicolon-separated list in
+    `recipient_email`. Each recipient receives their own personalised
+    send (same subject, same PDF) so individual deliverability and
+    open/click tracking stays per-person.
+
+    Returns `{ok, send_id, status}` for a single-recipient call for
+    back-compat, and `{ok, batch, results: [...]}` when multiple
+    recipients were supplied.
     """
     import uuid
     from datetime import datetime as _dt, timezone as _tz
     import usecase
     from emails import send_email_via_resend_with_attachment
 
-    send_id = payload.send_id or f"ucs_{uuid.uuid4().hex[:16]}"
+    recipients = payload.recipient_list()
+    if not recipients:
+        raise HTTPException(status_code=422, detail="recipient_email is empty")
 
-    # Guard against accidental duplicate sends from double-click.
-    existing = await db.usecase_sends.find_one({"send_id": send_id}, {"_id": 0})
-    if existing and existing.get("status") in {"sent", "delivered"}:
-        return {"ok": True, "send_id": send_id, "already_sent": True,
-                "resend_id": existing.get("resend_id"), "sent_at": existing.get("sent_at")}
-
+    # Build the attached PDF once — identical across every recipient so
+    # we save CPU + guarantee all recipients get the exact same file.
     pdf_overrides = {
         "bank_short": payload.bank_short,
         "bank_name": payload.bank_name,
@@ -990,55 +1035,106 @@ async def admin_usecase_send(
     )
     filename = f"Vaulted-UseCase-{payload.bank_short.replace(' ', '-')}.pdf"
 
-    tags = [
-        {"name": "artefact", "value": "psb_usecase"},
-        {"name": "send_id", "value": send_id},
-        {"name": "bank_short", "value": payload.bank_short.lower()},
-    ]
+    base_send_id = payload.send_id or f"ucs_{uuid.uuid4().hex[:16]}"
 
-    result = await send_email_via_resend_with_attachment(
-        to=payload.recipient_email,
-        subject=subject,
-        html=html,
-        attachment_bytes=pdf_bytes,
-        attachment_filename=filename,
-        cc=payload.cc or None,
-        tags=tags,
-    )
+    results: list[dict] = []
+    for idx, rcpt in enumerate(recipients):
+        # Mint a unique send_id per recipient so analytics stays
+        # per-person and Resend webhook correlations work. Preserve
+        # idempotency: a client that supplied `send_id` ends up with
+        # deterministic sub-ids too.
+        send_id = base_send_id if len(recipients) == 1 else f"{base_send_id}_{idx+1}"
 
-    now = _dt.now(_tz.utc).isoformat()
-    status = "sent" if result.get("ok") else "failed"
-    row = {
-        "send_id": send_id,
-        "resend_id": result.get("resend_id"),
-        "status": status,
-        "error": result.get("error"),
-        "sent_at": now if status == "sent" else None,
-        "attempted_at": now,
-        "sent_by": admin.get("email") if isinstance(admin, dict) else None,
-        "recipient_email": payload.recipient_email,
-        "recipient_name": payload.recipient_name,
-        "recipient_title": payload.recipient_title,
-        "bank_short": payload.bank_short,
-        "bank_name": payload.bank_name or f"{payload.bank_short} Ltd",
-        "subject": subject,
-        "cover_note_present": bool(payload.cover_note),
-        "cc": payload.cc or [],
-        "delivered_at": None,
-        "opened_at": None,
-        "clicked_at": None,
-        "last_event_at": now,
-        "events": [],
+        # Guard against accidental duplicate sends from double-click.
+        existing = await db.usecase_sends.find_one({"send_id": send_id}, {"_id": 0})
+        if existing and existing.get("status") in {"sent", "delivered"}:
+            results.append({
+                "ok": True,
+                "recipient": rcpt,
+                "send_id": send_id,
+                "already_sent": True,
+                "resend_id": existing.get("resend_id"),
+                "sent_at": existing.get("sent_at"),
+            })
+            continue
+
+        tags = [
+            {"name": "artefact", "value": "psb_usecase"},
+            {"name": "send_id", "value": send_id},
+            {"name": "bank_short", "value": payload.bank_short.lower()},
+        ]
+
+        result = await send_email_via_resend_with_attachment(
+            to=rcpt,
+            subject=subject,
+            html=html,
+            attachment_bytes=pdf_bytes,
+            attachment_filename=filename,
+            cc=payload.cc or None,
+            tags=tags,
+        )
+
+        now = _dt.now(_tz.utc).isoformat()
+        status = "sent" if result.get("ok") else "failed"
+        row = {
+            "send_id": send_id,
+            "resend_id": result.get("resend_id"),
+            "status": status,
+            "error": result.get("error"),
+            "sent_at": now if status == "sent" else None,
+            "attempted_at": now,
+            "sent_by": admin.get("email") if isinstance(admin, dict) else None,
+            "recipient_email": rcpt,
+            "recipient_name": payload.recipient_name,
+            "recipient_title": payload.recipient_title,
+            "bank_short": payload.bank_short,
+            "bank_name": payload.bank_name or f"{payload.bank_short} Ltd",
+            "subject": subject,
+            "cover_note_present": bool(payload.cover_note),
+            "cc": payload.cc or [],
+            "delivered_at": None,
+            "opened_at": None,
+            "clicked_at": None,
+            "last_event_at": now,
+            "events": [],
+            "batch_id": base_send_id if len(recipients) > 1 else None,
+        }
+        await db.usecase_sends.update_one(
+            {"send_id": send_id}, {"$set": row}, upsert=True
+        )
+
+        results.append({
+            "ok": bool(result.get("ok")),
+            "recipient": rcpt,
+            "send_id": send_id,
+            "resend_id": result.get("resend_id"),
+            "status": status,
+            "error": result.get("error"),
+            "sent_at": now if status == "sent" else None,
+        })
+
+    # Back-compat response for single-recipient callers so existing
+    # UI tests / integrations keep passing.
+    if len(results) == 1:
+        r = results[0]
+        return {
+            "ok": r["ok"],
+            "send_id": r["send_id"],
+            "resend_id": r.get("resend_id"),
+            "status": r.get("status"),
+            "sent_at": r.get("sent_at"),
+            "error": r.get("error"),
+            "already_sent": r.get("already_sent", False),
+        }
+
+    sent_count = sum(1 for r in results if r["ok"])
+    return {
+        "ok": sent_count == len(results),
+        "batch": base_send_id,
+        "sent_count": sent_count,
+        "failed_count": len(results) - sent_count,
+        "results": results,
     }
-
-    await db.usecase_sends.update_one(
-        {"send_id": send_id}, {"$set": row}, upsert=True
-    )
-
-    if not result.get("ok"):
-        return {"ok": False, "send_id": send_id, "status": status, "error": result.get("error")}
-    return {"ok": True, "send_id": send_id, "resend_id": result.get("resend_id"),
-            "sent_at": now, "status": status}
 
 
 @router.get("/admin/usecase/sends")

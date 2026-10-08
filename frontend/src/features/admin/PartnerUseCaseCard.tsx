@@ -76,7 +76,8 @@ export function PartnerUseCaseCard({ sendsData, loading, errorMsg, onSent }: Pro
   }, []);
 
   const saveCurrentAsContact = useCallback(async () => {
-    if (!recipientEmail.includes("@") || !recipientName.trim() || !bankShort.trim()) return;
+    const firstEmail = (recipientEmail.split(/[,;\s]+/).find((p) => /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(p.trim())) || "").trim();
+    if (!firstEmail || !recipientName.trim() || !bankShort.trim()) return;
     setSavingContact(true);
     try {
       await api("/admin/contacts", {
@@ -86,7 +87,7 @@ export function PartnerUseCaseCard({ sendsData, loading, errorMsg, onSent }: Pro
           bank_name: bankName.trim() || undefined,
           name: recipientName.trim(),
           title: recipientTitle.trim() || undefined,
-          email: recipientEmail.trim(),
+          email: firstEmail,
         },
       });
       await reloadContacts();
@@ -97,43 +98,104 @@ export function PartnerUseCaseCard({ sendsData, loading, errorMsg, onSent }: Pro
     }
   }, [bankName, bankShort, recipientEmail, recipientName, recipientTitle, reloadContacts]);
 
+  // Count how many addresses the operator has pasted so the UI can
+  // mirror what the backend will fan out to.
+  const parsedRecipients = useMemo(() => {
+    const parts = recipientEmail.split(/[,;\s]+/).map((p) => p.trim()).filter(Boolean);
+    const unique: string[] = [];
+    const seen = new Set<string>();
+    for (const p of parts) {
+      const low = p.toLowerCase();
+      if (!seen.has(low) && /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(p)) {
+        seen.add(low);
+        unique.push(p);
+      }
+    }
+    return unique;
+  }, [recipientEmail]);
+
   const canSend =
-    recipientEmail.includes("@") && recipientEmail.includes(".") &&
-    bankShort.trim().length > 0 && !sending;
+    parsedRecipients.length > 0 &&
+    bankShort.trim().length > 0 &&
+    !sending;
 
   const currentContactSaved = useMemo(() => {
     if (!contacts || !recipientEmail) return false;
-    return contacts.contacts.some((c) => c.email.toLowerCase() === recipientEmail.toLowerCase());
-  }, [contacts, recipientEmail]);
+    // When multiple recipients are pasted the "save to contacts" quick
+    // action is hidden anyway; use the first parsed address to make the
+    // check meaningful for the single-recipient case.
+    const email = (parsedRecipients[0] || recipientEmail).toLowerCase();
+    return contacts.contacts.some((c) => c.email.toLowerCase() === email);
+  }, [contacts, recipientEmail, parsedRecipients]);
 
   const onSend = async () => {
     if (!canSend) return;
     setSending(true);
     setSendResult(null);
     try {
-      const res = await api<{ ok: boolean; send_id: string; status: string; error?: string }>(
-        "/admin/usecase/send",
-        {
-          method: "POST",
-          body: {
-            recipient_email: recipientEmail.trim(),
-            recipient_name: recipientName.trim(),
-            recipient_title: recipientTitle.trim() || undefined,
-            bank_short: bankShort.trim(),
-            bank_name: bankName.trim() || undefined,
-            cover_note: coverNote.trim() || undefined,
-          },
+      // Backend accepts the string verbatim and fans out one send per
+      // address, so no client-side loop needed.
+      const res = await api<
+        | { ok: boolean; send_id: string; status: string; error?: string }
+        | {
+            ok: boolean;
+            batch: string;
+            sent_count: number;
+            failed_count: number;
+            results: { ok: boolean; recipient: string; error?: string }[];
+          }
+      >("/admin/usecase/send", {
+        method: "POST",
+        body: {
+          recipient_email: recipientEmail.trim(),
+          recipient_name: recipientName.trim(),
+          recipient_title: recipientTitle.trim() || undefined,
+          bank_short: bankShort.trim(),
+          bank_name: bankName.trim() || undefined,
+          cover_note: coverNote.trim() || undefined,
+        },
+      });
+      // Batch response (multi-recipient) vs single-recipient legacy
+      if ("results" in res && Array.isArray(res.results)) {
+        const sent = res.sent_count;
+        const failed = res.failed_count;
+        if (res.ok) {
+          setSendResult({
+            ok: true,
+            msg: `✓ Sent to all ${sent} recipient${sent !== 1 ? "s" : ""}`,
+          });
+        } else if (sent > 0) {
+          const failedList = res.results.filter((r) => !r.ok).map((r) => r.recipient).join(", ");
+          setSendResult({
+            ok: false,
+            msg: `⚠ ${sent} sent · ${failed} failed (${failedList})`,
+          });
+        } else {
+          const firstErr = res.results[0]?.error || "Send failed";
+          setSendResult({ ok: false, msg: `✗ All ${failed} failed · ${firstErr}` });
         }
-      );
-      if (res.ok) {
-        setSendResult({ ok: true, msg: `✓ Sent to ${recipientEmail}` });
-        setCoverNote("");
-        setTimeout(() => onSent(), 500);
-      } else {
-        setSendResult({ ok: false, msg: `✗ ${res.error || "Send failed"}` });
+        if (sent > 0) {
+          setCoverNote("");
+          setTimeout(() => onSent(), 500);
+        }
+      } else if ("ok" in res) {
+        if (res.ok) {
+          setSendResult({ ok: true, msg: `✓ Sent to ${recipientEmail}` });
+          setCoverNote("");
+          setTimeout(() => onSent(), 500);
+        } else {
+          setSendResult({ ok: false, msg: `✗ ${res.error || "Send failed"}` });
+        }
       }
     } catch (e: any) {
-      setSendResult({ ok: false, msg: `✗ ${e?.message || "Network error"}` });
+      // Pydantic validation errors arrive as an array in `detail`. If
+      // the message mentions "value is not a valid email", surface a
+      // clearer hint that references our comma-separated support.
+      const msg = e?.message || "Network error";
+      const nicer = /not a valid email/i.test(msg)
+        ? "✗ One of the emails is malformed. Separate multiple recipients with a comma or newline."
+        : `✗ ${msg}`;
+      setSendResult({ ok: false, msg: nicer });
     } finally {
       setSending(false);
     }
@@ -192,16 +254,28 @@ export function PartnerUseCaseCard({ sendsData, loading, errorMsg, onSent }: Pro
           </View>
         </View>
         <View>
-          <Text style={s.inputLabel}>Recipient email *</Text>
+          <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "flex-end" }}>
+            <Text style={s.inputLabel}>Recipient email *</Text>
+            <Text style={[s.inputLabel, { fontWeight: "500", textTransform: "none", letterSpacing: 0, color: colors.onSurfaceTertiary }]}>
+              Separate multiple with commas
+            </Text>
+          </View>
           <TextInput
             value={recipientEmail}
             onChangeText={setRecipientEmail}
-            placeholder="director@9psb.com.ng"
+            placeholder="director@9psb.com.ng, md@9psb.com.ng"
             placeholderTextColor={colors.onSurfaceTertiary}
-            style={s.input}
+            style={[s.input, parsedRecipients.length > 1 && { height: 60, textAlignVertical: "top", paddingVertical: 8 }]}
             autoCapitalize="none"
             keyboardType="email-address"
+            autoCorrect={false}
+            multiline={parsedRecipients.length > 1}
           />
+          {parsedRecipients.length > 1 ? (
+            <Text style={[s.subtle, { fontSize: 11, marginTop: 3 }]}>
+              Fans out to {parsedRecipients.length} recipients — each gets their own personalised send & tracking.
+            </Text>
+          ) : null}
         </View>
 
         {/* Contact book picker + save-as-contact action */}
@@ -305,7 +379,11 @@ export function PartnerUseCaseCard({ sendsData, loading, errorMsg, onSent }: Pro
         ) : (
           <>
             <Ionicons name="paper-plane" size={16} color={colors.onBrand} />
-            <Text style={s.sendBtnText}>Send use case to {bankShort}</Text>
+            <Text style={s.sendBtnText}>
+              {parsedRecipients.length > 1
+                ? `Send to ${parsedRecipients.length} recipients at ${bankShort}`
+                : `Send use case to ${bankShort}`}
+            </Text>
           </>
         )}
       </Pressable>
