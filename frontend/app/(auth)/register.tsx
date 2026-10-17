@@ -101,7 +101,7 @@ export default function Register() {
             <Ionicons name="chevron-back" size={26} color={colors.onSurface} />
           </Pressable>
           <Text style={s.title}>{t("sign_up")}</Text>
-          <Text style={s.subtitle}>Your keys, your coins. Get started in seconds.</Text>
+          <Text style={s.subtitle}>Your keys, your Funds. Get started in seconds.</Text>
 
           <PreviewBanner
             message="Preview mode - by signing up you're joining Vaulted's build cohort. Live services will open once we're FCA authorized. Do not deposit funds you cannot afford to lose."
