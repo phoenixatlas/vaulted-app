@@ -42,7 +42,7 @@ export default function ExportKey() {
       <ScrollView contentContainerStyle={{ padding: spacing.xl }}>
         <View style={s.warnCard}>
           <Ionicons name="warning" size={28} color={colors.warning} />
-          <Text style={s.warnTitle}>Your keys, your coins.</Text>
+          <Text style={s.warnTitle}>Your keys, your Funds.</Text>
           <Text style={s.warnText}>
             Anyone who has this private key controls your wallet permanently. Never share it,
             screenshot it on a synced device, or paste it into a website. Save it somewhere
