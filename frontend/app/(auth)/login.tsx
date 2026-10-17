@@ -8,6 +8,7 @@ import { SafeAreaView } from "react-native-safe-area-context";
 import { useAuth } from "@/src/lib/auth";
 import { useI18n } from "@/src/lib/i18n";
 import { colors, spacing, radius, BRAND_IMAGES } from "@/src/lib/theme";
+import { PasswordInput } from "@/src/components/PasswordInput";
 
 export default function Login() {
   const { login } = useAuth();
@@ -85,14 +86,14 @@ export default function Login() {
           </View>
           <View style={s.field}>
             <Text style={s.label}>{t("password")}</Text>
-            <TextInput
+            <PasswordInput
               testID="login-password-input"
               value={password}
               onChangeText={setPassword}
-              secureTextEntry
               placeholder="••••••••"
-              placeholderTextColor={colors.onSurfaceTertiary}
-              style={s.input}
+              passwordType="current-password"
+              onSubmitEditing={submit}
+              returnKeyType="go"
             />
             <Pressable
               testID="goto-forgot-password"

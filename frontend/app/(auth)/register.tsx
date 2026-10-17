@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import {
   View, Text, TextInput, Pressable, StyleSheet, KeyboardAvoidingView,
   Platform, ScrollView, ActivityIndicator,
@@ -12,6 +12,7 @@ import { colors, spacing, radius } from "@/src/lib/theme";
 import { api } from "@/src/lib/api";
 import { getPendingRefCode, clearPendingRefCode } from "@/src/lib/refCode";
 import PreviewBanner from "@/src/components/PreviewBanner";
+import { PasswordInput } from "@/src/components/PasswordInput";
 
 type ValidateResp = {
   valid: boolean;
@@ -28,8 +29,21 @@ export default function Register() {
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  const [confirmPassword, setConfirmPassword] = useState("");
   const [loading, setLoading] = useState(false);
   const [err, setErr] = useState<string | null>(null);
+
+  // Mismatch is a warning (not an error) until the user has typed at
+  // least one character in the confirm box — avoids red flashes while
+  // they're still typing the main password.
+  const passwordsMismatch = useMemo(
+    () => confirmPassword.length > 0 && password !== confirmPassword,
+    [password, confirmPassword],
+  );
+  const passwordsMatch = useMemo(
+    () => password.length >= 6 && password === confirmPassword,
+    [password, confirmPassword],
+  );
 
   // Referral code — checked in this order: URL param, then persisted storage.
   const [refCode, setRefCode] = useState<string | null>(null);
@@ -56,6 +70,17 @@ export default function Register() {
 
   const submit = async () => {
     setErr(null);
+    // Client-side gate — surface the mismatch before hitting the API
+    // so the user never sees a confusing backend error message when
+    // the real problem is a typo in one of the two password boxes.
+    if (password.length < 6) {
+      setErr("Password must be at least 6 characters.");
+      return;
+    }
+    if (password !== confirmPassword) {
+      setErr("Passwords don't match. Please check and try again.");
+      return;
+    }
     setLoading(true);
     try {
       await register(email.trim(), password, name.trim(), refCode);
@@ -107,12 +132,51 @@ export default function Register() {
           </View>
           <View style={s.field}>
             <Text style={s.label}>{t("password")}</Text>
-            <TextInput testID="reg-password-input" value={password} onChangeText={setPassword} secureTextEntry placeholder="At least 6 characters" placeholderTextColor={colors.onSurfaceTertiary} style={s.input} />
+            <PasswordInput
+              testID="reg-password-input"
+              value={password}
+              onChangeText={setPassword}
+              placeholder="At least 6 characters"
+              passwordType="new-password"
+            />
+          </View>
+          <View style={s.field}>
+            <Text style={s.label}>Confirm password</Text>
+            <PasswordInput
+              testID="reg-password-confirm-input"
+              value={confirmPassword}
+              onChangeText={setConfirmPassword}
+              placeholder="Re-enter your password"
+              passwordType="new-password"
+              onSubmitEditing={submit}
+              returnKeyType="done"
+              containerStyle={passwordsMismatch ? { borderColor: colors.error, borderWidth: 1, borderRadius: radius.md } : undefined}
+            />
+            {passwordsMismatch ? (
+              <View style={s.hintRow}>
+                <Ionicons name="alert-circle" size={14} color={colors.error} />
+                <Text style={s.hintError}>Passwords don&apos;t match yet.</Text>
+              </View>
+            ) : passwordsMatch ? (
+              <View style={s.hintRow}>
+                <Ionicons name="checkmark-circle" size={14} color={colors.success} />
+                <Text style={s.hintOk}>Passwords match.</Text>
+              </View>
+            ) : null}
           </View>
 
           {err && <Text testID="reg-error" style={s.error}>{err}</Text>}
 
-          <Pressable testID="reg-submit-button" onPress={submit} disabled={loading} style={({ pressed }) => [s.cta, pressed && { opacity: 0.85 }]}>
+          <Pressable
+            testID="reg-submit-button"
+            onPress={submit}
+            disabled={loading || passwordsMismatch || password.length < 6 || confirmPassword.length === 0}
+            style={({ pressed }) => [
+              s.cta,
+              (loading || passwordsMismatch || password.length < 6 || confirmPassword.length === 0) && { opacity: 0.5 },
+              pressed && { opacity: 0.85 },
+            ]}
+          >
             {loading ? <ActivityIndicator color="#fff" /> : <Text style={s.ctaText}>{t("sign_up")}</Text>}
           </Pressable>
 
@@ -145,4 +209,7 @@ const s = StyleSheet.create({
   muted: { color: colors.onSurfaceSecondary, fontSize: 14 },
   linkText: { color: colors.brand, fontSize: 14, fontWeight: "600" },
   error: { color: colors.error, marginBottom: spacing.sm, fontSize: 14 },
+  hintRow: { flexDirection: "row", alignItems: "center", gap: 6, marginTop: 6 },
+  hintError: { fontSize: 12, color: colors.error, fontWeight: "500" },
+  hintOk: { fontSize: 12, color: colors.success, fontWeight: "500" },
 });
