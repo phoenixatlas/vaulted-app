@@ -1894,7 +1894,15 @@
       if (!email) return false;
 
       // Basic client-side email sanity (server re-validates).
-      var emailOk = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
+      // Catch the common typos *before* bothering the server so the user
+      // gets instant feedback and we don't trigger server-side rate limits.
+      var emailOk = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)
+        && !/\.\./.test(email)                 // no double-dots
+        && !/@-/.test(email)                   // no hyphen right after @
+        && !/-\./.test(email.split('@')[1] || '') // no "-." in domain
+        && !/\.$/.test(email)                  // no trailing dot
+        && email.indexOf(',') === -1           // no stray commas
+        && email.length <= 254;                // RFC 5321 cap
       if (!emailOk) {
         msg.style.color = '#ff8a80';
         msg.textContent = 'That doesn\u2019t look like a valid email address.';
@@ -1964,10 +1972,32 @@
           if (corridorEl) corridorEl.selectedIndex = 0;
         } else if (res.status === 429) {
           msg.style.color = '#ff8a80';
-          msg.textContent = 'Slow down \u2014 one submission at a time.';
+          msg.textContent = 'Please wait a moment before trying again.';
         } else if (res.status === 400) {
           msg.style.color = '#ff8a80';
-          msg.textContent = (data && data.detail) || 'Please check the email address.';
+          var detail400 = (data && typeof data.detail === 'string') ? data.detail : '';
+          msg.textContent = detail400 || 'Please check the email address.';
+        } else if (res.status === 422) {
+          // FastAPI validation error — detail is a *list* of
+          // {loc, msg, type} objects. Pull a user-friendly line.
+          msg.style.color = '#ff8a80';
+          var friendly = 'Please enter a valid email address.';
+          try {
+            if (data && Array.isArray(data.detail) && data.detail.length) {
+              var first = data.detail[0] || {};
+              var loc = (first.loc || []).join('.');
+              var raw = (first.msg || '').toString();
+              // Strip the "value is not a valid email address: " prefix
+              // Pydantic prepends so the user sees the actionable bit.
+              raw = raw.replace(/^value is not a valid email address:\s*/i, '');
+              if (loc.indexOf('email') !== -1) {
+                friendly = 'That email didn\u2019t pass validation' + (raw ? ' \u2014 ' + raw : '.');
+              } else if (raw) {
+                friendly = raw;
+              }
+            }
+          } catch (_) {}
+          msg.textContent = friendly;
         } else {
           msg.style.color = '#ff8a80';
           msg.textContent = 'Couldn\u2019t sign you up right now \u2014 please try again in a moment.';

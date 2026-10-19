@@ -202,17 +202,42 @@ def _normalize_direction(value: Optional[str]) -> str:
 
 
 # ---- Rate limit (per-IP) --------------------------------------------------
-_RATE_WINDOW_SEC = 5
-_last_seen_by_ip: dict[str, float] = {}
+# We only penalise *successful* submissions so a user who mistypes their
+# email and immediately retries isn't locked out, and a shared NAT (office
+# WiFi, mobile carrier CGNAT common in Africa & UK) doesn't trip on legit
+# back-to-back signups. We also key on IP+email together so even successful
+# submissions from the same NAT only block *that same email* re-submitting
+# — a different user on the same IP can still join right after.
+_RATE_WINDOW_SEC = 10
+_last_success_by_ip_email: dict[str, float] = {}
 
 
-def _too_fast(ip: str) -> bool:
+def _rate_key(ip: str, email: str) -> str:
+    return f"{ip}|{(email or '').lower()}"
+
+
+def _recently_submitted(ip: str, email: str) -> bool:
+    """Peek — returns True if this (ip, email) pair was successfully
+    submitted inside the current window. Does NOT mark the pair; marking
+    happens via `_mark_submitted` only after we've accepted the signup."""
     now = time.time()
-    last = _last_seen_by_ip.get(ip)
-    _last_seen_by_ip[ip] = now
+    last = _last_success_by_ip_email.get(_rate_key(ip, email))
     if last is None:
         return False
     return (now - last) < _RATE_WINDOW_SEC
+
+
+def _mark_submitted(ip: str, email: str) -> None:
+    """Record a successful submission so the same email on the same IP
+    can't be hammered. Also opportunistically prunes stale entries so the
+    dict doesn't grow unbounded on a long-running process."""
+    now = time.time()
+    _last_success_by_ip_email[_rate_key(ip, email)] = now
+    # Cheap periodic GC: once every ~500 writes, drop stale entries.
+    if len(_last_success_by_ip_email) % 500 == 0:
+        cutoff = now - _RATE_WINDOW_SEC * 10
+        for k in [k for k, v in _last_success_by_ip_email.items() if v < cutoff]:
+            _last_success_by_ip_email.pop(k, None)
 
 
 def _client_ip(request: Request) -> str:
@@ -499,7 +524,10 @@ async def waitlist_join(body: WaitlistJoinIn, request: Request):
         raise HTTPException(status_code=400, detail="Invalid email address")
 
     ip = _client_ip(request)
-    if _too_fast(ip):
+    # Only block if this *same* email on this *same* IP was already
+    # accepted inside the window. A different user on the same NAT, or
+    # the same user fixing a typo, is not blocked.
+    if _recently_submitted(ip, email):
         raise HTTPException(status_code=429, detail="Slow down — one submission at a time.")
 
     corridor = _normalize_corridor(body.corridor)
@@ -581,6 +609,10 @@ async def waitlist_join(body: WaitlistJoinIn, request: Request):
         "[waitlist] joined email=%s corridor=%s direction=%s source=%s already=%s pos=%d/%d ref_by=%s",
         email, corridor, direction, source, already_joined, position, total, referred_by or "-",
     )
+    # Only *now* — after a fully-accepted submission — do we mark the
+    # (ip, email) pair as rate-limited. Validation failures (422), typo
+    # retries, and shared-NAT siblings never trip the limiter.
+    _mark_submitted(ip, email)
     return {
         "ok": True,
         "already_joined": already_joined,
