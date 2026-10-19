@@ -1800,14 +1800,19 @@
   </script>
   <script>
     // Waitlist form → POST /api/waitlist/join → Resend Contacts + Mongo
-    // Backend defaults to the Emergent-hosted production API which has
-    // permissive CORS. Override with `window.__VAULTED_API_BASE__` before
-    // this script loads if you need to point at a different backend
-    // (e.g. Render). If you switch backends, ensure that backend's
-    // CORS_ALLOW_ORIGINS env var includes the landing domain
-    // (phoenix-atlas.com + any preview subdomain) or the browser will
-    // reject preflights and users will see "Network hiccup".
-    var WAITLIST_API_BASE = (window.__VAULTED_API_BASE__ || 'https://multi-sig-vault.emergent.host').replace(/\/+$/, '');
+    // Backend defaults to the live Render production API — the SAME
+    // backend the mobile/web admin dashboard reads from, so every form
+    // submission from phoenix-atlas.com lands in the same MongoDB the
+    // admin page is reading. (Historical note: this used to default to
+    // the Emergent-hosted preview URL which caused a split-brain where
+    // signups went to a preview DB and never showed up in prod admin.)
+    //
+    // Override with `window.__VAULTED_API_BASE__` before this script
+    // loads if you need to repoint at a different backend. If you ever
+    // switch backends again, make sure the new backend's CORS_ALLOW_ORIGINS
+    // env var includes phoenix-atlas.com (and any preview subdomain)
+    // or the browser will reject preflights and users see "Network hiccup".
+    var WAITLIST_API_BASE = (window.__VAULTED_API_BASE__ || 'https://vaulted-app.onrender.com').replace(/\/+$/, '');
 
     // Track ref code from ?ref=CODE URL param → validate → show banner on
     // the waitlist form to signal social proof + explain the reward.

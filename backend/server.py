@@ -133,7 +133,7 @@ async def health() -> dict:
 
 
 # CORS — env-driven for prod, falls back to '*' for local dev.
-# Set CORS_ALLOW_ORIGINS in Railway/Vercel as a comma-separated list, e.g.:
+# Set CORS_ALLOW_ORIGINS in Railway/Render as a comma-separated list, e.g.:
 #   CORS_ALLOW_ORIGINS=https://vaulted.vercel.app,https://app.vaulted.io
 _origins_env = os.environ.get("CORS_ALLOW_ORIGINS", "").strip()
 _allow_origins = (
@@ -142,10 +142,22 @@ _allow_origins = (
 # Browsers reject `allow_credentials=True` with `allow_origins=*`, so flip credentials
 # off when we're in the wildcard fallback.
 _allow_credentials = _allow_origins != ["*"]
+
+# Belt-and-braces: regardless of what's in CORS_ALLOW_ORIGINS, always
+# accept the production landing domain and any of its subdomains, plus
+# Vercel preview deploys for the Expo web admin. This stops the "landing
+# page submits silently fail with CORS" class of bug from ever recurring
+# just because someone forgot to update an env var.
+_allow_origin_regex = (
+    r"^https://(.*\.)?(phoenix-atlas\.com|vaulted-app\.vercel\.app"
+    r"|vaulted\.vercel\.app)$|^https://[a-z0-9-]+\.vercel\.app$"
+)
+
 app.add_middleware(
     CORSMiddleware,
     allow_credentials=_allow_credentials,
     allow_origins=_allow_origins,
+    allow_origin_regex=_allow_origin_regex,
     allow_methods=["*"],
     allow_headers=["*"],
 )

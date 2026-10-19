@@ -1053,7 +1053,30 @@ try:  # avoid a hard import at module top so a missing admin dep doesn't
         the admin dashboard is under-counting."""
         response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
         response.headers["Pragma"] = "no-cache"
-        return await run_resend_audit()
+        # 20s hard cap. If Resend is slow or down we'd rather return a
+        # degraded body (Mongo-only side filled in) than hang the Re-check
+        # button for 60s and let Render's gateway kill the request. The
+        # button then still visibly completes so the operator knows the
+        # click DID run.
+        try:
+            return await asyncio.wait_for(run_resend_audit(), timeout=20)
+        except asyncio.TimeoutError:
+            logger.warning("[waitlist] audit timed out; returning Mongo-only snapshot")
+            mongo_total = await db.waitlist.count_documents({})
+            return {
+                "mongo_total": mongo_total,
+                "resend_total_unique": None,
+                "gap": None,
+                "missing_from_mongo_count": 0,
+                "missing_from_mongo_sample": [],
+                "missing_from_resend_count": 0,
+                "resend_api_configured": bool(RESEND_API_KEY),
+                "audiences": [],
+                "audiences_count": 0,
+                "checked_at": iso(now_utc()),
+                "degraded": True,
+                "degraded_reason": "Resend API did not respond within 20s. Mongo count is live.",
+            }
 
     @router.post("/admin/waitlist/sync-from-resend")
     async def waitlist_sync_from_resend(_=Depends(require_admin)):

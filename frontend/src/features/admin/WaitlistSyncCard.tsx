@@ -83,8 +83,12 @@ export function WaitlistSyncCard({ onSynced }: Props) {
     setLoading(true);
     setErrorMsg(null);
     try {
+      // Cache-bust so a CDN or service-worker CANNOT satisfy this with a
+      // stale body — the whole point of pressing Re-check is to force a
+      // round-trip to the backend. Backend also responds with
+      // Cache-Control: no-store.
       const [a, c] = await Promise.all([
-        api<AuditResp>("/admin/waitlist/audit"),
+        api<AuditResp>(`/admin/waitlist/audit?_t=${Date.now()}`),
         api<SyncConfig>("/admin/waitlist/sync-config").catch(() => null),
       ]);
       setAudit(a);
@@ -370,11 +374,16 @@ export function WaitlistSyncCard({ onSynced }: Props) {
             <Pressable
               onPress={loadAll}
               disabled={loading || syncing}
-              style={[s.downloadBtn, { flex: 1, justifyContent: "center" }, (loading || syncing) && { opacity: 0.5 }]}
+              style={[s.downloadBtn, { flex: 1, justifyContent: "center" }, (loading || syncing) && { opacity: 0.6 }]}
               hitSlop={6}
+              testID="waitlist-audit-recheck"
             >
-              <Ionicons name="refresh" size={14} color={colors.brand} />
-              <Text style={s.downloadBtnText}>Re-check</Text>
+              {loading ? (
+                <ActivityIndicator size="small" color={colors.brand} />
+              ) : (
+                <Ionicons name="refresh" size={14} color={colors.brand} />
+              )}
+              <Text style={s.downloadBtnText}>{loading ? "Checking…" : "Re-check"}</Text>
             </Pressable>
             {gap > 0 ? (
               <Pressable
