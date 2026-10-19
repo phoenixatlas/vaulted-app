@@ -40,6 +40,24 @@ export type WaitlistStats = {
   corridors: Record<string, string>;
   by_direction?: { outbound: number; inbound: number };
   matrix?: { corridor: string; corridor_name: string; direction: string; count: number }[];
+  fetched_at?: string;
+};
+
+export type WaitlistRecentRow = {
+  email: string;
+  joined_at: string;
+  corridor?: string;
+  direction?: string;
+  source?: string;
+  referred_by?: string;
+  referral_count?: number;
+};
+
+export type WaitlistRecentResp = {
+  count: number;
+  total: number;
+  rows: WaitlistRecentRow[];
+  fetched_at: string;
 };
 
 export type InvestorLead = {

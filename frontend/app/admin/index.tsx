@@ -125,7 +125,7 @@ function AdminHomeInner() {
     // nuking the entire dashboard.
     const [h, w, inv, daily, refs, clicks, echo, settle, sends] = await Promise.all([
       grab<KotaniHealth>("kotani", "/admin/kotani/health"),
-      grab<WaitlistStats>("waitlist", "/admin/waitlist/stats"),
+      grab<WaitlistStats>("waitlist", `/admin/waitlist/stats?_t=${Date.now()}`),
       grab<InvestorLeadsResp>("investors", "/admin/investor/leads"),
       grab<DailySignupsResp>("daily", "/admin/waitlist/analytics/daily-signups?days=30"),
       grab<ReferralsResp>("referrals", "/admin/waitlist/analytics/referrals?limit=10"),

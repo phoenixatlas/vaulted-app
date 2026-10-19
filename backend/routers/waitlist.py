@@ -40,7 +40,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Optional
 
 import httpx
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from pydantic import BaseModel, EmailStr, Field
 
 from deps import db, iso, logger, now_utc
@@ -98,25 +98,43 @@ async def _mint_referral_code_for(email: str) -> str:
     return _generate_referral_code()
 
 
-async def _compute_position(email: str) -> tuple[int, int]:
+async def _compute_position(email: str, hints: Optional[dict] = None) -> tuple[int, int]:
     """Return (position, total) for a given waitlist member.
 
     Position is 1-indexed. Position accounts for referral boost — a member
     with 3 refs is 25 slots ahead of where their joined_at alone would put them.
     Runs a single Mongo count against their `effective_joined_at`.
+
+    `hints` lets a caller that JUST wrote the member's doc pass in the
+    freshly-persisted `joined_at` / `referral_count` so we don't rely on a
+    second round-trip to Mongo (which, under rare replication-lag edge
+    cases, can transiently return None and send the caller into the
+    `return (total+1, total)` fallback that was the historical source of
+    `position > total` reports to users).
     """
     doc = await db.waitlist.find_one(
         {"email": email},
         {"_id": 0, "joined_at": 1, "referral_count": 1},
     )
-    if not doc:
-        total = await db.waitlist.count_documents({})
-        return (total + 1, total)
+    # Patch with hints if the find missed (brand-new upsert case or any
+    # transient secondary-read oddity). We NEVER want to under-count the
+    # total and over-report a position larger than it.
+    if not doc and hints:
+        doc = {
+            "joined_at": hints.get("joined_at"),
+            "referral_count": hints.get("referral_count", 0),
+        }
 
     total = await db.waitlist.count_documents({})
+
+    if not doc or not doc.get("joined_at"):
+        # Last-resort fallback — clamp position so it NEVER exceeds total.
+        # This is what the admin dashboard reports, so divergence here
+        # was the whole class of "I'm #9 but admin shows 8" bug reports.
+        logger.warning("[waitlist] _compute_position fallback hit for %s (total=%d)", email, total)
+        return (max(1, total), total)
+
     joined_at = doc.get("joined_at")
-    if not joined_at:
-        return (total, total)
 
     ref_count = int(doc.get("referral_count") or 0)
     boost_s = _referral_boost_seconds(ref_count)
@@ -162,7 +180,10 @@ async def _compute_position(email: str) -> tuple[int, int]:
         logger.warning("[waitlist] position aggregate failed, using joined_at fallback: %s", e)
         ahead = await db.waitlist.count_documents({"joined_at": {"$lt": joined_at}})
 
-    return (ahead + 1, total)
+    # Clamp to [1, total] — never return a position above the collection
+    # size, that's an impossible state the admin dashboard can't reconcile.
+    position = max(1, min(ahead + 1, total))
+    return (position, total)
 
 # ---- Corridor catalogue ---------------------------------------------------
 # Keep in sync with the landing page `<select>` and the KOTANI_CORRIDORS
@@ -589,8 +610,17 @@ async def waitlist_join(body: WaitlistJoinIn, request: Request):
 
     # Compute position for the email response — happens AFTER the referrer
     # bump so their new position is reflected if they're the same signup
-    # (edge case, but correct).
-    position, total = await _compute_position(email)
+    # (edge case, but correct). Pass hints from the doc we JUST wrote so
+    # the position function doesn't rely on a second round-trip that, under
+    # rare replication-lag conditions, used to miss and emit the bogus
+    # "spot (total+1) of total" state.
+    position, total = await _compute_position(
+        email,
+        hints={
+            "joined_at": (existing or {}).get("joined_at") or doc_setoninsert["joined_at"],
+            "referral_count": (existing or {}).get("referral_count", 0),
+        },
+    )
 
     # Background: Resend audience add + confirmation email. Only fire once
     # per email — a re-submit with the same corridor+direction should be a
@@ -780,8 +810,15 @@ try:  # avoid a hard import at module top so a missing admin dep doesn't
     from deps import require_admin
 
     @router.get("/admin/waitlist/stats")
-    async def waitlist_stats(_=Depends(require_admin)):
+    async def waitlist_stats(response: Response, _=Depends(require_admin)):
         """Corridor + direction breakdown of the waitlist. Admin-only."""
+        # Explicitly disable any upstream caching (Cloudflare, Render,
+        # browser) — admin dashboards must always see the real count or
+        # operators can't trust reconciliation reports. This was the root
+        # cause of "the user signed up but admin still shows the old
+        # total" reports.
+        response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
+        response.headers["Pragma"] = "no-cache"
         total = await db.waitlist.count_documents({})
         # Mongo aggregation: group by corridor.
         cursor = db.waitlist.aggregate([
@@ -839,6 +876,49 @@ try:  # avoid a hard import at module top so a missing admin dep doesn't
             "breakdown": breakdown,
             "matrix": matrix,
             "corridors": CORRIDORS,
+            # Server-side timestamp so the admin UI can show "pulled 3s ago"
+            # — useful proof that a refresh really hit the DB and wasn't
+            # satisfied by a stale cache somewhere.
+            "fetched_at": iso(now_utc()),
+        }
+
+    @router.get("/admin/waitlist/recent")
+    async def waitlist_recent(
+        response: Response,
+        _=Depends(require_admin),
+        limit: int = 20,
+    ):
+        """Return the N most recent signups so admins can visually
+        reconcile a specific user's report ("I signed up as #9") against
+        what's actually in Mongo. No caching whatsoever."""
+        response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
+        response.headers["Pragma"] = "no-cache"
+        limit = max(1, min(int(limit or 20), 100))
+        cursor = (
+            db.waitlist.find(
+                {},
+                {
+                    "_id": 0,
+                    "email": 1,
+                    "joined_at": 1,
+                    "corridor": 1,
+                    "direction": 1,
+                    "source": 1,
+                    "referred_by": 1,
+                    "referral_count": 1,
+                },
+            )
+            .sort("joined_at", -1)
+            .limit(limit)
+        )
+        rows: list[dict] = []
+        async for d in cursor:
+            rows.append(d)
+        return {
+            "count": len(rows),
+            "total": await db.waitlist.count_documents({}),
+            "rows": rows,
+            "fetched_at": iso(now_utc()),
         }
 
     @router.get("/admin/waitlist/analytics/daily-signups")
@@ -967,10 +1047,12 @@ try:  # avoid a hard import at module top so a missing admin dep doesn't
     # are thin HTTP wrappers.
 
     @router.get("/admin/waitlist/audit")
-    async def waitlist_audit(_=Depends(require_admin)):
+    async def waitlist_audit(response: Response, _=Depends(require_admin)):
         """Compare the Mongo `waitlist` collection with the live Resend
         audiences. Flags the gap so the operator knows how many contacts
         the admin dashboard is under-counting."""
+        response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
+        response.headers["Pragma"] = "no-cache"
         return await run_resend_audit()
 
     @router.post("/admin/waitlist/sync-from-resend")
