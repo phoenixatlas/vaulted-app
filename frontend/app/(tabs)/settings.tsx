@@ -5,6 +5,7 @@ import { useRouter } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
 import { useAuth } from "@/src/lib/auth";
 import { useI18n, LANGUAGES } from "@/src/lib/i18n";
+import { useCurrency, CURRENCIES } from "@/src/lib/currency";
 import { api } from "@/src/lib/api";
 import { colors, spacing, radius } from "@/src/lib/theme";
 import { authenticate, getCapabilities, labelFor, BiometricCapabilities } from "@/src/lib/biometric";
@@ -12,6 +13,7 @@ import { authenticate, getCapabilities, labelFor, BiometricCapabilities } from "
 export default function Settings() {
   const { user, setUser, logout } = useAuth();
   const { t, lang, setLang } = useI18n();
+  const { currency, setCurrency, meta, loading: fxLoading } = useCurrency();
   const router = useRouter();
   const [bioCaps, setBioCaps] = useState<BiometricCapabilities | null>(null);
 
@@ -112,6 +114,41 @@ export default function Settings() {
               {lang === l.code && <Ionicons name="checkmark" size={20} color={colors.brand} />}
             </Pressable>
           ))}
+        </View>
+
+        <Text style={s.section}>Display currency</Text>
+        <View style={s.card}>
+          <View style={[s.row, { paddingBottom: spacing.xs }]}>
+            <View style={s.rowIcon}><Ionicons name="cash-outline" size={18} color={colors.brand} /></View>
+            <View style={{ flex: 1 }}>
+              <Text style={s.rowLabel}>Show amounts in</Text>
+              <Text style={{ fontSize: 11, color: colors.onSurfaceTertiary, marginTop: 2 }}>
+                {fxLoading ? "Updating rates…" : `Currently ${meta.flag}  ${meta.code} · ${meta.name}`}
+              </Text>
+            </View>
+          </View>
+          <View style={s.currencyChipsWrap}>
+            {CURRENCIES.map((c) => {
+              const selected = currency === c.code;
+              return (
+                <Pressable
+                  key={c.code}
+                  testID={`currency-${c.code}`}
+                  onPress={() => setCurrency(c.code)}
+                  style={({ pressed }) => [
+                    s.currencyChip,
+                    selected && s.currencyChipActive,
+                    pressed && { opacity: 0.75 },
+                  ]}
+                >
+                  <Text style={s.currencyChipFlag}>{c.flag}</Text>
+                  <Text style={[s.currencyChipText, selected && s.currencyChipTextActive]}>
+                    {c.code}
+                  </Text>
+                </Pressable>
+              );
+            })}
+          </View>
         </View>
 
         <Text style={s.section}>{t("security")}</Text>
@@ -220,4 +257,31 @@ const s = StyleSheet.create({
   logoutText: { color: colors.error, fontWeight: "600", fontSize: 15 },
   proBadge: { backgroundColor: colors.brand, paddingHorizontal: 8, paddingVertical: 3, borderRadius: radius.pill, marginRight: 8 },
   proBadgeText: { color: "#fff", fontSize: 10, fontWeight: "800", letterSpacing: 0.5 },
+  currencyChipsWrap: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: 8,
+    paddingHorizontal: spacing.lg,
+    paddingBottom: spacing.md,
+    paddingTop: spacing.xs,
+  },
+  currencyChip: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+    paddingHorizontal: spacing.md,
+    paddingVertical: 8,
+    borderRadius: radius.pill,
+    backgroundColor: colors.surface,
+    borderWidth: 1,
+    borderColor: colors.border,
+    minHeight: 36,
+  },
+  currencyChipActive: {
+    backgroundColor: colors.brand,
+    borderColor: colors.brand,
+  },
+  currencyChipFlag: { fontSize: 14 },
+  currencyChipText: { fontSize: 12, fontWeight: "700", color: colors.onSurface, letterSpacing: 0.5 },
+  currencyChipTextActive: { color: "#fff" },
 });

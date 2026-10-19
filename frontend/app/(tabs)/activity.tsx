@@ -5,6 +5,7 @@ import { useFocusEffect } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
 import { api } from "@/src/lib/api";
 import { useI18n } from "@/src/lib/i18n";
+import { useCurrency } from "@/src/lib/currency";
 import { colors, spacing, radius } from "@/src/lib/theme";
 import { ExportSheet } from "@/src/components/ExportSheet";
 import KycStatusBanner from "@/src/components/KycStatusBanner";
@@ -25,6 +26,7 @@ const typeIcon = (t: Tx) => {
 
 export default function Activity() {
   const { t } = useI18n();
+  const { format } = useCurrency();
   const [items, setItems] = useState<Tx[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
@@ -70,7 +72,7 @@ export default function Activity() {
                   </View>
                   <View style={{ alignItems: "flex-end" }}>
                     <Text style={[s.amount, { color: isOut ? colors.error : colors.success }]}>
-                      {isOut ? "-" : "+"}${item.fiat_value.toFixed(2)}
+                      {isOut ? "-" : "+"}{format(item.fiat_value)}
                     </Text>
                     <Text style={s.txMuted}>{item.amount} {item.asset}</Text>
                   </View>

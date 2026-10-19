@@ -9,6 +9,7 @@ import { Ionicons } from "@expo/vector-icons";
 import { api } from "@/src/lib/api";
 import { useAuth } from "@/src/lib/auth";
 import { useI18n } from "@/src/lib/i18n";
+import { useCurrency } from "@/src/lib/currency";
 import { colors, spacing, radius } from "@/src/lib/theme";
 import { AssetLogo } from "@/src/components/AssetLogo";
 import PreviewBanner from "@/src/components/PreviewBanner";
@@ -28,6 +29,7 @@ type EvmChain = {
 
 export default function SendCrypto() {
   const { t } = useI18n();
+  const { format: fmtFiat } = useCurrency();
   const { user } = useAuth();
   const router = useRouter();
   const [assets, setAssets] = useState<Asset[]>([]);
@@ -230,8 +232,8 @@ export default function SendCrypto() {
             <View style={s.feeRow}>
               <Text style={s.feeLabel}>Vaulted service fee</Text>
               <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
-                {isPro && <Text style={s.strike}>${baseServiceFee.toFixed(2)}</Text>}
-                <Text style={s.feeValue}>${serviceFee.toFixed(2)}</Text>
+                {isPro && <Text style={s.strike}>{fmtFiat(baseServiceFee)}</Text>}
+                <Text style={s.feeValue}>{fmtFiat(serviceFee)}</Text>
                 {isPro && <View style={s.proPill}><Text style={s.proPillText}>PRO -50%</Text></View>}
               </View>
             </View>

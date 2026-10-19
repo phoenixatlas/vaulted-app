@@ -8,6 +8,7 @@ import { Ionicons } from "@expo/vector-icons";
 import { api } from "@/src/lib/api";
 import { useAuth } from "@/src/lib/auth";
 import { useI18n } from "@/src/lib/i18n";
+import { useCurrency } from "@/src/lib/currency";
 import { colors, spacing, radius, BRAND_IMAGES } from "@/src/lib/theme";
 import { AssetLogo } from "@/src/components/AssetLogo";
 import Sparkline from "@/src/components/Sparkline";
@@ -19,6 +20,7 @@ type Asset = { id: string; symbol: string; name: string; amount: number; price_u
 export default function Wallet() {
   const { user } = useAuth();
   const { t } = useI18n();
+  const { format } = useCurrency();
   const router = useRouter();
   const [total, setTotal] = useState(0);
   const [assets, setAssets] = useState<Asset[]>([]);
@@ -77,7 +79,7 @@ export default function Wallet() {
           {loading ? (
             <ActivityIndicator color={colors.onSurfaceInverse} style={{ marginTop: 12 }} />
           ) : (
-            <Text testID="total-balance" style={s.heroBalance}>${total.toLocaleString(undefined, { maximumFractionDigits: 2, minimumFractionDigits: 2 })}</Text>
+            <Text testID="total-balance" style={s.heroBalance}>{format(total)}</Text>
           )}
           <View style={s.addrRow}>
             <Ionicons name="shield-checkmark" size={14} color={colors.onSurfaceInverse} />
@@ -141,7 +143,7 @@ export default function Wallet() {
                   />
                 )}
                 <View style={{ alignItems: "flex-end", marginLeft: 8 }}>
-                  <Text style={s.assetFiat}>${a.fiat_value.toLocaleString(undefined, { maximumFractionDigits: 2 })}</Text>
+                  <Text style={s.assetFiat}>{format(a.fiat_value)}</Text>
                   <Text style={[s.changeText, { color: (a.change_24h_pct ?? 0) >= 0 ? colors.success : colors.error }]}>
                     {(a.change_24h_pct ?? 0) >= 0 ? "+" : ""}{(a.change_24h_pct ?? 0).toFixed(2)}%
                   </Text>

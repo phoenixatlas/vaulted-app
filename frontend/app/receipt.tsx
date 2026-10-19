@@ -3,11 +3,13 @@ import { SafeAreaView } from "react-native-safe-area-context";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
 import { useI18n } from "@/src/lib/i18n";
+import { useCurrency } from "@/src/lib/currency";
 import { colors, spacing, radius } from "@/src/lib/theme";
 
 export default function Receipt() {
   const p = useLocalSearchParams<any>();
   const { t } = useI18n();
+  const { format } = useCurrency();
   const router = useRouter();
   const isFiat = p.category === "fiat";
   const amount = parseFloat(String(p.amount ?? p.fiat_value ?? "0"));
@@ -73,7 +75,7 @@ export default function Receipt() {
               </Text>
             </>
           ) : (
-            <Text testID="receipt-amount" style={s.bigAmount}>{isFiat ? `$${amount.toFixed(2)}` : `${amount} ${asset}`}</Text>
+            <Text testID="receipt-amount" style={s.bigAmount}>{isFiat ? format(amount) : `${amount} ${asset}`}</Text>
           )}
 
           <View style={s.dotted} />

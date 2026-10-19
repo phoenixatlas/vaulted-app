@@ -84,6 +84,7 @@ from routers.multichain_router import router as multichain_router
 from routers.remit import router as remit_router
 from routers.transactions import router as transactions_router
 from routers.letterhead_router import router as letterhead_router
+from routers.rates import router as rates_router
 from routers.usecase_router import router as usecase_router
 from routers.contacts_router import router as contacts_router
 from routers.digest_router import router as digest_router
@@ -94,6 +95,7 @@ api.include_router(multichain_router)
 api.include_router(remit_router)
 api.include_router(transactions_router)
 api.include_router(letterhead_router)
+api.include_router(rates_router)
 api.include_router(usecase_router)
 api.include_router(contacts_router)
 api.include_router(digest_router)

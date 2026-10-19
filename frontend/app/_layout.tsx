@@ -10,6 +10,7 @@ import { GestureHandlerRootView } from "react-native-gesture-handler";
 import { useIconFonts } from "@/src/hooks/use-icon-fonts";
 import { AuthProvider } from "@/src/lib/auth";
 import { I18nProvider } from "@/src/lib/i18n";
+import { CurrencyProvider } from "@/src/lib/currency";
 import { BiometricGate } from "@/src/components/BiometricGate";
 import PreviewAcknowledgementGate from "@/src/components/PreviewAcknowledgementGate";
 import { captureRefCodeFromUrl } from "@/src/lib/refCode";
@@ -86,6 +87,7 @@ export default function RootLayout() {
     <GestureHandlerRootView style={{ flex: 1 }}>
       <SafeAreaProvider>
         <I18nProvider>
+          <CurrencyProvider>
           {/*
             PreviewAcknowledgementGate is OUTSIDE AuthProvider on purpose so
             first-time visitors see the pre-authorization / FCA disclosures
@@ -99,6 +101,7 @@ export default function RootLayout() {
               </BiometricGate>
             </AuthProvider>
           </PreviewAcknowledgementGate>
+          </CurrencyProvider>
         </I18nProvider>
       </SafeAreaProvider>
     </GestureHandlerRootView>
