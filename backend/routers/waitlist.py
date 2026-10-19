@@ -1219,7 +1219,13 @@ try:  # avoid a hard import at module top so a missing admin dep doesn't
 
     class _AlertConfigIn(BaseModel):
         enabled: Optional[bool] = None
-        recipients: Optional[List[str]] = None
+        # Use built-in `list` not `typing.List` — the module imports
+        # `from __future__ import annotations`, so these annotations are
+        # stored as strings and only resolved when Pydantic rebuilds the
+        # model. `List` was never imported from `typing`, so Pydantic
+        # raised `PydanticUserError: _AlertConfigIn is not fully defined`
+        # on every POST which the admin UI surfaced as "Load fail".
+        recipients: Optional[list[str]] = None
 
     @router.post("/admin/waitlist/alert-config")
     async def waitlist_alert_config_set(
@@ -1242,7 +1248,21 @@ try:  # avoid a hard import at module top so a missing admin dep doesn't
             await db.waitlist_alert_config.update_one(
                 {"_id": "signup_alert"}, {"$set": updates}, upsert=True
             )
-        return await waitlist_alert_config_get()
+        # Can't call `waitlist_alert_config_get()` directly — it's a
+        # FastAPI endpoint function with a `Depends()` parameter that
+        # only resolves when the framework invokes it. Inline the read
+        # instead so we don't trip "missing positional argument".
+        doc = await db.waitlist_alert_config.find_one({"_id": "signup_alert"}) or {}
+        env_default = [
+            r.strip() for r in os.environ.get("WAITLIST_ALERT_RECIPIENTS", "").split(",")
+            if r.strip() and "@" in r
+        ]
+        recipients = doc.get("recipients") or env_default
+        return {
+            "enabled": bool(doc.get("enabled", bool(recipients))),
+            "recipients": recipients,
+            "has_env_default": bool(env_default),
+        }
 except ImportError:
     pass
 
