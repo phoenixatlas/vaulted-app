@@ -537,12 +537,51 @@ class WaitlistJoinIn(BaseModel):
 
 _EMAIL_RE = re.compile(r"^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}$")
 
+# Domains that will NEVER deliver mail — RFC 2606 reserved names, common
+# documentation placeholders, and local-only TLDs. Signups to these show
+# up in Resend as "Delivery Delayed" forever (soft-bounce loop) and pollute
+# both deliverability stats and the waitlist count.
+_BLOCKED_EMAIL_DOMAINS: frozenset[str] = frozenset({
+    # RFC 2606 reserved for documentation / examples
+    "example.com", "example.net", "example.org",
+    # Common test placeholders that aren't real receivers
+    "test.com", "test.net", "test.org",
+    "foo.com", "bar.com", "sample.com",
+    # Local / internal-only
+    "localhost", "local",
+    # Known spam-trap / disposable (small starter list, add more as we see them)
+    "mailinator.com", "guerrillamail.com", "10minutemail.com",
+    "tempmail.com", "throwaway.email", "trash-mail.com",
+    "yopmail.com", "fakeinbox.com", "sharklasers.com",
+})
+_BLOCKED_EMAIL_SUFFIXES: tuple[str, ...] = (
+    # RFC 2606 reserved TLDs — nothing routable lives under these
+    ".test", ".example", ".invalid", ".localhost", ".local",
+)
+
 
 @router.post("/waitlist/join")
 async def waitlist_join(body: WaitlistJoinIn, request: Request):
     email = str(body.email).strip().lower()
     if not _EMAIL_RE.match(email):
         raise HTTPException(status_code=400, detail="Invalid email address")
+
+    # Reject RFC-reserved and well-known test/placeholder domains.
+    # Resend will accept these addresses, attempt delivery, and sit there
+    # as "Delivery Delayed" forever because the receiving domains either
+    # don't exist (example.com), don't accept external mail (test., local),
+    # or are commonly used for typo'd placeholders. Blocking them here
+    # keeps the Resend send queue clean, our deliverability stats honest,
+    # and investor reports credible.
+    _, _, _domain = email.rpartition("@")
+    if _domain in _BLOCKED_EMAIL_DOMAINS or _domain.endswith(_BLOCKED_EMAIL_SUFFIXES):
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "This looks like a test or reserved email domain. "
+                "Please use a real email address."
+            ),
+        )
 
     ip = _client_ip(request)
     # Only block if this *same* email on this *same* IP was already
@@ -919,6 +958,57 @@ try:  # avoid a hard import at module top so a missing admin dep doesn't
             "total": await db.waitlist.count_documents({}),
             "rows": rows,
             "fetched_at": iso(now_utc()),
+        }
+
+    @router.post("/admin/waitlist/prune-test")
+    async def waitlist_prune_test(response: Response, _=Depends(require_admin)):
+        """Delete waitlist rows whose email belongs to one of the known
+        reserved/test/placeholder domains that will never deliver mail.
+        Keeps the counter honest and clears "Delivery Delayed" ghosts
+        out of your Resend audience. Idempotent — safe to call anytime.
+
+        Response includes the deleted emails so operators can double-check
+        before dismissing. The matching domains are the same set we now
+        reject at signup time.
+        """
+        response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
+        # Build an OR query: domain exact-match OR TLD-suffix match.
+        exact_list = sorted(_BLOCKED_EMAIL_DOMAINS)
+        suffix_list = list(_BLOCKED_EMAIL_SUFFIXES)
+        # Pull candidate rows first so we can return a diff to the operator.
+        candidate_cursor = db.waitlist.find(
+            {"email": {"$regex": r"@([^@]+)$", "$options": "i"}},
+            {"_id": 0, "email": 1, "source": 1, "joined_at": 1},
+        )
+        victims: list[dict] = []
+        async for d in candidate_cursor:
+            em = (d.get("email") or "").lower()
+            _, _, dom = em.rpartition("@")
+            if dom in _BLOCKED_EMAIL_DOMAINS or any(dom.endswith(suf) for suf in suffix_list):
+                victims.append({"email": em, "source": d.get("source"), "joined_at": d.get("joined_at")})
+        if not victims:
+            return {
+                "deleted": 0,
+                "total_after": await db.waitlist.count_documents({}),
+                "domains_scanned": exact_list,
+                "suffixes_scanned": suffix_list,
+                "victims": [],
+            }
+        emails_to_drop = [v["email"] for v in victims]
+        result = await db.waitlist.delete_many({"email": {"$in": emails_to_drop}})
+        # Also wipe any referral codes we minted for those addresses so a
+        # dangling link can't credit someone later.
+        try:
+            await db.waitlist_referral_codes.delete_many({"email": {"$in": emails_to_drop}})
+        except Exception:  # noqa: BLE001
+            pass
+        logger.info("[waitlist] prune-test deleted %d test rows", result.deleted_count)
+        return {
+            "deleted": int(result.deleted_count),
+            "total_after": await db.waitlist.count_documents({}),
+            "domains_scanned": exact_list,
+            "suffixes_scanned": suffix_list,
+            "victims": victims,
         }
 
     @router.get("/admin/waitlist/analytics/daily-signups")

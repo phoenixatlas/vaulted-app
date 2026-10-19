@@ -40,26 +40,45 @@ def get_resend_from() -> str:
     return _resolved_resend_from or RESEND_FROM
 
 
-async def send_email_via_resend(to: str, subject: str, html: str) -> bool:
+async def send_email_via_resend(
+    to: str,
+    subject: str,
+    html: str,
+    *,
+    text: Optional[str] = None,
+) -> bool:
     """Fire-and-forget email send. Returns True on success, False otherwise.
-    Never raises so callers can log-and-continue."""
+    Never raises so callers can log-and-continue.
+
+    Deliverability note: we always include a plain-text alternative when
+    callers pass one. Gmail/Yahoo/Outlook heuristically down-rank HTML-only
+    emails from new domains as potential spam, so sending `multipart/
+    alternative` with a readable text version meaningfully improves
+    inbox placement (reduces "Delivery Delayed" soft-bounces) during
+    sender-reputation warm-up.
+    """
     if not RESEND_API_KEY:
         logger.warning("RESEND_API_KEY not set; email to %s skipped", to)
         return False
     try:
+        payload: dict = {
+            "from": get_resend_from(),
+            "to": [to],
+            "subject": subject,
+            "html": html,
+            # Any recipient reply lands in the support inbox rather
+            # than bouncing off the noreply@ sender.
+            "reply_to": RESEND_REPLY_TO,
+        }
+        # Auto-derive a plain-text fallback from HTML when a caller
+        # doesn't pass one explicitly. Dumb but effective: strip tags,
+        # collapse whitespace, keep enough body for the preview pane.
+        payload["text"] = (text or _html_to_text(html))
         async with httpx.AsyncClient(timeout=12) as cx:
             r = await cx.post(
                 "https://api.resend.com/emails",
                 headers={"Authorization": f"Bearer {RESEND_API_KEY}", "Content-Type": "application/json"},
-                json={
-                    "from": get_resend_from(),
-                    "to": [to],
-                    "subject": subject,
-                    "html": html,
-                    # Any recipient reply lands in the support inbox rather
-                    # than bouncing off the noreply@ sender.
-                    "reply_to": RESEND_REPLY_TO,
-                },
+                json=payload,
             )
             if r.status_code >= 400:
                 logger.warning("resend send failed %s: %s", r.status_code, r.text[:200])
@@ -68,6 +87,38 @@ async def send_email_via_resend(to: str, subject: str, html: str) -> bool:
     except Exception as e:  # noqa: BLE001
         logger.warning("resend send exception: %s", e)
         return False
+
+
+def _html_to_text(html: str) -> str:
+    """Collapse an HTML body into a readable plain-text alternative.
+    Doesn't aim for perfect fidelity — just enough for mail clients
+    that fall back on text/plain and for spam filters that weight
+    multipart messages higher. Keeps paragraph breaks, drops style
+    blocks and inline attributes."""
+    import re as _re  # local import to keep module header clean
+    s = html or ""
+    # Drop <style>…</style> and <script>…</script> entirely.
+    s = _re.sub(r"<style\b[^>]*>.*?</style>", " ", s, flags=_re.DOTALL | _re.IGNORECASE)
+    s = _re.sub(r"<script\b[^>]*>.*?</script>", " ", s, flags=_re.DOTALL | _re.IGNORECASE)
+    # Preserve some line breaks before stripping tags.
+    s = _re.sub(r"<br\s*/?>", "\n", s, flags=_re.IGNORECASE)
+    s = _re.sub(r"</(p|div|li|tr|h[1-6])>", "\n\n", s, flags=_re.IGNORECASE)
+    # Nuke the rest of the tags.
+    s = _re.sub(r"<[^>]+>", " ", s)
+    # Decode a handful of common entities (good enough for marketing copy).
+    s = (s.replace("&nbsp;", " ")
+           .replace("&amp;", "&")
+           .replace("&lt;", "<").replace("&gt;", ">")
+           .replace("&quot;", '"').replace("&#39;", "'")
+           .replace("&rarr;", "→").replace("&larr;", "←")
+           .replace("&harr;", "↔").replace("&mdash;", "—")
+           .replace("&ndash;", "–").replace("&hellip;", "…")
+           .replace("\u2014", "—").replace("\u2192", "→").replace("\u2194", "↔"))
+    # Collapse runs of whitespace, preserve blank-line paragraph breaks.
+    s = _re.sub(r"[ \t]+", " ", s)
+    s = _re.sub(r"\n[ \t]+", "\n", s)
+    s = _re.sub(r"\n{3,}", "\n\n", s)
+    return s.strip()
 
 
 async def send_email_via_resend_with_attachment(

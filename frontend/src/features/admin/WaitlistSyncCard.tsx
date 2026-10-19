@@ -78,6 +78,15 @@ export function WaitlistSyncCard({ onSynced }: Props) {
   const [syncResult, setSyncResult] = useState<SyncResp | null>(null);
   const [expanded, setExpanded] = useState(false);
   const [historyOpen, setHistoryOpen] = useState(false);
+  const [pruning, setPruning] = useState(false);
+  const [pruneResult, setPruneResult] = useState<{
+    deleted: number;
+    total_after: number;
+    victims: { email: string; source?: string }[];
+  } | null>(null);
+  // Two-step confirm so a stray tap can't nuke rows the operator didn't
+  // intend — same pattern as every "Delete" button in the admin UI.
+  const [prunePending, setPrunePending] = useState(false);
 
   const loadAll = useCallback(async () => {
     setLoading(true);
@@ -133,6 +142,34 @@ export function WaitlistSyncCard({ onSynced }: Props) {
       setSyncing(false);
     }
   }, [loadAll, onSynced]);
+
+  const runPrune = useCallback(async () => {
+    // Two-tap confirm: first tap arms the button, second actually deletes.
+    if (!prunePending) {
+      setPrunePending(true);
+      // Auto-disarm after 6s so a stale "Confirm" button doesn't linger.
+      setTimeout(() => setPrunePending(false), 6000);
+      return;
+    }
+    setPrunePending(false);
+    setPruning(true);
+    setErrorMsg(null);
+    setPruneResult(null);
+    try {
+      const res = await api<{
+        deleted: number;
+        total_after: number;
+        victims: { email: string; source?: string }[];
+      }>("/admin/waitlist/prune-test", { method: "POST", body: {} });
+      setPruneResult(res);
+      await loadAll();
+      onSynced?.();
+    } catch (e: any) {
+      setErrorMsg(e?.message || "Prune failed");
+    } finally {
+      setPruning(false);
+    }
+  }, [prunePending, loadAll, onSynced]);
 
   if (loading && !audit) {
     return (
@@ -409,9 +446,71 @@ export function WaitlistSyncCard({ onSynced }: Props) {
               Waitlist total is now {syncResult.new_mongo_total}.
             </Text>
           ) : null}
+          {pruneResult ? (
+            <Text
+              style={[
+                s.sendResult,
+                pruneResult.deleted > 0 ? s.sendResultOk : s.sendResultErr,
+              ]}
+            >
+              {pruneResult.deleted > 0
+                ? `✓ Removed ${pruneResult.deleted} test/placeholder signup${pruneResult.deleted !== 1 ? "s" : ""}. Waitlist total is now ${pruneResult.total_after}.`
+                : "✓ No test or placeholder signups found. Waitlist is already clean."}
+            </Text>
+          ) : null}
           {errorMsg ? (
             <Text style={[s.sendResult, s.sendResultErr]}>✗ {errorMsg}</Text>
           ) : null}
+
+          {/* Prune test/placeholder signups — hidden under a two-tap confirm.
+              These are the @example.com / @test.com rows that will never
+              deliver and sit in Resend as "Delivery Delayed" forever. */}
+          <Pressable
+            testID="waitlist-prune-test"
+            onPress={runPrune}
+            disabled={pruning}
+            style={({ pressed }) => [
+              {
+                marginTop: spacing.sm,
+                paddingVertical: 10,
+                paddingHorizontal: 12,
+                borderRadius: 10,
+                borderWidth: 1,
+                borderColor: prunePending ? colors.error : colors.border,
+                backgroundColor: prunePending ? "rgba(220,53,69,0.08)" : "transparent",
+                flexDirection: "row",
+                alignItems: "center",
+                justifyContent: "center",
+                gap: 6,
+                opacity: pressed || pruning ? 0.6 : 1,
+              },
+            ]}
+            hitSlop={4}
+          >
+            {pruning ? (
+              <ActivityIndicator size="small" color={colors.error} />
+            ) : (
+              <Ionicons
+                name={prunePending ? "warning" : "trash-outline"}
+                size={13}
+                color={prunePending ? colors.error : colors.onSurfaceSecondary}
+              />
+            )}
+            <Text
+              style={{
+                fontSize: 11,
+                fontWeight: "700",
+                color: prunePending ? colors.error : colors.onSurfaceSecondary,
+                letterSpacing: 0.3,
+              }}
+            >
+              {pruning
+                ? "Pruning…"
+                : prunePending
+                ? "Tap again to confirm — this deletes test rows"
+                : "Clean up test/placeholder signups"}
+            </Text>
+          </Pressable>
 
           <Text style={[s.footerText, { marginTop: spacing.sm, textAlign: "right" }]}>
             Last checked · {new Date(audit.checked_at).toLocaleString()}
