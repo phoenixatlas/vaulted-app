@@ -79,6 +79,7 @@ const FALLBACK_RATES: Record<CurrencyCode, number> = {
 
 const STORAGE_CURRENCY_KEY = "vaulted_display_currency";
 const STORAGE_RATES_KEY = "vaulted_fx_rates_v1";
+const STORAGE_GEO_DETECTED_KEY = "vaulted_currency_geo_detected_v1";
 const REFRESH_INTERVAL_MS = 60 * 60 * 1000; // 1h
 
 type RatesCache = {
@@ -93,6 +94,12 @@ type CurrencyCtx = {
   rates: Record<string, number>;
   format: (usdAmount: number, opts?: { withSymbol?: boolean; compact?: boolean }) => string;
   convert: (usdAmount: number) => number;
+  /** Convert FROM the display currency BACK to USD. Needed by the fiat
+   *  deposit flow: user types `100` in ₦, we charge Stripe in USD. */
+  toUsd: (localAmount: number) => number;
+  /** Epoch ms the rate table was last refreshed from the backend. 0 if
+   *  we only ever used the static snapshot. */
+  fetchedAt: number;
   loading: boolean;
   refresh: () => Promise<void>;
 };
@@ -107,6 +114,8 @@ const CurrencyContext = createContext<CurrencyCtx>({
   rates: FALLBACK_RATES,
   format: (v) => `$${(v ?? 0).toFixed(2)}`,
   convert: (v) => v,
+  toUsd: (v) => v,
+  fetchedAt: 0,
   loading: false,
   refresh: async () => {},
 });
@@ -115,12 +124,14 @@ export function CurrencyProvider({ children }: { children: ReactNode }) {
   const [currency, setCurrencyState] = useState<CurrencyCode>("USD");
   const [rates, setRates] = useState<Record<string, number>>(FALLBACK_RATES);
   const [loading, setLoading] = useState<boolean>(false);
+  const [fetchedAt, setFetchedAt] = useState<number>(0);
   const refreshingRef = useRef<boolean>(false);
   const lastFetchRef = useRef<number>(0);
 
   // --- Boot: hydrate persisted currency pref + cached rates ---------------
   useEffect(() => {
     (async () => {
+      let userHasExplicitPref = false;
       try {
         const [savedCurrency, savedRates] = await Promise.all([
           AsyncStorage.getItem(STORAGE_CURRENCY_KEY),
@@ -128,6 +139,7 @@ export function CurrencyProvider({ children }: { children: ReactNode }) {
         ]);
         if (savedCurrency && SUPPORTED.has(savedCurrency as CurrencyCode)) {
           setCurrencyState(savedCurrency as CurrencyCode);
+          userHasExplicitPref = true;
         }
         if (savedRates) {
           try {
@@ -135,6 +147,7 @@ export function CurrencyProvider({ children }: { children: ReactNode }) {
             if (parsed && parsed.rates && typeof parsed.rates === "object") {
               setRates({ ...FALLBACK_RATES, ...parsed.rates });
               lastFetchRef.current = parsed.fetchedAt || 0;
+              setFetchedAt(parsed.fetchedAt || 0);
             }
           } catch {
             /* ignore corrupt cache */
@@ -146,6 +159,30 @@ export function CurrencyProvider({ children }: { children: ReactNode }) {
       // Always kick off a live refresh after boot so stale caches heal
       // themselves on next launch. Fire-and-forget.
       refresh().catch(() => undefined);
+
+      // Smart default: if the user has never picked a currency AND we've
+      // never attempted detection on this install, ask the backend what
+      // country they're in and preselect the local currency once.
+      if (!userHasExplicitPref) {
+        try {
+          const geoAttempted = await AsyncStorage.getItem(STORAGE_GEO_DETECTED_KEY);
+          if (!geoAttempted) {
+            await AsyncStorage.setItem(STORAGE_GEO_DETECTED_KEY, "1");
+            try {
+              const geo = (await api("/geo")) as { suggested_currency?: string };
+              const suggested = (geo?.suggested_currency || "").toUpperCase();
+              if (suggested && SUPPORTED.has(suggested as CurrencyCode) && suggested !== "USD") {
+                setCurrencyState(suggested as CurrencyCode);
+                await AsyncStorage.setItem(STORAGE_CURRENCY_KEY, suggested);
+              }
+            } catch {
+              /* geo detection is a nice-to-have; USD is a safe default */
+            }
+          }
+        } catch {
+          /* ignore storage errors */
+        }
+      }
     })();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -184,11 +221,13 @@ export function CurrencyProvider({ children }: { children: ReactNode }) {
       if (data && data.rates && typeof data.rates === "object") {
         const merged = { ...FALLBACK_RATES, ...data.rates };
         setRates(merged);
-        lastFetchRef.current = Date.now();
+        const now = Date.now();
+        lastFetchRef.current = now;
+        setFetchedAt(now);
         try {
           await AsyncStorage.setItem(
             STORAGE_RATES_KEY,
-            JSON.stringify({ rates: merged, fetchedAt: Date.now() } as RatesCache),
+            JSON.stringify({ rates: merged, fetchedAt: now } as RatesCache),
           );
         } catch {
           /* ignore storage errors */
@@ -217,6 +256,17 @@ export function CurrencyProvider({ children }: { children: ReactNode }) {
       const rate = rates[currency];
       if (!rate || !isFinite(rate) || rate <= 0) return safe; // graceful: show USD-as-is
       return safe * rate;
+    },
+    [currency, rates],
+  );
+
+  const toUsd = useCallback(
+    (localAmount: number): number => {
+      const safe = Number(localAmount);
+      if (!isFinite(safe)) return 0;
+      const rate = rates[currency];
+      if (!rate || !isFinite(rate) || rate <= 0) return safe;
+      return safe / rate;
     },
     [currency, rates],
   );
@@ -266,8 +316,8 @@ export function CurrencyProvider({ children }: { children: ReactNode }) {
   );
 
   const value = useMemo<CurrencyCtx>(
-    () => ({ currency, setCurrency, meta, rates, format, convert, loading, refresh }),
-    [currency, setCurrency, meta, rates, format, convert, loading, refresh],
+    () => ({ currency, setCurrency, meta, rates, format, convert, toUsd, fetchedAt, loading, refresh }),
+    [currency, setCurrency, meta, rates, format, convert, toUsd, fetchedAt, loading, refresh],
   );
 
   return (

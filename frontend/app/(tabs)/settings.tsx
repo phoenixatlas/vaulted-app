@@ -13,9 +13,23 @@ import { authenticate, getCapabilities, labelFor, BiometricCapabilities } from "
 export default function Settings() {
   const { user, setUser, logout } = useAuth();
   const { t, lang, setLang } = useI18n();
-  const { currency, setCurrency, meta, loading: fxLoading } = useCurrency();
+  const { currency, setCurrency, meta, loading: fxLoading, fetchedAt, refresh: refreshFx } = useCurrency();
   const router = useRouter();
   const [bioCaps, setBioCaps] = useState<BiometricCapabilities | null>(null);
+
+  // Human-readable "updated N min ago" for the FX chip. Recomputed each
+  // render — cheap enough that we don't bother memoising, and we WANT
+  // this to drift forward every time Settings re-mounts.
+  const fetchedLabel = (() => {
+    if (!fetchedAt) return "Updating…";
+    const diffMs = Date.now() - fetchedAt;
+    if (diffMs < 60_000) return "Updated just now";
+    const mins = Math.floor(diffMs / 60_000);
+    if (mins < 60) return `Updated ${mins}m ago`;
+    const hrs = Math.floor(mins / 60);
+    if (hrs < 24) return `Updated ${hrs}h ago`;
+    return `Updated ${Math.floor(hrs / 24)}d ago`;
+  })();
 
   useEffect(() => { getCapabilities().then(setBioCaps); }, []);
 
@@ -126,6 +140,18 @@ export default function Settings() {
                 {fxLoading ? "Updating rates…" : `Currently ${meta.flag}  ${meta.code} · ${meta.name}`}
               </Text>
             </View>
+            <Pressable
+              testID="fx-refresh-chip"
+              onPress={() => refreshFx()}
+              style={({ pressed }) => [s.fxChip, pressed && { opacity: 0.6 }]}
+            >
+              {fxLoading ? (
+                <Ionicons name="sync" size={11} color={colors.brandDeep} />
+              ) : (
+                <Ionicons name="refresh" size={11} color={colors.brandDeep} />
+              )}
+              <Text style={s.fxChipText}>{fetchedLabel}</Text>
+            </Pressable>
           </View>
           <View style={s.currencyChipsWrap}>
             {CURRENCIES.map((c) => {
@@ -284,4 +310,22 @@ const s = StyleSheet.create({
   currencyChipFlag: { fontSize: 14 },
   currencyChipText: { fontSize: 12, fontWeight: "700", color: colors.onSurface, letterSpacing: 0.5 },
   currencyChipTextActive: { color: "#fff" },
+  fxChip: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 4,
+    backgroundColor: colors.brandTertiary,
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: radius.pill,
+    borderWidth: 1,
+    borderColor: "rgba(201,163,91,0.35)",
+    marginLeft: 6,
+  },
+  fxChipText: {
+    fontSize: 10,
+    fontWeight: "700",
+    color: colors.brandDeep,
+    letterSpacing: 0.2,
+  },
 });

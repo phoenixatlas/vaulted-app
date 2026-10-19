@@ -147,6 +147,16 @@ export default function Wallet() {
                   <Text style={[s.changeText, { color: (a.change_24h_pct ?? 0) >= 0 ? colors.success : colors.error }]}>
                     {(a.change_24h_pct ?? 0) >= 0 ? "+" : ""}{(a.change_24h_pct ?? 0).toFixed(2)}%
                   </Text>
+                  {a.price_usd > 0 && a.symbol !== "USDC" && (
+                    // Per-unit price in the user's chosen currency. Keeps the
+                    // 7-day sparkline shape honest when they flip currencies
+                    // — the trend is identical but the magnitude they see
+                    // (e.g. "£0.98/XRP" vs "₦1,730/XRP") now matches the
+                    // numbers in their head.
+                    <Text style={s.priceUnit} numberOfLines={1}>
+                      {format(a.price_usd, { compact: a.price_usd > 1000 })}/{a.symbol}
+                    </Text>
+                  )}
                 </View>
               </View>
               {idx < assets.length - 1 && <View style={s.divider} />}
@@ -198,6 +208,7 @@ const s = StyleSheet.create({
   faucetCta: { flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 6, marginTop: spacing.lg, marginHorizontal: spacing.xl, paddingVertical: 14, borderRadius: radius.md, borderWidth: 1, borderColor: colors.border, backgroundColor: colors.surface },
   faucetCtaText: { color: colors.brand, fontSize: 13, fontWeight: "600" },
   changeText: { fontSize: 11, fontWeight: "600", marginTop: 2 },
+  priceUnit: { fontSize: 10, color: colors.onSurfaceTertiary, marginTop: 2, fontWeight: "500" },
   remitCta: { flexDirection: "row", alignItems: "center", gap: spacing.md, marginTop: spacing.xl, marginHorizontal: spacing.xl, padding: spacing.lg, borderRadius: radius.lg, backgroundColor: colors.brandTertiary, borderWidth: 1, borderColor: "rgba(201,163,91,0.40)" },
   remitCtaLeft: { flex: 1 },
   remitCtaTitle: { fontSize: 15, fontWeight: "700", color: colors.brandDeep, marginBottom: 4 },

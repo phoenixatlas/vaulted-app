@@ -8,6 +8,7 @@ import { useLocalSearchParams, useRouter } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
 import { api } from "@/src/lib/api";
 import { useI18n } from "@/src/lib/i18n";
+import { useCurrency } from "@/src/lib/currency";
 import { startDepositCheckout, syncStripeSession } from "@/src/lib/stripe";
 import { useAuth } from "@/src/lib/auth";
 import { colors, spacing, radius } from "@/src/lib/theme";
@@ -17,6 +18,7 @@ export default function Fiat() {
   const params = useLocalSearchParams<{ mode?: string }>();
   const mode = params.mode === "withdraw" ? "withdraw" : "deposit";
   const { t } = useI18n();
+  const { meta: fxMeta, toUsd, format: fmtFiat, currency: displayCurrency } = useCurrency();
   const router = useRouter();
   const { refresh } = useAuth();
   const [amount, setAmount] = useState("");
@@ -24,11 +26,29 @@ export default function Fiat() {
   const [err, setErr] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
 
+  // User types in their *display* currency (e.g. ₦50,000). We always
+  // charge Stripe in USD, so convert on the fly for the preview label
+  // and again at submit time. If their picked currency is already USD
+  // this is a no-op and we keep the exact input value.
+  const parsedLocal = parseFloat(amount) || 0;
+  const previewUsd = displayCurrency === "USD" ? parsedLocal : toUsd(parsedLocal);
+  const isNonUsd = displayCurrency !== "USD";
+
   const submit = async () => {
     setErr(null);
-    const amt = parseFloat(amount);
-    if (!amt || amt <= 0) {
+    const local = parseFloat(amount);
+    if (!local || local <= 0) {
       setErr("Enter a valid amount");
+      return;
+    }
+    // Convert to USD for the API — Stripe & our ledger are USD-based.
+    const amt = displayCurrency === "USD" ? local : toUsd(local);
+    if (!amt || amt < 0.5) {
+      setErr(
+        isNonUsd
+          ? `Minimum deposit is about ${fmtFiat(0.5)} (≈ $0.50 USD)`
+          : "Minimum deposit is $0.50",
+      );
       return;
     }
     setSubmitting(true);
@@ -87,9 +107,9 @@ export default function Fiat() {
                 : "Preview mode - withdrawal rails are in integration. Requests may not settle until we go live."
             }
           />
-          <Text style={s.bigLabel}>USD amount</Text>
+          <Text style={s.bigLabel}>{fxMeta.code} amount</Text>
           <View style={s.amountWrap}>
-            <Text style={s.amountSign}>$</Text>
+            <Text style={s.amountSign}>{fxMeta.symbol}</Text>
             <TextInput
               testID="fiat-amount"
               value={amount}
@@ -100,6 +120,17 @@ export default function Fiat() {
               style={s.amountInput}
             />
           </View>
+          {isNonUsd && parsedLocal > 0 && (
+            // Transparency line — Stripe only accepts USD, so make the
+            // conversion visible BEFORE they tap confirm. Live-updates as
+            // they type.
+            <View style={s.usdPreview} testID="usd-preview">
+              <Ionicons name="swap-horizontal" size={13} color={colors.onSurfaceSecondary} />
+              <Text style={s.usdPreviewText}>
+                ≈ ${previewUsd.toLocaleString(undefined, { maximumFractionDigits: 2, minimumFractionDigits: 2 })} USD charged via Stripe
+              </Text>
+            </View>
+          )}
 
           <Text style={s.label}>Payment method</Text>
           <View style={s.methodsRow}>
@@ -141,4 +172,12 @@ const s = StyleSheet.create({
   cta: { backgroundColor: colors.brand, borderRadius: radius.md, paddingVertical: 16, alignItems: "center", marginTop: spacing.xl },
   ctaText: { color: "#0F0B08", fontSize: 16, fontWeight: "600" },
   error: { color: colors.error, marginTop: spacing.md, fontSize: 14 },
+  usdPreview: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+    marginTop: spacing.sm,
+    paddingHorizontal: spacing.sm,
+  },
+  usdPreviewText: { color: colors.onSurfaceSecondary, fontSize: 12, fontWeight: "500" },
 });
