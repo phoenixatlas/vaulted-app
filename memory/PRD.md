@@ -349,3 +349,8 @@ MONGO_URL, DB_NAME=vaulted, JWT_SECRET, STRIPE_API_KEY (live, rotated), STRIPE_W
 ## ✉️ Delivery Emails (2026-06)
 - `backend/delivery.py`: `notify_if_delivered(tx_id)` atomic claim on `delivery_email_sent_at` (max 3 attempts, skips if Kotani PDF `receipt_emailed_at` already sent, skips deleted users, only txs created after `db.config{_id:"delivery_emails"}.since`). Branded dark email "Delivered: <amount> to <name>", beta-test note for simulated/mock payouts.
 - Inline triggers: simulated payout, YC mock settle, YC webhook settle, on-chain confirmation in `GET /transactions/{id}`. Safety net: 60s scheduler `delivery_tick` (also confirms pending crypto sends on-chain).
+
+## 🏷️ App identity (2026-06)
+- Bundle ID / Android package → `com.phoenixatlas.vaulted` (was com.emergent.multisigvault.v1vcpy). Display name "Vaulted".
+- New icon/splash/adaptive icon: gold phoenix (inner grey square removed) + "VAULTED" serif wordmark. Originals backed up in /tmp/icon_backup (ephemeral).
+- Card checkout stays paused in beta (user decision). Note: app.json references ./google-services.json (missing) — Firebase file must be for package com.phoenixatlas.vaulted.

@@ -17,7 +17,7 @@
         "NSMicrophoneUsageDescription": "Talk to contacts on secure video calls",
         "ITSAppUsesNonExemptEncryption": false
       },
-      "bundleIdentifier": "com.emergent.multisigvault.v1vcpy"
+      "bundleIdentifier": "com.phoenixatlas.vaulted"
     },
     "android": {
       "adaptiveIcon": {
@@ -33,7 +33,7 @@
         "MODIFY_AUDIO_SETTINGS"
       ],
       "googleServicesFile": "./google-services.json",
-      "package": "com.emergent.multisigvault.v1vcpy"
+      "package": "com.phoenixatlas.vaulted"
     },
     "web": {
       "bundler": "metro",
