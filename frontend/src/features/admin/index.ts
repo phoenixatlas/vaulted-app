@@ -6,6 +6,7 @@
  */
 export { KotaniHealthCard } from "./KotaniHealthCard";
 export { PayoutProviderCard } from "./PayoutProviderCard";
+export { FeedbackCard } from "./FeedbackCard";
 export { WaitlistCard } from "./WaitlistCard";
 export { DailySignupsCard } from "./DailySignupsCard";
 export { CorridorMatrixCard } from "./CorridorMatrixCard";

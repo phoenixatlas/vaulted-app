@@ -50,6 +50,9 @@ export type RemitFundBody = {
   recipient_name?: string | null;
   memo?: string | null;
   payment_method: "card" | "apple_pay" | "google_pay" | "bank";
+  recipient_bank_id?: string | null;
+  recipient_bank_name?: string | null;
+  save_recipient?: boolean;
 };
 
 export async function startRemitFundCheckout(body: RemitFundBody): Promise<CheckoutResult & { session_id?: string; charge_amount?: number; charge_currency?: string }> {

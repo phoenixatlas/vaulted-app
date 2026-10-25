@@ -332,3 +332,9 @@ MONGO_URL, DB_NAME=vaulted, JWT_SECRET, STRIPE_API_KEY (live, rotated), STRIPE_W
 - **Admin**: `PayoutProviderCard` — switch partner, probe status, beta toggle, Stripe mode.
 - **App Store**: `POST /api/auth/delete-account` (password, 403 on wrong) + Settings "Delete account" sheet; app.json name "Vaulted", buildNumber, camera/mic Info.plist strings, ITSAppUsesNonExemptEncryption=false, Android CAMERA/RECORD_AUDIO; video-call Android runtime permission flow w/ Open Settings.
 - OPay: skipped for now (user choice).
+
+## 🇳🇬 Nigeria Bank Details · Saved Recipients · Beta Feedback (2026-06)
+- **NG bank payouts**: `GET /api/payouts/banks?country=NG` (Yellow Card networks live / 20 built-in banks `ng_<code>` mock), `POST /api/payouts/resolve-account` {account_number(10 digits), bank_id} → account_name (mock "TEST ACCOUNT HOLDER"; `0000…` → 404). Remit fund requires `recipient_bank_id` for NG; stored as `tx.recipient_bank`, passed as YC `networkId`. Frontend `NgBankFields` (bank picker + auto name check).
+- **Saved recipients**: `db.recipients` upsert per (user, country, account) after send succeeds when `save_recipient` (default true). `GET /api/recipients?country=`, `DELETE /api/recipients/{id}`. Frontend `SavedRecipients` chips (tap fill, long-press remove) + "Save recipient" checkbox.
+- **Beta feedback**: floating `FeedbackButton` (only beta mode + signed in), captures screenshot via react-native-view-shot (native only), multipart `POST /api/feedback` → Emergent Object Storage (`vaulted/feedback/...`) + Resend email to ADMIN_EMAILS (screenshot attached). Admin `FeedbackCard`, `GET /api/admin/feedback`, `GET /api/admin/feedback/{id}/screenshot?token=`.
+- `EMERGENT_LLM_KEY` added to backend/.env (object storage). Render prod needs it too.

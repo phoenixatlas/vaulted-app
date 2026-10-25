@@ -34,6 +34,8 @@ from deps import (
 )
 from models import RemitQuoteIn, RemitSendIn, RemitFundIn
 import payouts
+import yellowcard
+from routers.recipients import save_recipient
 from remit import (
     CORRIDORS,
     SOURCE_FIATS,
@@ -428,6 +430,12 @@ async def remit_send(body: RemitSendIn, user=Depends(get_current_user)):
     await db.transactions.insert_one(record)
     record.pop("_id", None)
 
+    if body.save_recipient and body.recipient_name:
+        await save_recipient(
+            user["id"], name=body.recipient_name, country_code=body.destination_code,
+            currency=dst["currency"], account=to, rail="wallet",
+        )
+
     user_kyc = user.get("kyc") or {}
     user_sanctions = user_kyc.get("sanctions") or {}
     await audit_write(db, EventType.REMIT_SEND_SUCCESS, user=user, data={
@@ -482,6 +490,17 @@ async def remit_fund(body: RemitFundIn, user=Depends(get_current_user)):
             "error": "corridor_blocked",
             "message": f"We cannot send to that destination. {block_reason}",
         })
+
+    if body.destination_code.upper() == "NG" and not body.recipient_bank_id:
+        raise HTTPException(status_code=400, detail="Choose the recipient's bank for Nigeria payouts.")
+    # Never trust the app's "verified" flag — re-check the account name here.
+    recipient_verified = False
+    if body.destination_code.upper() == "NG":
+        check = await yellowcard.resolve_bank_account(body.recipient_address.strip(), body.recipient_bank_id)
+        if not check.get("success"):
+            raise HTTPException(status_code=400, detail="We couldn't confirm that Nigerian bank account. Check the number and bank.")
+        recipient_verified = check.get("mode") == "live"
+        body.recipient_name = check["account_name"]
 
     is_pro = is_user_pro(user)
     remit_used = await _remit_send_count_this_month(user["id"])
@@ -561,6 +580,10 @@ async def remit_fund(body: RemitFundIn, user=Depends(get_current_user)):
                 "recipient_name": (body.recipient_name or "").strip()[:80],
                 "memo": (body.memo or "")[:120],
                 "payment_method": body.payment_method,
+                "recipient_bank_id": (body.recipient_bank_id or "")[:120],
+                "recipient_bank_name": (body.recipient_bank_name or "")[:120],
+                "recipient_verified": "1" if recipient_verified else "0",
+                "save_recipient": "1" if body.save_recipient else "0",
                 "vaulted_service_usd": str(quote["fees"]["vaulted_service_usd"]),
                 "fx_rate": str(quote["fx_rate"]),
                 "receive_via": dst["receive_via"],

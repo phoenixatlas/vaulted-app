@@ -73,6 +73,8 @@ from routers.reverse_remit import router as reverse_remit_router
 from routers.investor import router as investor_router
 from routers.stripe_router import router as stripe_router
 from routers.payouts_router import router as payouts_router
+from routers.recipients import router as recipients_router
+from routers.feedback import router as feedback_router
 from routers.kyc import (
     router as kyc_router,
     _apply_identity_verified,  # noqa: F401 — re-exported for webhook dispatcher
@@ -116,6 +118,8 @@ api.include_router(reverse_remit_router)
 api.include_router(investor_router)
 api.include_router(stripe_router)
 api.include_router(payouts_router)
+api.include_router(recipients_router)
+api.include_router(feedback_router)
 api.include_router(kyc_router)
 
 # Push notifications: register-push uses raw /api/register-push (no double

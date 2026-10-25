@@ -208,6 +208,7 @@ async def dispatch_payout_for_remit(record: dict) -> dict:
         recipient_name=record.get("recipient_name") or "Vaulted Recipient",
         recipient_account=(record.get("counterparty") or "").replace(" ", ""),
         sender=_sender_kyc(user),
+        network_id=(record.get("recipient_bank") or {}).get("id"),
     )
     if not res.get("success"):
         logger.warning("[payouts] yellowcard payout failed for %s: %s", record["id"], res.get("error"))

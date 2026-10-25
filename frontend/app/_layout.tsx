@@ -13,6 +13,7 @@ import { I18nProvider } from "@/src/lib/i18n";
 import { CurrencyProvider } from "@/src/lib/currency";
 import { BiometricGate } from "@/src/components/BiometricGate";
 import PreviewAcknowledgementGate from "@/src/components/PreviewAcknowledgementGate";
+import FeedbackButton from "@/src/components/FeedbackButton";
 import { captureRefCodeFromUrl } from "@/src/lib/refCode";
 
 LogBox.ignoreAllLogs(true);
@@ -98,6 +99,7 @@ export default function RootLayout() {
             <AuthProvider>
               <BiometricGate>
                 <Stack screenOptions={{ headerShown: false, contentStyle: { backgroundColor: "#FBF8F2" } }} />
+                <FeedbackButton />
               </BiometricGate>
             </AuthProvider>
           </PreviewAcknowledgementGate>

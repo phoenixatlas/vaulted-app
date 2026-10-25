@@ -5,12 +5,12 @@ from __future__ import annotations
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Request
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 import kotani
 import payouts
 import yellowcard
-from deps import db, iso, logger, now_utc, require_admin
+from deps import db, get_current_user, iso, logger, now_utc, require_admin
 
 router = APIRouter()
 
@@ -18,6 +18,29 @@ router = APIRouter()
 class PayoutSettingsIn(BaseModel):
     provider: Optional[str] = None
     beta_test_mode: Optional[bool] = None
+
+
+class ResolveAccountIn(BaseModel):
+    account_number: str = Field(min_length=10, max_length=10, pattern=r"^\d{10}$")
+    bank_id: str = Field(min_length=1, max_length=120)
+
+
+@router.get("/payouts/banks")
+async def payout_banks(country: str = "NG", _user=Depends(get_current_user)):
+    """Banks a recipient can be paid into (Nigeria). Yellow Card networks
+    when keys are set, a built-in list of major Nigerian banks otherwise."""
+    if country.upper() != "NG":
+        raise HTTPException(status_code=400, detail="Bank list is only available for Nigeria")
+    return await yellowcard.list_banks("NG")
+
+
+@router.post("/payouts/resolve-account")
+async def payout_resolve_account(body: ResolveAccountIn, _user=Depends(get_current_user)):
+    """Look up the account holder's name before money is sent (NUBAN check)."""
+    res = await yellowcard.resolve_bank_account(body.account_number, body.bank_id)
+    if not res.get("success"):
+        raise HTTPException(status_code=404, detail=res.get("message") or "Account not found")
+    return {"account_name": res["account_name"], "mode": res["mode"]}
 
 
 @router.get("/app/config")

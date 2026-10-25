@@ -21,6 +21,7 @@ import { colors } from "@/src/lib/theme";
 import {
   KotaniHealthCard,
   PayoutProviderCard,
+  FeedbackCard,
   WaitlistCard,
   DailySignupsCard,
   CorridorMatrixCard,
@@ -277,6 +278,8 @@ function AdminHomeInner() {
           <AdminBiometricNudge />
 
           <PayoutProviderCard />
+
+          <FeedbackCard />
 
           <KotaniHealthCard
             health={health}

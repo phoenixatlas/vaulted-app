@@ -132,6 +132,7 @@ class RemitSendIn(BaseModel):
     recipient_address: str
     recipient_name: Optional[str] = None
     memo: Optional[str] = None
+    save_recipient: bool = True
 
 
 class RemitFundIn(BaseModel):
@@ -147,6 +148,11 @@ class RemitFundIn(BaseModel):
     recipient_name: Optional[str] = None
     memo: Optional[str] = None
     payment_method: Literal["card", "apple_pay", "google_pay", "bank"] = "card"
+    # Nigeria bank payouts: Yellow Card network id + display name. The
+    # account name is re-checked server-side before checkout.
+    recipient_bank_id: Optional[str] = Field(default=None, max_length=120)
+    recipient_bank_name: Optional[str] = Field(default=None, max_length=120)
+    save_recipient: bool = True
 
 
 # ---------------------------- Off-ramp -----------------------------------

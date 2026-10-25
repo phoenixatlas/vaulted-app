@@ -205,7 +205,8 @@ async def delete_account(body: DeleteAccountIn, user=Depends(get_current_user)):
         raise HTTPException(status_code=403, detail="Incorrect password")
     uid = user["id"]
     await revoke_all_for_user(uid, reason="account_deleted")
-    for coll in ("balances", "contacts", "cosigners", "password_resets", "credit_ledger", "refresh_tokens"):
+    for coll in ("balances", "contacts", "cosigners", "password_resets", "credit_ledger", "refresh_tokens",
+                 "recipients", "feedback"):
         await db[coll].delete_many({"user_id": uid})
     await db.conversations.delete_many({"user_id": uid})
     await db.transactions.update_many(

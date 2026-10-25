@@ -15,6 +15,8 @@ import KycStatusBanner from "@/src/components/KycStatusBanner";
 import PreviewBanner from "@/src/components/PreviewBanner";
 import ReverseRemitPanel from "@/src/components/ReverseRemitPanel";
 import { useAppConfig } from "@/src/lib/appConfig";
+import SavedRecipients from "@/src/components/SavedRecipients";
+import NgBankFields, { NgBank, NgResolved } from "@/src/components/NgBankFields";
 
 type Corridor = {
   code: string;
@@ -103,6 +105,19 @@ export default function Remit() {
   const [quoteErr, setQuoteErr] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const [err, setErr] = useState<string | null>(null);
+  const [saveRecipient, setSaveRecipient] = useState(true);
+  const [selectedRecipientId, setSelectedRecipientId] = useState<string | null>(null);
+  const [ngBank, setNgBank] = useState<NgBank | null>(null);
+  const [ngResolved, setNgResolved] = useState<NgResolved>(null);
+
+  // New corridor → previous recipient details no longer apply.
+  useEffect(() => {
+    setSelectedRecipientId(null);
+    setNgBank(null);
+    setNgResolved(null);
+    setAddr("");
+    setRecipientName("");
+  }, [dest]);
 
   // Kotani live sandbox quote (Kenya / M-Pesa + Ghana / Mobile Money).
   // Purely informational — gives users a second data point next to our own
@@ -231,6 +246,7 @@ export default function Remit() {
   const paywall = quote?.free_tier?.paywall_required;
   const kycRequired = quote?.kyc && !quote.kyc.allowed;
   const isFiatFunding = funding !== "crypto";
+  const isNgBank = isFiatFunding && dest === "NG";
   // For fiat funding, the "addr" field holds recipient bank/M-Pesa/IBAN
   // details as a free-form string. For crypto funding, it must be a
   // valid chain address matching the chain the router picked.
@@ -273,6 +289,10 @@ export default function Remit() {
         : "Enter the recipient's wallet address.");
       return;
     }
+    if (isNgBank && (!ngBank || addr.length !== 10 || !ngResolved)) {
+      setErr("Choose the bank and enter a 10-digit account number we can confirm.");
+      return;
+    }
     if (isFiatFunding && !recipientName.trim()) {
       setErr("Recipient full name is required for bank / mobile-money payouts.");
       return;
@@ -299,6 +319,9 @@ export default function Remit() {
           recipient_address: addr.trim(),
           recipient_name: recipientName.trim() || null,
           payment_method: funding as "card" | "apple_pay" | "google_pay" | "bank",
+          recipient_bank_id: isNgBank ? ngBank?.id : null,
+          recipient_bank_name: isNgBank ? ngBank?.name : null,
+          save_recipient: saveRecipient,
         });
         if (result.status === "success" && result.session_id) {
           // Sync the session so backend books the send + returns the tx
@@ -342,6 +365,7 @@ export default function Remit() {
           destination_code: dest,
           recipient_address: addr.trim(),
           recipient_name: recipientName.trim() || null,
+          save_recipient: saveRecipient,
         },
       });
       router.replace({ pathname: "/receipt", params: { ...(tx as any), remit_json: JSON.stringify(tx.remit || {}) } });
@@ -467,7 +491,11 @@ export default function Remit() {
                 <Pressable
                   key={opt.id}
                   testID={`remit-funding-${opt.id}`}
-                  onPress={() => setFunding(opt.id)}
+                  onPress={() => {
+                    // Wallet addresses and phone/bank numbers aren't interchangeable.
+                    if ((opt.id === "crypto") !== (funding === "crypto")) { setAddr(""); setSelectedRecipientId(null); }
+                    setFunding(opt.id);
+                  }}
                   style={[s.fundingCard, active && s.fundingCardActive]}
                 >
                   <Ionicons name={opt.icon} size={20} color={active ? colors.brand : colors.onSurfaceSecondary} />
@@ -637,7 +665,26 @@ export default function Remit() {
           )}
 
           {/* Recipient details — differs for fiat vs crypto rails */}
-          {isFiatFunding ? (
+          <SavedRecipients
+            country={dest}
+            rails={isFiatFunding ? ["momo", "bank"] : ["wallet"]}
+            selectedId={selectedRecipientId}
+            onSelect={(r) => {
+              setSelectedRecipientId(r.id);
+              setAddr(r.account);
+              setRecipientName(r.name);
+              if (r.bank_id) setNgBank({ id: r.bank_id, name: r.bank_name || "Bank" });
+            }}
+          />
+          {isNgBank ? (
+            <NgBankFields
+              bank={ngBank}
+              account={addr}
+              onBank={setNgBank}
+              onAccount={setAddr}
+              onResolved={(r) => { setNgResolved(r); if (r) setRecipientName(r.name); }}
+            />
+          ) : isFiatFunding ? (
             <>
               <Text style={s.label}>Recipient full name <Text style={s.required}>*</Text></Text>
               <TextInput
@@ -692,6 +739,18 @@ export default function Remit() {
           )}
 
           {err && <Text testID="remit-error" style={s.errorInline}>{err}</Text>}
+
+          <Pressable
+            testID="remit-save-recipient"
+            onPress={() => setSaveRecipient((v) => !v)}
+            style={s.saveRow}
+            accessibilityRole="checkbox"
+            accessibilityState={{ checked: saveRecipient }}
+            aria-checked={saveRecipient}
+          >
+            <Ionicons name={saveRecipient ? "checkbox" : "square-outline"} size={22} color={saveRecipient ? colors.brand : colors.onSurfaceTertiary} />
+            <Text style={s.saveText}>Save recipient for next time</Text>
+          </Pressable>
 
           <Pressable
             testID="remit-confirm"
@@ -803,6 +862,8 @@ const s = StyleSheet.create({
   helperText: { fontSize: 11, color: colors.onSurfaceTertiary, lineHeight: 15, marginTop: 4 },
   required: { color: "#E0735F" },
   errorInline: { color: colors.error, fontSize: 13, marginTop: spacing.sm },
+  saveRow: { flexDirection: "row", alignItems: "center", gap: spacing.sm, minHeight: 44, marginTop: spacing.md },
+  saveText: { fontSize: 14, color: colors.onSurface, fontWeight: "500" },
 
   cta: { backgroundColor: colors.brand, borderRadius: radius.md, paddingVertical: 16, alignItems: "center", marginTop: spacing.xl },
   ctaText: { color: "#0F0B08", fontSize: 16, fontWeight: "700" },

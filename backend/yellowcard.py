@@ -150,7 +150,7 @@ async def _pick_channel_and_network(country: str, rail: str) -> tuple[Optional[d
 
 
 async def create_payout(*, sequence_id: str, country: str, amount_usd: float, recipient_name: str,
-                        recipient_account: str, sender: dict) -> dict:
+                        recipient_account: str, sender: dict, network_id: Optional[str] = None) -> dict:
     """Submit + accept a Send. Returns {success, reference_id, status, error?}.
     Mock mode returns an instantly-complete payout."""
     if not live_mode():
@@ -160,6 +160,8 @@ async def create_payout(*, sequence_id: str, country: str, amount_usd: float, re
     if not rail:
         return {"success": False, "error": {"message": f"Yellow Card payouts not configured for {country}"}}
     channel, network = await _pick_channel_and_network(country.upper(), rail)
+    if network_id:  # sender picked a specific bank (Nigeria)
+        network = {"id": network_id}
     if not channel or not network:
         return {"success": False, "error": {"message": f"no active {rail} channel/network for {country}"}}
 
@@ -207,3 +209,43 @@ def verify_webhook_signature(raw_body: bytes, signature: Optional[str]) -> bool:
         return False
     expected = base64.b64encode(hmac.new(secret.encode(), raw_body, hashlib.sha256).digest()).decode()
     return hmac.compare_digest(expected, signature.strip())
+
+
+# ---- Nigeria bank list + account-name lookup ---------------------------------
+# Used in mock mode (no keys yet). IDs are prefixed `ng_` so they can never be
+# confused with real Yellow Card network IDs once live.
+_MOCK_NG_BANKS = [
+    ("Access Bank", "044"), ("Ecobank", "050"), ("Fidelity Bank", "070"), ("First Bank", "011"),
+    ("FCMB", "214"), ("GTBank", "058"), ("Jaiz Bank", "301"), ("Keystone Bank", "082"),
+    ("Kuda", "50211"), ("Moniepoint", "50515"), ("OPay", "999992"), ("PalmPay", "999991"),
+    ("Polaris Bank", "076"), ("Providus Bank", "101"), ("Stanbic IBTC", "221"), ("Sterling Bank", "232"),
+    ("UBA", "033"), ("Union Bank", "032"), ("Wema Bank", "035"), ("Zenith Bank", "057"),
+]
+
+
+async def list_banks(country: str = "NG") -> dict:
+    """Return {banks: [{id, name, code}], mode}."""
+    if not live_mode():
+        return {"mode": "mock", "banks": [{"id": f"ng_{c}", "name": n, "code": c} for n, c in _MOCK_NG_BANKS]}
+    ch = await _call("GET", "/channels", params={"country": country})
+    channels = (ch["data"] or {}).get("channels", []) if ch["success"] else []
+    bank_ch = {c["id"] for c in channels if c.get("status") == "active" and c.get("channelType") == "bank"}
+    nw = await _call("GET", "/networks", params={"country": country})
+    networks = (nw["data"] or {}).get("networks", []) if nw["success"] else []
+    banks = [{"id": n["id"], "name": n.get("name"), "code": n.get("code")}
+             for n in networks if n.get("status") == "active" and bank_ch & set(n.get("channelIds") or [])]
+    return {"mode": "live", "banks": sorted(banks, key=lambda b: (b["name"] or "").lower())}
+
+
+async def resolve_bank_account(account_number: str, network_id: str) -> dict:
+    """Return {success, account_name, mode} or {success: False, message}."""
+    if not live_mode():
+        if account_number.startswith("0000"):
+            return {"success": False, "message": "Account not found"}
+        return {"success": True, "account_name": "TEST ACCOUNT HOLDER", "mode": "mock"}
+    res = await _call("POST", "/details/bank", payload={"accountNumber": account_number, "networkId": network_id})
+    if not res["success"]:
+        return {"success": False, "message": (res["data"] or {}).get("message") or "Account not found"}
+    name = (res["data"] or {}).get("accountName")
+    return {"success": bool(name), "account_name": name, "mode": "live",
+            **({} if name else {"message": "Account not found"})}

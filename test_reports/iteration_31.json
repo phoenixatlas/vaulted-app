@@ -1,0 +1,32 @@
+{
+  "summary": "Retest of the iteration 30 fixes. Backend: 7/7 pytest passed. The NG fund server re-check returns 400 for 0000123456. The screenshot link returns 401 with no token or a bad token, 403 with a login token or a token for a different id, and 404 with a correctly scoped token (auth passed). Deleting an account removes its recipients and feedback, and the login fails afterwards. Frontend at 390x844: every requested fix passed. Switching NG->KE clears the phone and name fields, and switching back clears the bank and account fields. The saved KE momo chip shows for Card and is hidden for Crypto. Tapping the chip fills the name and phone. Typing '0123 456 789' or pasting '0123-456 789' gives 0123456789 and the name resolves (TEST ACCOUNT HOLDER, mock). Searching 'Guaranty' finds GTBank; 'zzz' shows 'No banks match \"zzz\".' The checkbox exposes role=checkbox and aria-checked, which toggles true/false. The feedback tab (346,220 44x48) never overlaps the Pay button or the phone/name inputs at any scroll position. 'Tell us what happened.' appears on an empty send and clears on the first keystroke. No feedback was submitted.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [
+      {"screen": "/remit (390x844)", "issues": [
+        "Feedback tab (x346-390, y220-268) slightly overlaps the right edge of the KYC 'Verify' CTA (x296-353) when the page is scrolled to the bottom; a tap at (360,265) hits feedback-fab. Verify is still tappable on most of its area. It also overlaps the bottom-right corner of the Send to Africa / UK-EU toggle. Cosmetic; consider top: insets.top + 300 or hiding the tab while scrolling."
+      ]}
+    ],
+    "react_native_issues": []
+  },
+  "test_report_links": ["/app/backend/tests/test_iteration31_fixes.py", "/app/backend/tests/iter31_helper.py", "/app/test_reports/pytest/pytest_iter31.xml"],
+  "action_items": [
+    "(Minor) Move the feedback tab a little further down, or away from the KYC Verify CTA on /remit.",
+    "(Minor) Clear selectedRecipientId/addr when the funding method changes between fiat and crypto. Today a selected KE momo chip's phone number stays in the crypto wallet-address field after switching to Crypto.",
+    "(Minor) feedback.py: asyncio.create_task(_notify_admins(...)) keeps no reference to the task, so it can be garbage-collected. Use FastAPI BackgroundTasks or keep the task in a set."
+  ],
+  "critical_code_review_comments": [
+    "The shot token is signed with JWT_SECRET, but get_current_user rejects it as a Bearer token (verified 401), so it cannot be used to log in.",
+    "remit.py now overwrites recipient_name with the name the server resolves for NG. Good.",
+    "remit.tsx is 908 lines (>700). Consider splitting out the recipient section and the quote card."
+  ],
+  "updated_files": ["/app/backend/tests/test_iteration31_fixes.py (new)", "/app/backend/tests/iter31_helper.py (new)"],
+  "success_rate": {"backend": "100% (7/7)", "frontend": "100% of requested fix checks"},
+  "seed_data_creation": "Seeded the TEST_Wanjiru Kamau KE momo recipient for smoketest and removed it afterwards. The cleanup also deleted 7 TEST_-prefixed feedback docs left on smoketest by the iteration 30 tests. A throwaway test_iter31_* user was registered and deleted.",
+  "retest_needed": false,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "frontend/.env uses EXPO_PUBLIC_BACKEND_URL (the tests fall back to it). Smoketest uid 68e4769d-0af6-4096-ae7b-78128a97d6d4. iter31_helper.py: seed_ke_momo/cleanup/count/shot_token. The /remit scroll container starts at y=238 at 390x844. The feedback tab is fixed at y220-268.",
+  "rca_of_issue": ""
+}

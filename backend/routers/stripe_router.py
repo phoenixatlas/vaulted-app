@@ -42,6 +42,7 @@ from deps import (
 from audit import EventType, write_event as audit_write
 from models import StripeDepositIn, StripeSyncIn
 import payouts
+from routers.recipients import save_recipient
 from routers.kyc import _apply_identity_verified, _apply_identity_requires_input
 
 # Stripe library is configured module-level in server.py — no need to
@@ -232,6 +233,8 @@ async def _apply_checkout_session(session_obj: dict) -> dict:
             "payment_method": metadata.get("payment_method") or "card",
             "stripe_session_id": session_obj.get("id"),
             "receipt_id": "VLT-" + (session_obj.get("id") or "")[-8:].upper(),
+            **({"recipient_bank": {"id": metadata["recipient_bank_id"], "name": metadata.get("recipient_bank_name")}}
+               if metadata.get("recipient_bank_id") else {}),
             "created_at": iso(now_utc()),
             "remit": {
                 "source_currency": (metadata.get("source_fiat") or "GBP").upper(),
@@ -248,6 +251,19 @@ async def _apply_checkout_session(session_obj: dict) -> dict:
         }
         await db.transactions.insert_one(record)
         record.pop("_id", None)
+        if metadata.get("save_recipient") == "1":
+            dest_code = (metadata.get("destination_code") or "").upper()
+            try:
+                await save_recipient(
+                    user_id, name=metadata.get("recipient_name") or "", country_code=dest_code,
+                    currency=metadata.get("destination_currency") or "", account=record["counterparty"],
+                    rail="bank" if record.get("recipient_bank") else "momo",
+                    bank_id=(record.get("recipient_bank") or {}).get("id"),
+                    bank_name=(record.get("recipient_bank") or {}).get("name"),
+                    verified=metadata.get("recipient_verified") == "1",
+                )
+            except Exception as e:  # noqa: BLE001
+                logger.warning("save_recipient failed for tx %s: %s", tx_id, e)
         await db.stripe_events.insert_one({
             "session_id": session_obj.get("id"), "kind": "remit_fund", "at": iso(now_utc()),
         })

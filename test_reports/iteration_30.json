@@ -1,0 +1,52 @@
+{
+  "summary": "Iteration 30: tested NG bank list + account-name check (Yellow Card MOCK), saved recipients, NG guard on /remit/fund + the Stripe apply path, and tester feedback (backend + UI at 390x844). Backend: 19/19 pytest passed. The Stripe apply path was run directly in Python with a fake paid session for a TEST user: it stored tx.recipient_bank {id: ng_058, name: GTBank} and saved the recipient as rail=bank, verified=true. Feedback: note + PNG gave screenshot_saved=true, note-only gave ok, an empty note gave 422, non-admin got 403, the screenshot URL without a token gave 401, and Resend emails returned 200. Frontend: the Feedback button shows when signed in; the sheet, the web screenshot hint, Send, the 'Thanks' message and Done all work. The NG bank picker search, picking GTBank, the 'TEST ACCOUNT HOLDER' name with test note, the not-found message, the save checkbox toggle, the KE name + phone inputs and the saved-recipient chips (tap fills name + phone) all work. Found 1 medium bug (account number and name carry over when switching destination) plus a few minor ones. No deprecated Expo packages found (react-native-view-shot 4.0.3 is fine).",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {"endpoint": "POST /api/feedback", "issue": "Phone screenshots are uploaded as JPEG (FeedbackButton sends screenshot.jpg / image/jpeg), but the email attachment is always named .png with mime image/png (feedback.py:69-71). Admins get a mislabelled file. Use the real ext/ctype."},
+      {"endpoint": "POST /api/feedback", "issue": "Resend emails go out one after another inside the request (one per ADMIN_EMAILS address). This slows the tester's Send. Move them to BackgroundTasks."},
+      {"endpoint": "GET /api/admin/feedback/{id}/screenshot?token=", "issue": "The full access JWT is passed in the query string and shows up in plain text in the uvicorn access logs (seen in backend.*.log). Use a short-lived screenshot-only signed token or signed URL instead."},
+      {"endpoint": "POST /api/auth/delete-account", "issue": "Does not delete db.recipients (names, account numbers, phones) or db.feedback for the user, so personal data stays after account deletion (App Store 5.1.1(v)). Add 'recipients' (and probably feedback) to the delete list in routers/auth.py:208."},
+      {"endpoint": "POST /api/remit/fund", "issue": "recipient_verified comes from the client and is copied into Stripe metadata and then into the saved recipient (verified flag) without a server-side check. Re-run resolve_bank_account on the server or don't trust the client flag."}
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [
+      {"component": "remit.tsx destination reset", "issue": "Switching destination NG to KE clears the bank, but addr ('0123456789') and recipientName (auto-filled 'TEST ACCOUNT HOLDER') carry over into the KE phone/name inputs. Going back to NG keeps the account number. A user could send to the wrong recipient. The useEffect on [dest] (remit.tsx:114-118) should also run setAddr('') and setRecipientName('').", "testID": "remit-addr / remit-name / ng-account-number", "priority": "MEDIUM"},
+      {"component": "NgBankFields account input", "issue": "maxLength={10} cuts the raw text BEFORE the digits-only clean-up, so pasting '0123 456 789' or a number with dashes loses digits (e.g. '01234ab56789' becomes '01234567'). Remove maxLength; the onChangeText slice(0,10) already limits it.", "testID": "ng-account-number", "priority": "LOW"},
+      {"component": "SavedRecipients rail filter", "issue": "Recipients are filtered by country only. A momo (phone) recipient chip still shows in Crypto-balance funding (confirmed in UI) and would fill a phone number into the wallet-address field; the crypto path also saves rail='wallet' recipients that would show in fiat mode. Filter chips by rail (wallet vs momo/bank) based on the funding method.", "testID": "saved-recipients", "priority": "MEDIUM"},
+      {"component": "FeedbackButton", "issue": "The 'Tell us what happened.' error stays visible after the user starts typing. Clear err in onChangeText.", "testID": "feedback-note", "priority": "LOW"},
+      {"component": "NgBankFields bank modal", "issue": "No 'No banks found' message when the search has no matches (blank list). A search for the full name 'Guaranty' doesn't find GTBank; consider adding aliases.", "testID": "ng-bank-search", "priority": "LOW"}
+    ],
+    "integration_issues": [],
+    "design_issues": [
+      {"screen": "/remit (and lists app-wide)", "issues": ["The floating Feedback button (fixed at bottom: insets.bottom+96, right) sits over content. On /remit it covers the right part of the 'Recipient account or phone' input and the 'Pay £50 & send to Kenya' button depending on scroll. On /wallet it covers the price column of the asset rows. Consider extra bottom padding on scroll screens, a smaller/collapsible button, or hiding it on /remit."]},
+      {"screen": "/remit save checkbox", "issues": ["accessibilityState={{checked}} doesn't output aria-checked on web (the attribute is missing). Use the aria-checked prop (RN 0.7x) for accessibility."]}
+    ],
+    "react_native_issues": []
+  },
+  "test_report_links": ["/app/backend/tests/test_iteration30_recipients_feedback.py", "/app/backend/tests/iter30_helper.py", "/app/test_reports/pytest/iter30.xml"],
+  "action_items": [
+    "Clear addr + recipientName (and selectedRecipientId) when the destination changes (remit.tsx:114-118).",
+    "Filter SavedRecipients by rail to match the funding method (wallet for crypto, momo/bank for fiat).",
+    "Remove maxLength on ng-account-number so pasted numbers with spaces/dashes clean up correctly.",
+    "Delete db.recipients (and feedback) in /auth/delete-account.",
+    "Fix the feedback email attachment name/mime for JPEG; send emails in BackgroundTasks.",
+    "Don't put the long-lived access JWT in the screenshot URL query string (it gets logged); use a short-lived signed token.",
+    "Don't trust the client recipient_verified flag; check it again on the server.",
+    "Clear the feedback error on typing; add an empty state to the bank search; adjust the Feedback button position/padding so it doesn't cover inputs and the CTA."
+  ],
+  "critical_code_review_comments": [
+    "stripe_router._apply_checkout_session: the save_recipient call is wrapped in try/except, so it never fails the send. Good.",
+    "SavedRecipients on web: long-press deletes right away with no confirmation (Platform.OS==='web' branch).",
+    "FeedbackCard.tsx uses inline styles instead of StyleSheet.create (minor).",
+    "The Feedback sheet's Cancel button has no testID."
+  ],
+  "updated_files": ["/app/backend/tests/test_iteration30_recipients_feedback.py", "/app/backend/tests/iter30_helper.py"],
+  "success_rate": {"backend": "100% (19/19)", "frontend": "~85% (all requested flows work; destination-switch carry-over bug + rail-mixing bug)"},
+  "seed_data_creation": "Seeded 1 KE recipient (TEST_Wanjiru Kamau) for smoketest and removed it afterwards (0 TEST_ recipients left). A temporary test_iter30_* user was created and deleted via delete-account; its one simulated NG remit tx stays, de-identified. 3 TEST_iter30 feedback rows (2 via API, 1 via UI) are still in db.feedback, and admins got the matching emails.",
+  "retest_needed": true,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "Use test_iteration30_recipients_feedback.py for regression (it runs iter30_helper.py for direct-DB actions and the Stripe apply call). Mock NG bank names: GTBank is 'ng_058'; search 'gt', not 'guaranty'. On web, the account input needs keyboard.type of plain digits. Keep feedback submissions to a minimum (real Resend emails).",
+  "rca_of_issue": "Destination carry-over: the remit.tsx useEffect([dest]) only resets selectedRecipientId, ngBank and ngResolved; addr and recipientName live in shared state used by both the NG bank fields and the KE/other fiat inputs, so their values carry over. NgBankFields' onResolved also writes the resolved name into recipientName, and that name then carries over too."
+}
