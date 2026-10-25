@@ -1,0 +1,47 @@
+{
+  "summary": "Iteration 35: tested the Beta invite code gate and the Tell recipient feature at 390x844, with a backend re-check through the public URL. Backend: 10/10 pytest passed. invite-required returns {required:true}. Register with no code or a wrong code gives 403, and a wrong code with an existing email also gives 403 (the gate runs before the email check, so no enumeration). ' vaulted-beta ' is accepted (trimmed, case-insensitive), and invited_with='VAULTED-BETA' is saved and confirmed in the DB. Existing smoketest login still works. /api/admin/invite GET/PUT gives 401/403 without auth and 403 for smoketest, and the config was not changed. Frontend: the Register screen shows 'Beta invite code' (reg-invite-code-input, 48px). With no code it shows 'Enter your beta invite code.'. A wrong code shows the 403 message. VAULTED-BETA creates the account and goes to /onboarding/seed. The throwaway user was deleted. Smoketest login works with no invite code and lands on /wallet. On the settled KE M-Pesa transfer, tell-recipient shows 'LET GRACE KNOW IT'S ARRIVED' with WhatsApp and Text buttons (167x48 each). WhatsApp opens a popup: wa.me redirects to api.whatsapp.com/send/?phone=254712345678&text=Hi Grace, the 8,123.45 KES I sent you with Vaulted has arrived. Receipt: <APP>/api/r/<token>. The receipt URL returns 200. On the settled NG GTBank transfer, only 'Send a message' (tell-recipient-share) shows. It copied 'Hi Chidi, the 95,000 NGN ... Receipt: .../api/r/...' to the clipboard and showed 'Message copied — paste it to your recipient'. The processing transfer does not show tell-recipient. Deleted all _iter35 docs (3 txs). Invite config left untouched (defaults: enabled, VAULTED-BETA). No deprecated Expo packages found.",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {"endpoint": "POST /api/auth/register", "issue": "invited_with saves whatever invite_code was sent, even when the gate is turned off. A junk string gets stored and counted in signups_with_code on /admin/invite. Reference: /app/backend/routers/auth.py:104"},
+      {"endpoint": "invite.py", "issue": "DEFAULT_CODE = os.environ.get('BETA_INVITE_CODE', 'VAULTED-BETA') hardcodes a fallback secret. That is acceptable for a low-value code, but it goes against the env-only config rule. Reference: /app/backend/invite.py:21"}
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [
+      {"component": "TellRecipientButton", "issue": "When recipient_name is empty, `first` becomes 'there', so the title reads 'Let there know it's arrived'. Use a separate fallback for the title, e.g. 'Let them know it's arrived'. Reference: /app/frontend/src/components/TellRecipientButton.tsx:21,56", "testID": "tell-recipient", "priority": "LOW"},
+      {"component": "TellRecipientButton SMS", "issue": "The sms: URL uses the raw phone value. If the stored number has spaces ('+254 712 345 678'), the URL contains unencoded spaces and may fail on iOS/Android. Use `+${digits}` instead. Also, hasPhone needs a leading '+', so numbers typed as '0712…' or '2547…' fall back to the generic share button. Consider normalising by corridor. Reference: TellRecipientButton.tsx:20,38,40", "testID": "tell-recipient-sms", "priority": "LOW"},
+      {"component": "TellRecipientButton SMS on web", "issue": "react-native-web's Linking.canOpenURL always resolves true, so the clipboard fallback never runs on web. In headless Chromium, tapping Text did nothing visible: no note and no popup. Native is unaffected. Optionally use the clipboard path when Platform.OS==='web'.", "testID": "tell-recipient-sms", "priority": "LOW"}
+    ],
+    "integration_issues": [],
+    "design_issues": [
+      {"screen": "Register", "issues": ["The 'Preview mode' banner sits only about 7px above the 'Beta invite code' label, tighter than the 16px+ spacing between other fields. Add marginBottom of spacing.md or more."]}
+    ],
+    "react_native_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_iteration35_invite_tell_recipient.py",
+    "/app/backend/tests/iter35_helper.py",
+    "/app/test_reports/pytest/iter35.xml"
+  ],
+  "action_items": [
+    "Optional: only set invited_with when the gate is enabled and the code matched (auth.py:104).",
+    "Optional: fix the 'Let there know' title fallback when recipient_name is missing.",
+    "Optional: build the sms: URL from the normalised digits (+<digits>), and on web use the clipboard fallback for SMS.",
+    "Optional: add more spacing between the preview banner and the invite code field on Register."
+  ],
+  "critical_code_review_comments": [
+    "The invite check uses hmac.compare_digest on normalised values and runs before the email-exists check. The code is never shipped in the bundle. Looks good.",
+    "Tell recipient only shows for settled/completed remits and switches to the share button when recipient_bank is set. The message uses the existing private /api/r/{token} share link. Looks good.",
+    "For crypto-only remits (Phase B), counterparty is a wallet address, so the share button shows correctly."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_iteration35_invite_tell_recipient.py (new)",
+    "/app/backend/tests/iter35_helper.py (new)"
+  ],
+  "success_rate": {"backend": "100%", "frontend": "100%"},
+  "seed_data_creation": "Seeded 3 _iter35 txs for smoketest (settled KE M-Pesa, settled NG GTBank, processing KE) with iter35_helper.py. All deleted afterwards. Throwaway users test_iter35_* (1 from pytest, 1 from the UI) were deleted.",
+  "retest_needed": false,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "Run with EXPO_PUBLIC_BACKEND_URL=<public url> pytest tests/test_iteration35_invite_tell_recipient.py. Seed and clean with `python tests/iter35_helper.py seed|clean` (seed prints the tx ids as JSON). db.config{_id:'invite'} is absent, so the defaults apply (enabled, VAULTED-BETA). In headless Chromium the WhatsApp popup goes from wa.me to api.whatsapp.com/send."
+}

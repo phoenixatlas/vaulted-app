@@ -48,6 +48,14 @@ export default function Register() {
   // Referral code — checked in this order: URL param, then persisted storage.
   const [refCode, setRefCode] = useState<string | null>(null);
   const [refInfo, setRefInfo] = useState<ValidateResp | null>(null);
+  // Beta gate — new sign-ups need the shared invite code while it's on.
+  const [inviteRequired, setInviteRequired] = useState(false);
+  const [inviteCode, setInviteCode] = useState("");
+  useEffect(() => {
+    api<{ required: boolean }>("/auth/invite-required", { auth: false })
+      .then((r) => setInviteRequired(r.required))
+      .catch(() => setInviteRequired(false));
+  }, []);
 
   // Bootstrap the code + validate it against backend so we can render a
   // trust-building "Invited by Sarah B." banner before signup.
@@ -81,9 +89,13 @@ export default function Register() {
       setErr("Passwords don't match. Please check and try again.");
       return;
     }
+    if (inviteRequired && !inviteCode.trim()) {
+      setErr("Enter your beta invite code.");
+      return;
+    }
     setLoading(true);
     try {
-      await register(email.trim(), password, name.trim(), refCode);
+      await register(email.trim(), password, name.trim(), refCode, inviteCode);
       await clearPendingRefCode();
       router.replace("/onboarding/seed");
     } catch (e: any) {
@@ -122,6 +134,21 @@ export default function Register() {
             </View>
           )}
 
+          {inviteRequired && (
+            <View style={[s.field, { marginTop: spacing.md }]}>
+              <Text style={s.label}>Beta invite code</Text>
+              <TextInput
+                testID="reg-invite-code-input"
+                value={inviteCode}
+                onChangeText={setInviteCode}
+                autoCapitalize="characters"
+                autoCorrect={false}
+                placeholder="From the Vaulted team"
+                placeholderTextColor={colors.onSurfaceTertiary}
+                style={s.input}
+              />
+            </View>
+          )}
           <View style={s.field}>
             <Text style={s.label}>{t("name")}</Text>
             <TextInput testID="reg-name-input" value={name} onChangeText={setName} placeholder="Jane Doe" placeholderTextColor={colors.onSurfaceTertiary} style={s.input} />

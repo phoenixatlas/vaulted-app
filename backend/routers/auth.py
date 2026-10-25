@@ -27,6 +27,7 @@ import jwt
 from eth_account import Account
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
+from invite import get_invite_cfg, invite_ok
 
 from audit import EventType, write_event as audit_write
 from auth_tokens import (
@@ -73,6 +74,10 @@ router = APIRouter()
 
 @router.post("/auth/register", response_model=TokenOut)
 async def register(body: RegisterIn):
+    # Beta gate first, so a wrong code never reveals whether an email exists.
+    invite_cfg = await get_invite_cfg()
+    if not await invite_ok(body.invite_code):
+        raise HTTPException(status_code=403, detail="That invite code isn't valid. Ask the Vaulted team for the current beta code.")
     existing = await db.users.find_one({"email": body.email.lower()})
     if existing:
         raise HTTPException(status_code=400, detail="Email already registered")
@@ -97,6 +102,7 @@ async def register(body: RegisterIn):
         "eth_mnemonic": mnemonic_phrase,
         "mnemonic_origin": "eth_native",  # derives ETH key via BIP44 m/44'/60'/0'/0/0
         "onboarding_seed_acknowledged": False,
+        **({"invited_with": body.invite_code.strip().upper()} if body.invite_code and invite_cfg["enabled"] else {}),
         "biometric_enabled": False,
         "multisig_enabled": False,
         "referral_code": referral_code,

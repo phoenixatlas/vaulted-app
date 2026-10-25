@@ -22,6 +22,7 @@ import {
   KotaniHealthCard,
   PayoutProviderCard,
   FeedbackCard,
+  InviteCodeCard,
   WaitlistCard,
   DailySignupsCard,
   CorridorMatrixCard,
@@ -278,6 +279,8 @@ function AdminHomeInner() {
           <AdminBiometricNudge />
 
           <PayoutProviderCard />
+
+          <InviteCodeCard />
 
           <FeedbackCard />
 

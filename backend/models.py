@@ -18,6 +18,8 @@ class RegisterIn(BaseModel):
     name: str = Field(min_length=1, max_length=80)
     # Optional 8-char alphanumeric invite code. Case-insensitive.
     referred_by_code: Optional[str] = Field(default=None, max_length=16)
+    # Shared beta invite code (checked server-side only when the gate is on).
+    invite_code: Optional[str] = Field(default=None, max_length=40)
 
 
 class LoginIn(BaseModel):

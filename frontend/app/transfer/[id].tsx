@@ -11,6 +11,7 @@ import { api } from "@/src/lib/api";
 import { useCurrency } from "@/src/lib/currency";
 import TransferTimeline, { Step } from "@/src/components/TransferTimeline";
 import ShareReceiptButton from "@/src/components/ShareReceiptButton";
+import TellRecipientButton from "@/src/components/TellRecipientButton";
 import { colors, spacing, radius } from "@/src/lib/theme";
 
 type Detail = { tx: any; timeline: Step[]; is_final: boolean; repeat: Record<string, any> | null };
@@ -92,6 +93,15 @@ export default function TransferDetail() {
             {!!payout?.provider_label && <Row label="Payout partner" value={isTest ? `${payout.provider_label} · test` : payout.provider_label} />}
             <Row label="Date" value={new Date(tx.created_at).toLocaleString()} />
           </View>
+
+          {remit && (tx.status === "settled" || tx.status === "completed") && (
+            <TellRecipientButton
+              txId={tx.id}
+              amountText={`${Number(remit.destination_amount).toLocaleString(undefined, { maximumFractionDigits: 2 })} ${remit.destination_currency}`}
+              recipientName={tx.recipient_name}
+              phone={tx.recipient_bank ? null : tx.counterparty}
+            />
+          )}
 
           {remit && (
             <ShareReceiptButton

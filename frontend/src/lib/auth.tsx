@@ -22,7 +22,7 @@ type AuthCtx = {
   user: User | null;
   loading: boolean;
   login: (email: string, password: string) => Promise<void>;
-  register: (email: string, password: string, name: string, referredByCode?: string | null) => Promise<void>;
+  register: (email: string, password: string, name: string, referredByCode?: string | null, inviteCode?: string | null) => Promise<void>;
   logout: () => Promise<void>;
   refresh: () => Promise<void>;
   setUser: (u: User | null) => void;
@@ -73,8 +73,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setUser(res.user);
   };
 
-  const register = async (email: string, password: string, name: string, referredByCode?: string | null) => {
+  const register = async (email: string, password: string, name: string, referredByCode?: string | null, inviteCode?: string | null) => {
     const body: any = { email, password, name };
+    if (inviteCode && inviteCode.trim()) body.invite_code = inviteCode.trim();
     if (referredByCode && referredByCode.trim()) {
       body.referred_by_code = referredByCode.trim().toUpperCase();
     }
