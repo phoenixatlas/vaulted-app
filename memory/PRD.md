@@ -354,3 +354,7 @@ MONGO_URL, DB_NAME=vaulted, JWT_SECRET, STRIPE_API_KEY (live, rotated), STRIPE_W
 - Bundle ID / Android package → `com.phoenixatlas.vaulted` (was com.emergent.multisigvault.v1vcpy). Display name "Vaulted".
 - New icon/splash/adaptive icon: gold phoenix (inner grey square removed) + "VAULTED" serif wordmark. Originals backed up in /tmp/icon_backup (ephemeral).
 - Card checkout stays paused in beta (user decision). Note: app.json references ./google-services.json (missing) — Firebase file must be for package com.phoenixatlas.vaulted.
+
+## 🔔 Email Preferences · 🔗 Shareable Receipts (2026-06)
+- `users.delivery_emails` (default true) via `PATCH /api/auth/security {delivery_emails}`; Settings → Notifications switch. Opted-out users skipped in `delivery.notify_if_delivered` (`delivery_email_skipped: opted_out`).
+- `POST /api/transactions/{id}/share` → stable `share_token`; public `GET /api/r/{token}` dark branded HTML (first names, amount, status, via, country, date, receipt ID; no account numbers/emails; noindex). `ShareReceiptButton` on transfer detail + receipt screens (native share sheet; web share or copy link).

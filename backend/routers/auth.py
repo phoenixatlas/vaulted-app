@@ -231,6 +231,8 @@ async def update_security(body: dict, user=Depends(get_current_user)):
         updates["biometric_enabled"] = bool(body["biometric_enabled"])
     if "multisig_enabled" in body:
         updates["multisig_enabled"] = bool(body["multisig_enabled"])
+    if "delivery_emails" in body:
+        updates["delivery_emails"] = bool(body["delivery_emails"])
     if updates:
         await db.users.update_one({"id": user["id"]}, {"$set": updates})
     u = await db.users.find_one({"id": user["id"]}, {"_id": 0})

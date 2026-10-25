@@ -37,11 +37,13 @@ export default function Settings() {
 
   const bioLabel = bioCaps ? labelFor(bioCaps.primary, Platform) : "Biometrics";
 
-  const toggleSecurity = async (key: "biometric_enabled" | "multisig_enabled", val: boolean) => {
+  const toggleSecurity = async (key: "biometric_enabled" | "multisig_enabled" | "delivery_emails", val: boolean) => {
     try {
       const updated = await api("/auth/security", { method: "PATCH", body: { [key]: val } });
       setUser(updated as any);
-    } catch (e) { console.log(e); }
+    } catch (e: any) {
+      Alert.alert("Couldn't save", e?.message || "Please check your connection and try again.");
+    }
   };
 
   const onBiometricToggle = async (val: boolean) => {
@@ -177,6 +179,23 @@ export default function Settings() {
               );
             })}
           </View>
+        </View>
+
+        <Text style={s.section}>Notifications</Text>
+        <View style={s.card}>
+          <Row
+            icon="mail-outline"
+            label="Email me when money is delivered"
+            testID="toggle-delivery-emails"
+            right={
+              <Switch
+                testID="delivery-emails-switch"
+                value={user?.delivery_emails !== false}
+                onValueChange={(v) => toggleSecurity("delivery_emails", v)}
+                trackColor={{ true: colors.brand, false: colors.borderStrong }}
+              />
+            }
+          />
         </View>
 
         <Text style={s.section}>{t("security")}</Text>

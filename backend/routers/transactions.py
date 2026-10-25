@@ -20,7 +20,7 @@ from io import StringIO
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException
-from fastapi.responses import StreamingResponse
+from fastapi.responses import HTMLResponse, StreamingResponse
 
 from deps import db, now_utc, iso, get_current_user
 from models import FiatTxIn
@@ -244,7 +244,8 @@ def build_timeline(tx: dict) -> list[dict]:
     else:
         steps = [
             {"key": "sent", "label": "Sent from your wallet",
-             "detail": f"{tx.get('amount')} {tx.get('asset')} on {remit.get('chain') or tx.get('network')}",
+             "detail": " ".join(x for x in [str(tx.get("amount") or ""), tx.get("asset") or "",
+                                             f"on {remit.get('chain') or tx.get('network')}" if (remit.get("chain") or tx.get("network")) else ""] if x) or None,
              "at": created, "done": True},
             {"key": "confirmed", "label": "Confirmed on the blockchain",
              "detail": f"Tx {_short(tx.get('tx_hash'))}" if tx.get("tx_hash") else None,
@@ -349,3 +350,82 @@ async def get_transaction(tx_id: str, user=Depends(get_current_user)):
         "is_final": status in _DONE_STATUSES or status == "failed" or bool((tx.get("payout") or {}).get("failed")),
         "repeat": _repeat_prefill(tx),
     }
+
+
+# ---------------------------------------------------------------------------
+# Shareable receipts — public, read-only page behind an unguessable token.
+# Shows only what a recipient needs: amounts, first names, date, status.
+# Never account numbers, wallet addresses or emails.
+# ---------------------------------------------------------------------------
+@router.post("/transactions/{tx_id}/share")
+async def create_share_link(tx_id: str, user=Depends(get_current_user)):
+    tx = await db.transactions.find_one({"id": tx_id, "user_id": user["id"]}, {"_id": 0, "share_token": 1, "remit": 1})
+    if not tx:
+        raise HTTPException(status_code=404, detail="Transaction not found")
+    if not tx.get("remit"):
+        raise HTTPException(status_code=400, detail="Only transfers can be shared")
+    token = tx.get("share_token") or secrets.token_urlsafe(16)
+    if not tx.get("share_token"):
+        await db.transactions.update_one({"id": tx_id}, {"$set": {"share_token": token}})
+    return {"token": token, "path": f"/api/r/{token}"}
+
+
+def _share_page(tx: dict, sender: dict) -> str:
+    import html as _h
+    remit = tx.get("remit") or {}
+    status = (tx.get("status") or "").lower()
+    delivered = status in _DONE_STATUSES
+    payout = tx.get("payout") or tx.get("kotani") or {}
+    is_test = payout.get("mode") in ("simulated", "mock")
+    e = lambda v: _h.escape(str(v or ""))  # noqa: E731
+    first = lambda n: (n or "").strip().split(" ")[0]  # noqa: E731
+
+    def money(a, c):
+        try:
+            return f"{float(a):,.2f} {c}"
+        except (TypeError, ValueError):
+            return f"{a} {c}"
+
+    received = e(money(remit.get("destination_amount"), remit.get("destination_currency", "")))
+    when = (tx.get("created_at") or "")[:16].replace("T", " ")
+    rows = [
+        ("To", e(first(tx.get("recipient_name")) or "Recipient")),
+        ("From", e(first(sender.get("name")) or "Vaulted user")),
+        ("They received", received),
+        ("Delivered via", e(remit.get("receive_via"))),
+        ("Country", e(remit.get("destination_country"))),
+        ("Date (UTC)", e(when)),
+        ("Receipt ID", e(tx.get("receipt_id") or tx.get("id", "")[:8].upper())),
+    ]
+    row_html = "".join(f"<tr><td>{k}</td><td>{v}</td></tr>" for k, v in rows if v)
+    if delivered:
+        badge = ("#3FA672", "Delivered")
+    elif status == "failed":
+        badge = ("#D9534F", "Payout failed")
+    else:
+        badge = ("#C9A35B", "In progress")
+    test = '<p class="test">Beta test payout: no real money was sent.</p>' if is_test else ""
+    return f"""<!doctype html><html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1"><meta name="robots" content="noindex">
+<title>Vaulted receipt {e(tx.get('receipt_id'))}</title>
+<meta property="og:title" content="Vaulted transfer receipt"><meta property="og:description" content="{received} · {badge[1]}">
+<style>body{{margin:0;background:#0F0B08;color:#F5E9C9;font-family:-apple-system,Helvetica,Arial,sans-serif}}
+.c{{max-width:460px;margin:auto;padding:40px 24px}}.b{{font-size:26px;font-weight:700;color:#C9A35B}}
+.k{{font-size:11px;letter-spacing:2px;text-transform:uppercase;color:#B8AFA1;margin:4px 0 28px}}
+.amt{{font-size:34px;font-weight:700;margin:8px 0}}.pill{{display:inline-block;padding:4px 12px;border-radius:99px;font-size:12px;font-weight:700;color:#0F0B08;background:{badge[0]}}}
+table{{width:100%;border-collapse:collapse;margin-top:24px;border-top:1px solid #2a2320}}td{{padding:10px 0;border-bottom:1px solid #2a2320;font-size:14px}}
+td:first-child{{color:#B8AFA1}}td:last-child{{text-align:right;font-weight:600}}.test{{color:#E6C879;font-size:12px;border:1px solid #3a3020;border-radius:8px;padding:10px;margin-top:20px}}
+.f{{font-size:11px;color:#6d7a73;margin-top:32px;line-height:18px}}</style></head>
+<body><div class="c"><div class="b">Vaulted</div><div class="k">Transfer receipt</div>
+<span class="pill">{badge[1]}</span><div class="amt">{received}</div>
+<table>{row_html}</table>{test}
+<p class="f">Sent with Vaulted, the self custody wallet for cross border transfers.<br/>Vaulted · Phoenix Atlas Technologies Ltd · UK</p></div></body></html>"""
+
+
+@router.get("/r/{token}", response_class=HTMLResponse)
+async def public_receipt(token: str):
+    tx = await db.transactions.find_one({"share_token": token}, {"_id": 0})
+    if not tx or tx.get("user_deleted"):
+        return HTMLResponse("<h3 style='font-family:sans-serif'>This receipt link is no longer available.</h3>", status_code=404)
+    sender = await db.users.find_one({"id": tx["user_id"]}, {"_id": 0, "name": 1}) or {}
+    return HTMLResponse(_share_page(tx, sender), headers={"Cache-Control": "no-store", "X-Robots-Tag": "noindex"})

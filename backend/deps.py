@@ -150,6 +150,7 @@ def public_user(u: dict) -> dict:
         "wallet_address": u.get("wallet_address"),
         "biometric_enabled": u.get("biometric_enabled", False),
         "multisig_enabled": u.get("multisig_enabled", False),
+        "delivery_emails": u.get("delivery_emails", True),
         "public_key": u.get("public_key"),
         "onboarding_seed_acknowledged": u.get("onboarding_seed_acknowledged", False),
         "referral_code": u.get("referral_code"),

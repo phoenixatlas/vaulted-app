@@ -69,8 +69,8 @@ def delivery_email_html(tx: dict, user: dict) -> str:
       <p style="font-size:15px;line-height:22px;margin:0 0 20px">Good news: <b>{who}</b> has received <b style="color:#C9A35B">{received}</b>.</p>
       <table style="width:100%;border-collapse:collapse;border-top:1px solid #2a2320;border-bottom:1px solid #2a2320">{row_html}</table>
       {test_note}
-      <p style="font-size:13px;color:#B8AFA1;line-height:20px;margin:24px 0 0">Open Vaulted and tap this transfer in Activity to see the full timeline or send it again.</p>
-      <p style="font-size:11px;color:#6d7a73;margin-top:28px">Vaulted \u00b7 Phoenix Atlas Ltd \u00b7 UK</p>
+      <p style="font-size:13px;color:#B8AFA1;line-height:20px;margin:24px 0 0">Open Vaulted and tap this transfer in Activity to see the full timeline, share the receipt, or send it again.</p>
+      <p style="font-size:11px;color:#6d7a73;margin-top:28px">You can turn these emails off in Vaulted under Settings, Notifications.<br/>Vaulted \u00b7 Phoenix Atlas Ltd \u00b7 UK</p>
     </div>
     """
 
@@ -96,8 +96,11 @@ async def notify_if_delivered(tx_id: str) -> bool:
     )
     if not tx:
         return False
-    user = await db.users.find_one({"id": tx["user_id"]}, {"_id": 0, "email": 1, "name": 1}) or {}
+    user = await db.users.find_one({"id": tx["user_id"]}, {"_id": 0, "email": 1, "name": 1, "delivery_emails": 1}) or {}
     if not user.get("email"):
+        return False
+    if user.get("delivery_emails") is False:  # opted out in Settings → Notifications
+        await db.transactions.update_one({"id": tx_id}, {"$set": {"delivery_email_skipped": "opted_out"}})
         return False
     ok = await send_email_via_resend(user["email"], _subject(tx), delivery_email_html(tx, user))
     if not ok:  # release the claim so the next tick retries (max 3 attempts)

@@ -10,6 +10,7 @@ import { Ionicons } from "@expo/vector-icons";
 import { api } from "@/src/lib/api";
 import { useCurrency } from "@/src/lib/currency";
 import TransferTimeline, { Step } from "@/src/components/TransferTimeline";
+import ShareReceiptButton from "@/src/components/ShareReceiptButton";
 import { colors, spacing, radius } from "@/src/lib/theme";
 
 type Detail = { tx: any; timeline: Step[]; is_final: boolean; repeat: Record<string, any> | null };
@@ -91,6 +92,14 @@ export default function TransferDetail() {
             {!!payout?.provider_label && <Row label="Payout partner" value={isTest ? `${payout.provider_label} · test` : payout.provider_label} />}
             <Row label="Date" value={new Date(tx.created_at).toLocaleString()} />
           </View>
+
+          {remit && (
+            <ShareReceiptButton
+              txId={tx.id}
+              amountText={`${Number(remit.destination_amount).toLocaleString(undefined, { maximumFractionDigits: 2 })} ${remit.destination_currency}`}
+              recipientName={tx.recipient_name}
+            />
+          )}
 
           {data.repeat && (
             <Pressable testID="transfer-send-again" onPress={sendAgain} style={s.cta}>

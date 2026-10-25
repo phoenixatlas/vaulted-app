@@ -5,6 +5,7 @@ import { Ionicons } from "@expo/vector-icons";
 import { useI18n } from "@/src/lib/i18n";
 import { useCurrency } from "@/src/lib/currency";
 import { colors, spacing, radius } from "@/src/lib/theme";
+import ShareReceiptButton from "@/src/components/ShareReceiptButton";
 
 export default function Receipt() {
   const p = useLocalSearchParams<any>();
@@ -96,6 +97,13 @@ export default function Receipt() {
           <Text testID="receipt-test-note" style={s.testNote}>
             Test payout: no real money was sent to the recipient during the beta.
           </Text>
+        )}
+        {isRemit && !!p.id && remit && (
+          <ShareReceiptButton
+            txId={String(p.id)}
+            amountText={`${Number(remit.destination_amount).toLocaleString(undefined, { maximumFractionDigits: 2 })} ${remit.destination_currency}`}
+            recipientName={p.recipient_name ? String(p.recipient_name) : null}
+          />
         )}
         {isRemit && !!p.id && (
           <Pressable testID="receipt-track" onPress={() => router.push(`/transfer/${p.id}`)} style={s.trackBtn}>

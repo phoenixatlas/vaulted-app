@@ -1,0 +1,39 @@
+{
+  "summary": "Iteration 34: tested Email preferences (Settings → Notifications switch) and Shareable receipts at 390x844 plus a backend re-check via the public URL. Backend: 5/5 pytest passed. Toggle persists, /auth/me returns the setting, share token is stable, path is /api/r/{token}, unknown tx gives 404, the share call needs auth (401/403), bad token gives 404, and the public HTML shows first names only with no phone number or email. Frontend: the switch is ON by default, stays OFF after a reload, and was turned back ON (DB confirms delivery_emails=true). The seeded settled remit appeared in Activity. Transfer detail shows 'Share receipt' (48px tall). Headless Chromium has no navigator.share, so tapping it copied the full message and URL to the clipboard and showed 'Receipt link copied'. The URL opened the dark branded receipt with 'Delivered', 8,123.45 KES, To Grace, From Smoke, M-Pesa, Kenya, VLT-IT34TEST and the beta test payout note. Seeded _iter34 doc deleted. No real emails sent. No deprecated Expo packages in the reviewed files.",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {"endpoint": "GET /api/transactions/{id} (tracking detail)", "issue": "The first tracking step's detail is built as f\"... on {remit.get('chain') or tx.get('network')}\", so it reads 'on None' when neither field is set (seen with the seeded tx, which had no chain field). Reference: /app/backend/routers/transactions.py:247"}
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [
+      {"screen": "Settings", "issues": ["toggleSecurity only console.logs errors. If the PATCH fails, the switch stays where it was with no message to the user (minor). Reference: /app/frontend/app/(tabs)/settings.tsx:40-45"]}
+    ],
+    "react_native_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_iteration34_share_receipts_email_prefs.py",
+    "/app/backend/tests/iter34_helper.py",
+    "/app/test_reports/pytest/iter34.xml"
+  ],
+  "action_items": [
+    "Optional: hide the ' on <chain>' suffix in the tracking step when chain/network is missing (transactions.py:247).",
+    "Optional: show a short error (toast or inline) in Settings when PATCH /auth/security fails."
+  ],
+  "critical_code_review_comments": [
+    "The share token comes from secrets.token_urlsafe(16) and the page escapes every value with html.escape. It sets noindex and no-store headers. It hides receipts for user_deleted txs. Looks good.",
+    "The share endpoint only allows remit txs (400 otherwise) and the owner's own txs (404 otherwise). Looks good."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_iteration34_share_receipts_email_prefs.py (new)",
+    "/app/backend/tests/iter34_helper.py (new)"
+  ],
+  "success_rate": {"backend": "100%", "frontend": "100%"},
+  "seed_data_creation": "Seeded 1 settled remit tx for smoketest (_iter34:true) using iter34_helper.py seed. Deleted after testing (deleted 1).",
+  "retest_needed": false,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "Use `python /app/backend/tests/iter34_helper.py seed|clean` to seed and clean a settled remit. Pass ITER34_TX_ID and EXPO_PUBLIC_BACKEND_URL env vars to the pytest file. Headless Chromium has no navigator.share, so the web flow takes the clipboard path."
+}
