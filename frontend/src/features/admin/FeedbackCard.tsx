@@ -2,15 +2,16 @@
  * FeedbackCard — latest beta tester reports (note, screen, screenshot).
  */
 import { useEffect, useState } from "react";
-import { View, Text, Image, Pressable, ActivityIndicator } from "react-native";
+import { View, Text, Image, Pressable, ActivityIndicator, TextInput } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { api, API_BASE } from "@/src/lib/api";
 import { colors } from "@/src/lib/theme";
 import { s } from "./styles";
 
+type Reply = { id: string; message: string; at: string; by: string };
 type Report = {
   id: string; email: string; name?: string; note: string; screen: string; platform: string;
-  screenshot_path?: string | null; shot_token?: string; created_at: string;
+  screenshot_path?: string | null; shot_token?: string; created_at: string; replies?: Reply[];
 };
 
 export function FeedbackCard() {
@@ -63,8 +64,58 @@ export function FeedbackCard() {
               </Pressable>
             )
           )}
+          {(r.replies || []).map((rep) => (
+            <View key={rep.id} style={{ marginTop: 6, padding: 8, borderRadius: 8, backgroundColor: colors.brandTertiary }}>
+              <Text style={{ fontSize: 11, fontWeight: "700", color: colors.brandDeep }}>{rep.by} · {new Date(rep.at).toLocaleString()}</Text>
+              <Text style={{ fontSize: 13, color: colors.onSurface, marginTop: 2 }}>{rep.message}</Text>
+            </View>
+          ))}
+          <ReplyBox
+            fbId={r.id}
+            onSent={(rep) => setRows((prev) => prev?.map((x) => (x.id === r.id ? { ...x, replies: [...(x.replies || []), rep] } : x)) ?? prev)}
+          />
         </View>
       ))}
+    </View>
+  );
+}
+
+function ReplyBox({ fbId, onSent }: { fbId: string; onSent: (r: Reply) => void }) {
+  const [text, setText] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState("");
+  const send = async () => {
+    if (!text.trim()) return;
+    setBusy(true);
+    setErr("");
+    try {
+      const res = await api<{ reply: Reply }>(`/admin/feedback/${fbId}/reply`, { method: "POST", body: { message: text.trim() } });
+      onSent(res.reply);
+      setText("");
+    } catch (e: any) { setErr(e?.message || "Reply failed"); }
+    finally { setBusy(false); }
+  };
+  return (
+    <View style={{ marginTop: 8 }}>
+      <View style={{ flexDirection: "row", gap: 8, alignItems: "center" }}>
+        <TextInput
+          testID={`feedback-reply-input-${fbId}`}
+          value={text}
+          onChangeText={setText}
+          placeholder="Reply to tester…"
+          placeholderTextColor={colors.onSurfaceTertiary}
+          style={{ flex: 1, borderWidth: 1, borderColor: colors.border, borderRadius: 10, paddingHorizontal: 12, minHeight: 44, color: colors.onSurface, fontSize: 14 }}
+        />
+        <Pressable
+          testID={`feedback-reply-send-${fbId}`}
+          onPress={send}
+          disabled={busy || !text.trim()}
+          style={{ minWidth: 64, minHeight: 44, borderRadius: 10, alignItems: "center", justifyContent: "center", backgroundColor: colors.brand, opacity: busy || !text.trim() ? 0.5 : 1 }}
+        >
+          {busy ? <ActivityIndicator color={colors.onBrand} /> : <Text style={{ color: colors.onBrand, fontWeight: "700" }}>Reply</Text>}
+        </Pressable>
+      </View>
+      {!!err && <Text style={{ color: colors.error, fontSize: 12, marginTop: 4 }}>{err}</Text>}
     </View>
   );
 }

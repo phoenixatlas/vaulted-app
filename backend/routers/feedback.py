@@ -18,6 +18,7 @@ from typing import Optional
 import jwt
 from fastapi import APIRouter, BackgroundTasks, Depends, File, Form, HTTPException, UploadFile
 from fastapi.responses import Response
+from pydantic import BaseModel, Field
 
 import storage
 from deps import ADMIN_EMAILS, JWT_ALG, JWT_SECRET, db, get_current_user, iso, logger, now_utc, require_admin
@@ -118,3 +119,33 @@ async def admin_feedback_screenshot(fb_id: str, t: str = ""):
         raise HTTPException(status_code=404, detail="No screenshot")
     data, ctype = await storage.get_object(doc["screenshot_path"])
     return Response(content=data, media_type=ctype, headers={"Cache-Control": "private, max-age=1800"})
+
+
+# ---- Replies ------------------------------------------------------------------
+class ReplyIn(BaseModel):
+    message: str = Field(min_length=1, max_length=2000)
+
+
+@router.post("/admin/feedback/{fb_id}/reply")
+async def admin_reply_feedback(fb_id: str, body: ReplyIn, admin=Depends(require_admin)):
+    reply = {"id": str(uuid.uuid4()), "message": body.message.strip(), "at": iso(now_utc()),
+             "by": admin.get("name") or "Vaulted team"}
+    res = await db.feedback.update_one({"id": fb_id}, {"$push": {"replies": reply}, "$set": {"unread_reply": True}})
+    if not res.matched_count:
+        raise HTTPException(status_code=404, detail="Feedback not found")
+    return {"ok": True, "reply": reply}
+
+
+@router.get("/feedback/mine")
+async def my_feedback(user=Depends(get_current_user)):
+    rows = await db.feedback.find(
+        {"user_id": user["id"]},
+        {"_id": 0, "id": 1, "note": 1, "screen": 1, "created_at": 1, "replies": 1, "unread_reply": 1},
+    ).sort("created_at", -1).limit(30).to_list(30)
+    return {"feedback": rows, "unread": sum(1 for r in rows if r.get("unread_reply"))}
+
+
+@router.post("/feedback/mine/read")
+async def mark_my_feedback_read(user=Depends(get_current_user)):
+    await db.feedback.update_many({"user_id": user["id"], "unread_reply": True}, {"$set": {"unread_reply": False}})
+    return {"ok": True}

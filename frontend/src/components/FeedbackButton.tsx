@@ -4,7 +4,7 @@
  * On phones it grabs a screenshot of the current screen before the form
  * opens; on web it sends the note only.
  */
-import { useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import {
   View, Text, Pressable, Modal, TextInput, Image, Switch, ActivityIndicator,
   StyleSheet, Platform, KeyboardAvoidingView,
@@ -15,8 +15,9 @@ import Constants from "expo-constants";
 import { Ionicons } from "@expo/vector-icons";
 import { useAuth } from "@/src/lib/auth";
 import { useAppConfig } from "@/src/lib/appConfig";
-import { API_BASE, getToken } from "@/src/lib/api";
+import { api, API_BASE, getToken } from "@/src/lib/api";
 import { uploadForm } from "@/src/utils/upload";
+import MyFeedbackList from "@/src/components/MyFeedbackList";
 import { colors, spacing, radius } from "@/src/lib/theme";
 
 export default function FeedbackButton() {
@@ -31,8 +32,22 @@ export default function FeedbackButton() {
   const [busy, setBusy] = useState(false);
   const [status, setStatus] = useState<"idle" | "sent" | "error">("idle");
   const [err, setErr] = useState("");
+  const [tab, setTab] = useState<"new" | "mine">("new");
+  const [unread, setUnread] = useState(0);
+  const active = !!user && !!cfg?.beta_test_mode;
 
-  if (!user || !cfg?.beta_test_mode) return null;
+  // Check for team replies on launch, on every screen change, and each minute.
+  useEffect(() => {
+    if (!active) return;
+    const check = () => api<{ unread: number }>("/feedback/mine").then((d) => setUnread(d.unread)).catch(() => undefined);
+    check();
+    const t = setInterval(check, 60000);
+    return () => clearInterval(t);
+  }, [active, pathname]);
+
+  const markRead = useCallback(() => setUnread(0), []);
+
+  if (!active) return null;
 
   const start = async () => {
     setShot(null);
@@ -44,6 +59,7 @@ export default function FeedbackButton() {
     }
     setIncludeShot(true);
     setStatus("idle");
+    setTab(unread > 0 ? "mine" : "new");
     setOpen(true);
   };
 
@@ -83,6 +99,7 @@ export default function FeedbackButton() {
         style={[st.fab, { top: "58%" }]}
       >
         <Ionicons name="chatbox-ellipses" size={18} color={colors.onBrand} />
+        {unread > 0 && <View style={st.fabDot} testID="feedback-unread-dot" />}
       </Pressable>
 
       <Modal visible={open} transparent animationType="slide" onRequestClose={close}>
@@ -98,6 +115,21 @@ export default function FeedbackButton() {
               </View>
             ) : (
               <>
+                <View style={st.tabs}>
+                  {(["new", "mine"] as const).map((k) => (
+                    <Pressable key={k} testID={`feedback-tab-${k}`} onPress={() => setTab(k)} style={[st.tab, tab === k && st.tabActive]}>
+                      <Text style={[st.tabText, tab === k && st.tabTextActive]}>{k === "new" ? "New report" : "My reports"}</Text>
+                      {k === "mine" && unread > 0 && <View style={st.tabDot} />}
+                    </Pressable>
+                  ))}
+                </View>
+                {tab === "mine" ? (
+                  <>
+                    <MyFeedbackList onRead={markRead} />
+                    <Pressable onPress={close} style={st.cancel}><Text style={st.cancelText}>Close</Text></Pressable>
+                  </>
+                ) : (
+                <>
                 <Text style={st.title}>Send feedback</Text>
                 <Text style={st.sub}>What went wrong, or what could be better?</Text>
                 <TextInput
@@ -124,6 +156,8 @@ export default function FeedbackButton() {
                   {busy ? <ActivityIndicator color={colors.onBrand} /> : <Text style={st.primaryText}>Send</Text>}
                 </Pressable>
                 <Pressable onPress={close} style={st.cancel}><Text style={st.cancelText}>Cancel</Text></Pressable>
+                </>
+                )}
               </>
             )}
           </View>
@@ -141,6 +175,13 @@ const st = StyleSheet.create({
     shadowColor: "#000", shadowOpacity: 0.2, shadowRadius: 8, shadowOffset: { width: 0, height: 3 }, elevation: 6,
   },
   backdrop: { flex: 1, backgroundColor: "rgba(0,0,0,0.45)" },
+  fabDot: { position: "absolute", top: 8, right: 8, width: 10, height: 10, borderRadius: 5, backgroundColor: colors.error, borderWidth: 1.5, borderColor: colors.surface },
+  tabs: { flexDirection: "row", backgroundColor: colors.surfaceSecondary, borderRadius: radius.md, padding: 4, marginBottom: spacing.sm },
+  tab: { flex: 1, flexDirection: "row", gap: 6, minHeight: 40, alignItems: "center", justifyContent: "center", borderRadius: radius.sm },
+  tabActive: { backgroundColor: colors.surface },
+  tabText: { fontSize: 13, fontWeight: "600", color: colors.onSurfaceSecondary },
+  tabTextActive: { color: colors.onSurface },
+  tabDot: { width: 8, height: 8, borderRadius: 4, backgroundColor: colors.error },
   sheet: { backgroundColor: colors.surface, borderTopLeftRadius: radius.lg, borderTopRightRadius: radius.lg, padding: spacing.xl },
   title: { fontSize: 18, fontWeight: "700", color: colors.onSurface, marginTop: spacing.sm },
   sub: { fontSize: 13, color: colors.onSurfaceSecondary, marginTop: 4, marginBottom: spacing.md },

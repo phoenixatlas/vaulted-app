@@ -1,7 +1,7 @@
 import { useCallback, useState } from "react";
 import { View, Text, StyleSheet, FlatList, ActivityIndicator, RefreshControl, Pressable } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
-import { useFocusEffect } from "expo-router";
+import { useFocusEffect, useRouter } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
 import { api } from "@/src/lib/api";
 import { useI18n } from "@/src/lib/i18n";
@@ -27,6 +27,7 @@ const typeIcon = (t: Tx) => {
 export default function Activity() {
   const { t } = useI18n();
   const { format } = useCurrency();
+  const router = useRouter();
   const [items, setItems] = useState<Tx[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
@@ -62,7 +63,11 @@ export default function Activity() {
             renderItem={({ item }) => {
               const isOut = item.type === "send" || item.type === "withdraw";
               return (
-                <View testID={`tx-${item.id}`} style={s.row}>
+                <Pressable
+                  testID={`tx-${item.id}`}
+                  style={({ pressed }) => [s.row, pressed && { backgroundColor: colors.surfaceSecondary }]}
+                  onPress={() => router.push(`/transfer/${item.id}`)}
+                >
                   <View style={[s.icon, { backgroundColor: isOut ? "#FBE9E9" : colors.brandTertiary }]}>
                     <Ionicons name={typeIcon(item) as any} size={18} color={isOut ? colors.error : colors.brand} />
                   </View>
@@ -76,7 +81,8 @@ export default function Activity() {
                     </Text>
                     <Text style={s.txMuted}>{item.amount} {item.asset}</Text>
                   </View>
-                </View>
+                  <Ionicons name="chevron-forward" size={16} color={colors.onSurfaceTertiary} />
+                </Pressable>
               );
             }}
             ItemSeparatorComponent={() => <View style={s.sep} />}

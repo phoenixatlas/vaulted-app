@@ -338,3 +338,10 @@ MONGO_URL, DB_NAME=vaulted, JWT_SECRET, STRIPE_API_KEY (live, rotated), STRIPE_W
 - **Saved recipients**: `db.recipients` upsert per (user, country, account) after send succeeds when `save_recipient` (default true). `GET /api/recipients?country=`, `DELETE /api/recipients/{id}`. Frontend `SavedRecipients` chips (tap fill, long-press remove) + "Save recipient" checkbox.
 - **Beta feedback**: floating `FeedbackButton` (only beta mode + signed in), captures screenshot via react-native-view-shot (native only), multipart `POST /api/feedback` → Emergent Object Storage (`vaulted/feedback/...`) + Resend email to ADMIN_EMAILS (screenshot attached). Admin `FeedbackCard`, `GET /api/admin/feedback`, `GET /api/admin/feedback/{id}/screenshot?token=`.
 - `EMERGENT_LLM_KEY` added to backend/.env (object storage). Render prod needs it too.
+
+## 📍 Transfer Tracking · Send Again · Feedback Replies (2026-06)
+- `GET /api/transactions/{id}` → {tx, timeline[{key,label,detail,at,state: done|current|pending|failed}], is_final, repeat(prefill|null)}. Fiat-funded: Paid → Converted → Sent to partner → Delivered. Crypto: Sent from wallet → Confirmed on chain → Delivered.
+- New screen `app/transfer/[id].tsx` (polls 8s until final, pull-to-refresh, "Send again"). Activity rows open it; receipt has "Track transfer".
+- Send again → `/remit?repeat=1&destination_code&source_fiat&amount&funding&recipient_address&recipient_name&bank_id&bank_name` prefills form (user reviews + confirms). Crypto remit records now store `remit.destination_country_code`.
+- Feedback replies: `POST /api/admin/feedback/{id}/reply`, `GET /api/feedback/mine` (+unread), `POST /api/feedback/mine/read`. Feedback tab shows red dot on unread; sheet has "New report" / "My reports" tabs. Admin FeedbackCard has reply box.
+- Crypto-funded remit sends (saved `pending` at broadcast) are confirmed lazily on `GET /transactions/{id}` via chain RPC (XLM Horizon, XRPL `tx`, EVM `eth_getTransactionReceipt`) → `settled`/`failed` + `confirmed_at`. Transfer screen polls only while focused.

@@ -1,10 +1,10 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   View, Text, TextInput, StyleSheet, Pressable, ScrollView, ActivityIndicator,
   KeyboardAvoidingView, Platform,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
-import { useRouter } from "expo-router";
+import { useLocalSearchParams, useRouter } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
 import { api } from "@/src/lib/api";
 import { useAuth } from "@/src/lib/auth";
@@ -110,8 +110,30 @@ export default function Remit() {
   const [ngBank, setNgBank] = useState<NgBank | null>(null);
   const [ngResolved, setNgResolved] = useState<NgResolved>(null);
 
-  // New corridor → previous recipient details no longer apply.
+  // "Send again" from Transfer details → prefill everything, user reviews + confirms.
+  const params = useLocalSearchParams<Record<string, string>>();
+  const repeat = useMemo(() => (params.repeat === "1" ? { ...params } : null), []); // eslint-disable-line react-hooks/exhaustive-deps
+  const pendingRepeat = useRef(repeat);
   useEffect(() => {
+    if (!repeat) return;
+    setDirection("outbound");
+    if (repeat.destination_code) setDest(repeat.destination_code);
+    if ((SOURCE_FIATS as readonly string[]).includes(repeat.source_fiat)) setSrcFiat(repeat.source_fiat as SourceFiat);
+    if (repeat.amount) setAmount(String(repeat.amount));
+    if (repeat.funding) setFunding(repeat.funding as FundingMethod);
+  }, [repeat]);
+
+  // New corridor → previous recipient details no longer apply
+  // (unless we're landing on the corridor of a "Send again" prefill).
+  useEffect(() => {
+    const r = pendingRepeat.current;
+    if (r && r.destination_code === dest) {
+      setAddr(r.recipient_address || "");
+      setRecipientName(r.recipient_name || "");
+      if (r.bank_id) setNgBank({ id: r.bank_id, name: r.bank_name || "Bank" });
+      pendingRepeat.current = null;
+      return;
+    }
     setSelectedRecipientId(null);
     setNgBank(null);
     setNgResolved(null);

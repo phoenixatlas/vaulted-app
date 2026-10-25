@@ -97,6 +97,12 @@ export default function Receipt() {
             Test payout: no real money was sent to the recipient during the beta.
           </Text>
         )}
+        {isRemit && !!p.id && (
+          <Pressable testID="receipt-track" onPress={() => router.push(`/transfer/${p.id}`)} style={s.trackBtn}>
+            <Ionicons name="navigate-outline" size={16} color={colors.brandDeep} />
+            <Text style={s.trackText}>Track transfer</Text>
+          </Pressable>
+        )}
         <Pressable testID="receipt-done" onPress={() => router.replace("/(tabs)/wallet")} style={s.cta}>
           <Text style={s.ctaText}>{t("done")}</Text>
         </Pressable>
@@ -129,4 +135,6 @@ const s = StyleSheet.create({
   cta: { backgroundColor: colors.brand, borderRadius: radius.md, paddingVertical: 16, alignItems: "center", width: "100%", shadowColor: colors.brand, shadowOpacity: 0.30, shadowRadius: 12, shadowOffset: { width: 0, height: 4 } },
   ctaText: { color: "#0F0B08", fontSize: 16, fontWeight: "700", letterSpacing: 0.3 },
   testNote: { color: colors.onSurfaceSecondary, fontSize: 12, textAlign: "center", marginTop: spacing.md, paddingHorizontal: spacing.md },
+  trackBtn: { flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 6, minHeight: 48, width: "100%", borderRadius: radius.md, borderWidth: 1, borderColor: colors.brand, marginTop: spacing.md },
+  trackText: { color: colors.brandDeep, fontSize: 15, fontWeight: "700" },
 });

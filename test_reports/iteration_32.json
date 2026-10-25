@@ -1,0 +1,41 @@
+{
+  "summary": "Iteration 32 tested transfer tracking, Send again and feedback replies. Backend: 13/13 pytest passed. GET /api/transactions/{id} returns tx/timeline/is_final/repeat and leaks no _id. NG settled card transfer: 4 steps done, is_final true. KE processing transfer with no payout: paid/converted done, sent current, delivered pending; the destination code falls back from the country name. payout.failed: sent is failed with the reason, is_final true. Crypto remit: 3 steps. Deposit: 2 generic steps, repeat null. Another user's tx and unknown ids return 404; no auth returns 401/403. /transactions/export is not shadowed by the new route. Admin reply returns 403 for non-admins. /feedback/mine returns the reply and the unread count, and /feedback/mine/read clears it. Frontend (390x844): Activity rows open /transfer/{id}. Timeline, summary, details and test-payout note render. The 'Updating live' chip shows only on the non-final transfer, which polls every 8s. Send again on NG fills Nigeria, 20, GBP, Card, GTBank and 0123456789, and the name resolves to TEST ACCOUNT HOLDER (mock). On KE it fills the phone and name. Pay was not pressed. The feedback dot shows, the sheet opens on My reports with the note and reply, and the dot clears. The New report form still works. receipt-track shows on remit receipts and opens the transfer screen. One real logic issue: crypto remits never reach a final state.",
+  "backend_issues": {
+    "critical": [
+      {"endpoint": "GET /api/transactions/{id} (crypto remits)", "issue": "routers/remit.py:412 creates crypto remits with status 'pending', and no code ever changes that status. build_timeline only treats settled/completed as delivered. So every real crypto remit shows 'Confirmed on the blockchain: In progress…' forever, is_final stays false, and the detail screen polls every 8s indefinitely. The DB holds 12 real crypto remits, all XRP and all 'pending'.", "priority": "HIGH"}
+    ],
+    "minor": [
+      {"endpoint": "GET /api/transactions/{id}", "issue": "The repeat prefill for crypto remits leaves out remit.chain. Send again restores 'crypto' funding but not the asset/chain the user picked."}
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [
+      {"component": "transfer/[id].tsx polling", "issue": "The setInterval keeps running when the detail screen is in the background of the stack. Two polls were seen in 9s after tapping Send again and landing on /remit. Use useFocusEffect to pause polling off-screen.", "testID": "transfer-timeline", "priority": "LOW"}
+    ],
+    "integration_issues": [],
+    "design_issues": [
+      {"screen": "/remit after Send again (NG)", "issues": ["Nigeria is selected but sits off-screen in the horizontal destination list; only Kenya and Ghana are visible. Scroll the selected chip into view on prefill."]},
+      {"screen": "/transfer/{id}", "issues": ["The feedback tab (x346-390, y490-538) overlaps the right edge of the timeline card or Details card, depending on scroll. Cosmetic."]}
+    ],
+    "react_native_issues": []
+  },
+  "test_report_links": ["/app/backend/tests/test_iteration32_tracking_feedback.py", "/app/backend/tests/iter32_helper.py", "/app/test_reports/pytest/pytest_iter32.xml"],
+  "action_items": [
+    "(HIGH) Give crypto remits a final state. Either set status 'completed' once the broadcast returns a tx_hash, or add an on-chain confirmation poll. Alternatively, have build_timeline/is_final treat a crypto remit with a tx_hash as confirmed. Today the tracking never finishes and the client polls forever.",
+    "(Minor) Pause the transfer/[id].tsx poll when the screen loses focus (useFocusEffect).",
+    "(Minor) Add remit.chain to the repeat prefill and apply it in remit.tsx for crypto funding.",
+    "(Minor) On a Send again prefill, scroll the destination list to the selected country."
+  ],
+  "critical_code_review_comments": [
+    "remit.tsx is now 934 lines (>700). Consider splitting it.",
+    "FeedbackButton calls GET /feedback/mine on every pathname change plus every 60s. This works but is chatty; consider a debounce.",
+    "stripe flow → /receipt spreads ...tx into router params, so nested objects (remit, payout, recipient_bank) are serialized as '[object Object]'. This predates this iteration and is harmless because remit_json/kotani_json are passed separately."
+  ],
+  "updated_files": ["/app/backend/tests/test_iteration32_tracking_feedback.py (new)", "/app/backend/tests/iter32_helper.py (new)"],
+  "success_rate": {"backend": "100% (13/13)", "frontend": "100% of the requested flows (1 HIGH logic issue in real crypto remit data)"},
+  "seed_data_creation": "Seeded 6 _iter32 transactions (5 on smoketest, 1 on a fake other user) and 1 _iter32 feedback doc with a reply. All were deleted afterwards (count 0 verified). No POST /feedback calls and no Pay taps.",
+  "retest_needed": true,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "Run: cd /app/backend && python tests/iter32_helper.py seed <uid> > /tmp/iter32_ids.json, then run the pytest with EXPO_PUBLIC_BACKEND_URL set. For UI, use 'unread <uid>' to re-flag the reply as unread. Clean up with 'cleanup x'. The smoketest uid is 68e4769d-0af6-4096-ae7b-78128a97d6d4. The receipt screen needs full remit_json fields (destination_flag, chain, fx_rate) to avoid 'undefined' text, a test-param artifact.",
+  "rca_of_issue": "Crypto remit tracking never finishes because the record is inserted with status 'pending' (routers/remit.py:412) and nothing updates it. The only status update for transactions is payouts._simulate / dispatch, which applies to Stripe-funded remits. Steps to reproduce: GET /api/transactions/<any real XRP remit id> returns confirmed=current and is_final=false."
+}

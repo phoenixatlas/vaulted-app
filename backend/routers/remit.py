@@ -421,6 +421,7 @@ async def remit_send(body: RemitSendIn, user=Depends(get_current_user)):
             "destination_currency": dst["currency"],
             "destination_amount": dst["amount"],
             "destination_country": dst["country"],
+            "destination_country_code": body.destination_code.upper(),
             "destination_flag": dst["flag"],
             "chain": chain,
             "fx_rate": quote["fx_rate"],
