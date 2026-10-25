@@ -318,3 +318,8 @@ MONGO_URL, DB_NAME=vaulted, JWT_SECRET, STRIPE_API_KEY (live, rotated), STRIPE_W
     we need to backfill after a redeploy.
   - Admin UI: the Sent-history header now has a small refresh icon
     next to the delivered/opened chips that fires this poll on tap.
+
+## 🔍 Kotani Integration Health Check (2026-06)
+- Codebase intact: config loads (live mode, sandbox URL, API key + webhook secret set), `/health` OK.
+- Webhook `/api/offramp/callback`: valid HMAC → 200, bad/missing signature → 401 (preview + local). Correct.
+- **Kotani now returns 401 "You are not authorized to access this resource" on ALL authenticated endpoints** (rate, customer, offramp, wallet). A bogus key returns "Invalid API Key" instead → our key is recognised but the integrator account is blocked/suspended on Kotani's side. Previously errors were "Service X not enabled". Combined with portal login failure → account-level issue at Kotani. User to contact Kotani support (email draft provided).
