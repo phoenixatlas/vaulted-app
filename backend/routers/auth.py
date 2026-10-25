@@ -26,6 +26,7 @@ from datetime import timedelta
 import jwt
 from eth_account import Account
 from fastapi import APIRouter, Depends, HTTPException
+from pydantic import BaseModel
 
 from audit import EventType, write_event as audit_write
 from auth_tokens import (
@@ -188,6 +189,32 @@ async def logout(body: LogoutIn):
 @router.get("/auth/me")
 async def me(user=Depends(get_current_user)):
     return public_user(user)
+
+
+class DeleteAccountIn(BaseModel):
+    password: str
+
+
+@router.post("/auth/delete-account")
+async def delete_account(body: DeleteAccountIn, user=Depends(get_current_user)):
+    """Permanently delete the signed-in account (App Store guideline 5.1.1(v)).
+    Requires the current password. Personal data, keys, contacts and chats
+    are removed; financial transaction records are kept but de-identified
+    because anti-money-laundering rules require keeping them."""
+    if not pwd_ctx.verify(body.password, user.get("password_hash") or ""):
+        raise HTTPException(status_code=403, detail="Incorrect password")
+    uid = user["id"]
+    await revoke_all_for_user(uid, reason="account_deleted")
+    for coll in ("balances", "contacts", "cosigners", "password_resets", "credit_ledger", "refresh_tokens"):
+        await db[coll].delete_many({"user_id": uid})
+    await db.conversations.delete_many({"user_id": uid})
+    await db.transactions.update_many(
+        {"user_id": uid},
+        {"$set": {"user_deleted": True, "recipient_name": None, "memo": None, "counterparty": None}},
+    )
+    await audit_write(db, EventType.ACCOUNT_DELETED, user=user, data={"user_id": uid})
+    await db.users.delete_one({"id": uid})
+    return {"ok": True}
 
 
 @router.patch("/auth/language")

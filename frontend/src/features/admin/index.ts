@@ -5,6 +5,7 @@
  * stay organised but consumers don't have to pay the per-file import cost.
  */
 export { KotaniHealthCard } from "./KotaniHealthCard";
+export { PayoutProviderCard } from "./PayoutProviderCard";
 export { WaitlistCard } from "./WaitlistCard";
 export { DailySignupsCard } from "./DailySignupsCard";
 export { CorridorMatrixCard } from "./CorridorMatrixCard";

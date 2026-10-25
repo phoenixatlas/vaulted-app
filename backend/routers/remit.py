@@ -33,6 +33,7 @@ from deps import (
     get_current_user,
 )
 from models import RemitQuoteIn, RemitSendIn, RemitFundIn
+import payouts
 from remit import (
     CORRIDORS,
     SOURCE_FIATS,
@@ -468,6 +469,7 @@ async def remit_fund(body: RemitFundIn, user=Depends(get_current_user)):
     """
     if not STRIPE_API_KEY:
         raise HTTPException(status_code=503, detail="Stripe not configured")
+    await payouts.assert_test_money_ok()
 
     block_reason = is_country_blocked(body.destination_code)
     if block_reason:

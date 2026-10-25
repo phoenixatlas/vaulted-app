@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { View, Text, StyleSheet, Pressable, ActivityIndicator } from "react-native";
+import { View, Text, StyleSheet, Pressable, ActivityIndicator, Platform, PermissionsAndroid, Linking } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { useRouter } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
@@ -18,6 +18,30 @@ export default function VideoCall() {
   const [seconds, setSeconds] = useState(0);
   const [muted, setMuted] = useState(false);
   const [camOn, setCamOn] = useState(true);
+  const [perm, setPerm] = useState<"unknown" | "granted" | "denied" | "blocked">("unknown");
+  const [askedTwice, setAskedTwice] = useState(false);
+
+  // Android WebView can only use camera/mic once the app itself holds the
+  // runtime permissions. iOS prompts natively using the Info.plist strings.
+  useEffect(() => {
+    if (Platform.OS !== "android") return;
+    Promise.all([
+      PermissionsAndroid.check(PermissionsAndroid.PERMISSIONS.CAMERA),
+      PermissionsAndroid.check(PermissionsAndroid.PERMISSIONS.RECORD_AUDIO),
+    ]).then(([cam, mic]) => { if (cam && mic) setPerm("granted"); });
+  }, []);
+
+  const requestAndroidMedia = async () => {
+    if (perm === "denied") setAskedTwice(true);
+    const res = await PermissionsAndroid.requestMultiple([
+      PermissionsAndroid.PERMISSIONS.CAMERA,
+      PermissionsAndroid.PERMISSIONS.RECORD_AUDIO,
+    ]);
+    const vals = Object.values(res);
+    if (vals.every((v) => v === PermissionsAndroid.RESULTS.GRANTED)) setPerm("granted");
+    else if (vals.some((v) => v === PermissionsAndroid.RESULTS.NEVER_ASK_AGAIN)) setPerm("blocked");
+    else setPerm("denied");
+  };
 
   useEffect(() => {
     api<RoomResp>("/calls/room", { method: "POST", body: {} })
@@ -48,6 +72,47 @@ export default function VideoCall() {
     );
   }
 
+  if (dailyUrl && Platform.OS === "web") {
+    return (
+      <SafeAreaView style={s.loading} edges={["top", "bottom"]} testID="call-web-fallback">
+        <Ionicons name="videocam" size={40} color={colors.brand} />
+        <Text style={s.permTitle}>Your call is ready</Text>
+        <Text style={s.permBody}>In the browser, the call opens in its own tab.</Text>
+        <Pressable testID="call-open-web" style={s.permBtn} onPress={() => Linking.openURL(dailyUrl)}>
+          <Text style={s.permBtnText}>Join call</Text>
+        </Pressable>
+        <Pressable onPress={() => router.back()} style={{ padding: 12 }}>
+          <Text style={s.connectingText}>Back</Text>
+        </Pressable>
+      </SafeAreaView>
+    );
+  }
+
+  if (dailyUrl && Platform.OS === "android" && perm !== "granted") {
+    const blocked = perm === "blocked" || (perm === "denied" && askedTwice);
+    return (
+      <SafeAreaView style={s.loading} edges={["top", "bottom"]} testID="call-permission">
+        <Ionicons name="videocam" size={40} color={colors.brand} />
+        <Text style={s.permTitle}>Camera & microphone</Text>
+        <Text style={s.permBody}>
+          {blocked
+            ? "Access is turned off. Open Settings and allow Camera and Microphone for Vaulted to join calls."
+            : "Vaulted needs your camera and microphone so the other person can see and hear you on this encrypted call."}
+        </Text>
+        <Pressable
+          testID="call-permission-cta"
+          style={s.permBtn}
+          onPress={blocked ? () => Linking.openSettings() : requestAndroidMedia}
+        >
+          <Text style={s.permBtnText}>{blocked ? "Open Settings" : "Allow access"}</Text>
+        </Pressable>
+        <Pressable onPress={() => router.back()} style={{ padding: 12 }}>
+          <Text style={s.connectingText}>Not now</Text>
+        </Pressable>
+      </SafeAreaView>
+    );
+  }
+
   if (dailyUrl) {
     return (
       <View style={s.root}>
@@ -57,6 +122,7 @@ export default function VideoCall() {
           style={s.web}
           allowsInlineMediaPlayback
           mediaPlaybackRequiresUserAction={false}
+          mediaCapturePermissionGrantType="grantIfSameHostElsePrompt"
           javaScriptEnabled
           domStorageEnabled
         />
@@ -94,7 +160,7 @@ export default function VideoCall() {
         <View style={s.notice} testID="daily-notice">
           <Ionicons name="alert-circle" size={16} color="#0F0B08" />
           <Text style={s.noticeText}>
-            DAILY_API_KEY not set — showing demo UI. Add the key in /app/backend/.env to enable real calls.
+            Video calling isn&apos;t switched on yet, so this is a preview of the call screen.
           </Text>
         </View>
 
@@ -122,6 +188,10 @@ const s = StyleSheet.create({
   root: { flex: 1, backgroundColor: "#0F0B08" },
   loading: { flex: 1, backgroundColor: "#0F0B08", alignItems: "center", justifyContent: "center", gap: 12 },
   connectingText: { color: colors.brand, fontSize: 14, letterSpacing: 1, textTransform: "uppercase", fontWeight: "600" },
+  permTitle: { color: colors.onSurfaceInverse, fontSize: 20, fontWeight: "700", marginTop: spacing.sm },
+  permBody: { color: colors.onSurfaceInverse, opacity: 0.8, fontSize: 14, lineHeight: 20, textAlign: "center", paddingHorizontal: spacing.xl },
+  permBtn: { backgroundColor: colors.brand, borderRadius: radius.md, paddingVertical: 14, paddingHorizontal: spacing.xl, minHeight: 48, justifyContent: "center", marginTop: spacing.md },
+  permBtnText: { color: "#0F0B08", fontWeight: "700", fontSize: 15 },
   web: { ...StyleSheet.absoluteFillObject },
   overlay: { ...StyleSheet.absoluteFillObject, justifyContent: "space-between" },
   brandBg: { ...StyleSheet.absoluteFillObject, backgroundColor: "#0F0B08" },

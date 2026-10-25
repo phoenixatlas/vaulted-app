@@ -20,6 +20,7 @@ import { AdminBiometricGate, AdminBiometricNudge } from "@/src/components/AdminB
 import { colors } from "@/src/lib/theme";
 import {
   KotaniHealthCard,
+  PayoutProviderCard,
   WaitlistCard,
   DailySignupsCard,
   CorridorMatrixCard,
@@ -274,6 +275,8 @@ function AdminHomeInner() {
           refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={colors.brand} />}
         >
           <AdminBiometricNudge />
+
+          <PayoutProviderCard />
 
           <KotaniHealthCard
             health={health}

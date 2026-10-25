@@ -28,6 +28,8 @@ export default function Receipt() {
   const kotaniStatus = String(kotani?.status ?? p.kotani_status ?? "").toUpperCase();
   const mpesaReceipt = String(kotani?.mpesa_receipt ?? p.mpesa_receipt ?? "");
   const isMpesaOfframp = kotaniStatus === "SUCCESS" || !!mpesaReceipt || String(p.kotani_reference_id ?? "").length > 0;
+  const partnerLabel = String(kotani?.provider_label ?? (kotani ? "Kotani Pay" : ""));
+  const isTestPayout = kotani?.mode === "simulated" || kotani?.mode === "mock";
 
   // Remit context (set by /remit/send)
   let remit: any = null;
@@ -85,10 +87,16 @@ export default function Receipt() {
           {isRemit && <Row label="Delivery" value={remit.receive_via} />}
           {isRemit && isFiatFunded && <Row label="Paid via" value={paymentLabel} />}
           {isMpesaOfframp && mpesaReceipt && <Row label="M-Pesa receipt" value={mpesaReceipt} valueColor={colors.success} />}
+          {isRemit && !!partnerLabel && <Row label="Payout partner" value={isTestPayout ? `${partnerLabel} · test` : partnerLabel} />}
           <Row label={isFiat ? "Method" : isRemit ? (isFiatFunded ? "Recipient" : "Recipient wallet") : "To"} value={counterparty.length > 22 ? counterparty.slice(0, 8) + "…" + counterparty.slice(-6) : counterparty} />
           <Row label={isFiat || isFiatFunded ? "Receipt ID" : "Tx hash"} value={ref.length > 22 ? ref.slice(0, 12) + "…" + ref.slice(-6) : ref} />
           <Row label="Status" value={statusLabel} valueColor={statusColor} />
         </View>
+        {isRemit && isTestPayout && (
+          <Text testID="receipt-test-note" style={s.testNote}>
+            Test payout: no real money was sent to the recipient during the beta.
+          </Text>
+        )}
         <Pressable testID="receipt-done" onPress={() => router.replace("/(tabs)/wallet")} style={s.cta}>
           <Text style={s.ctaText}>{t("done")}</Text>
         </Pressable>
@@ -120,4 +128,5 @@ const s = StyleSheet.create({
   rowValue: { color: colors.onSurface, fontSize: 13, fontWeight: "600", maxWidth: "60%" },
   cta: { backgroundColor: colors.brand, borderRadius: radius.md, paddingVertical: 16, alignItems: "center", width: "100%", shadowColor: colors.brand, shadowOpacity: 0.30, shadowRadius: 12, shadowOffset: { width: 0, height: 4 } },
   ctaText: { color: "#0F0B08", fontSize: 16, fontWeight: "700", letterSpacing: 0.3 },
+  testNote: { color: colors.onSurfaceSecondary, fontSize: 12, textAlign: "center", marginTop: spacing.md, paddingHorizontal: spacing.md },
 });

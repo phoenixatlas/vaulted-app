@@ -1,6 +1,6 @@
 {
   "expo": {
-    "name": "frontend",
+    "name": "Vaulted",
     "slug": "frontend",
     "version": "1.0.0",
     "orientation": "portrait",
@@ -10,8 +10,12 @@
     "newArchEnabled": true,
     "ios": {
       "supportsTablet": true,
+      "buildNumber": "1",
       "infoPlist": {
-        "NSFaceIDUsageDescription": "Unlock your Vaulted wallet with Face ID"
+        "NSFaceIDUsageDescription": "Unlock your Vaulted wallet with Face ID",
+        "NSCameraUsageDescription": "Show your face on secure video calls",
+        "NSMicrophoneUsageDescription": "Talk to contacts on secure video calls",
+        "ITSAppUsesNonExemptEncryption": false
       },
       "bundleIdentifier": "com.emergent.multisigvault.v1vcpy"
     },
@@ -23,7 +27,10 @@
       "edgeToEdgeEnabled": true,
       "permissions": [
         "USE_BIOMETRIC",
-        "USE_FINGERPRINT"
+        "USE_FINGERPRINT",
+        "CAMERA",
+        "RECORD_AUDIO",
+        "MODIFY_AUDIO_SETTINGS"
       ],
       "googleServicesFile": "./google-services.json",
       "package": "com.emergent.multisigvault.v1vcpy"

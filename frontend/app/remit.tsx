@@ -14,6 +14,7 @@ import { startRemitFundCheckout, syncStripeSession } from "@/src/lib/stripe";
 import KycStatusBanner from "@/src/components/KycStatusBanner";
 import PreviewBanner from "@/src/components/PreviewBanner";
 import ReverseRemitPanel from "@/src/components/ReverseRemitPanel";
+import { useAppConfig } from "@/src/lib/appConfig";
 
 type Corridor = {
   code: string;
@@ -86,6 +87,7 @@ const FUNDING_OPTIONS: FundingOption[] = [
 export default function Remit() {
   const router = useRouter();
   const { user } = useAuth();
+  const appCfg = useAppConfig();
   // Direction: "outbound" = UK/EU → Africa (original product);
   // "inbound" = Africa → UK/EU (Phase 1 quote-only reverse corridor).
   const [direction, setDirection] = useState<"outbound" | "inbound">("outbound");
@@ -112,7 +114,7 @@ export default function Remit() {
     currency: string;
     rate: number;
     fee: number;
-    mode: "live" | "mock";
+    mode: "live" | "mock" | "estimated";
   } | null>(null);
   const [kotaniQuoteLoading, setKotaniQuoteLoading] = useState(false);
 
@@ -161,12 +163,12 @@ export default function Remit() {
   // stale/half-rendered row is ever shown.
   const kotaniConfig = useMemo(() => {
     const map: Record<string, { currency: string; label: string; network: string }> = {
-      KE: { currency: "KES", label: "M-Pesa live rate", network: "M-Pesa" },
-      GH: { currency: "GHS", label: "Mobile Money live rate", network: "MTN / Vodafone MoMo" },
-      TZ: { currency: "TZS", label: "Mobile Money live rate", network: "Vodacom / Airtel / Tigo" },
-      ZM: { currency: "ZMW", label: "Mobile Money live rate", network: "MTN / Airtel Money" },
-      UG: { currency: "UGX", label: "Mobile Money live rate", network: "MTN / Airtel Money" },
-      NG: { currency: "NGN", label: "Bank transfer live rate", network: "Bank transfer" },
+      KE: { currency: "KES", label: "M-Pesa rate", network: "M-Pesa" },
+      GH: { currency: "GHS", label: "Mobile Money rate", network: "MTN / Vodafone MoMo" },
+      TZ: { currency: "TZS", label: "Mobile Money rate", network: "Vodacom / Airtel / Tigo" },
+      ZM: { currency: "ZMW", label: "Mobile Money rate", network: "MTN / Airtel Money" },
+      UG: { currency: "UGX", label: "Mobile Money rate", network: "MTN / Airtel Money" },
+      NG: { currency: "NGN", label: "Bank transfer rate", network: "Bank transfer" },
     };
     return map[dest] || null;
   }, [dest]);
@@ -186,7 +188,7 @@ export default function Remit() {
             success: boolean;
             data?: { fiatAmount?: number; value?: string; fee?: number; transactionAmount?: number };
           };
-          mode: "live" | "mock";
+          mode: "live" | "mock" | "estimated";
         }>("/offramp/mpesa/quote", {
           method: "POST",
           body: { amount_usd: usdAmount, to_currency: kotaniConfig.currency },
@@ -304,10 +306,10 @@ export default function Remit() {
           const applied: any = synced?.applied || {};
           if (applied?.kind === "remit_fund" && applied?.tx) {
             const tx = applied.tx;
-            // Kotani M-Pesa off-ramp state — populated for KES payouts.
-            // Passed to the receipt screen so the "M-Pesa receipt" row
-            // and delivered/processing status can render correctly.
-            const kotani = tx.kotani || applied.kotani || null;
+            // Partner payout state (Kotani / Yellow Card / simulated in beta).
+            // Passed to the receipt screen so the partner + delivered /
+            // processing status rows render correctly.
+            const kotani = tx.payout || tx.kotani || applied.payout || applied.kotani || null;
             router.replace({
               pathname: "/receipt",
               params: {
@@ -376,6 +378,13 @@ export default function Remit() {
             Users get progress feedback right where they'd initiate a send,
             which is exactly the moment the KYC state matters most. */}
         <PreviewBanner />
+        {appCfg?.beta_test_mode && (
+          <PreviewBanner
+            variant="info"
+            testID="beta-test-banner"
+            message="Beta test mode: no real money moves. Payouts to recipients are simulated or run on partner sandboxes."
+          />
+        )}
         <KycStatusBanner />
 
         {/* Direction toggle — outbound (UK→Africa) vs inbound (Africa→UK/EU) */}
@@ -500,7 +509,7 @@ export default function Remit() {
                       <Ionicons name="pulse" size={13} color={colors.brand} />
                       <Text style={s.kotaniLabel} numberOfLines={1}>
                         {kotaniConfig.label}
-                        {kotaniQuote?.mode === "mock" ? " · sandbox est." : kotaniQuote?.mode === "live" ? " · sandbox" : ""}
+                        {kotaniQuote?.mode === "mock" ? " · sandbox est." : kotaniQuote?.mode === "live" ? " · live" : kotaniQuote?.mode === "estimated" ? " · est. from live FX" : ""}
                       </Text>
                     </View>
                     {kotaniQuoteLoading && !kotaniQuote ? (
@@ -517,8 +526,8 @@ export default function Remit() {
                     <Ionicons name="information-circle-outline" size={14} color={colors.brandDeep} />
                     <Text style={s.kotaniDivergeText}>
                       {kotaniDivergencePct > 0
-                        ? `${kotaniConfig.network} payout may be ~${kotaniDivergencePct.toFixed(1)}% higher than shown — Kotani rate refreshes at settlement.`
-                        : `${kotaniConfig.network} payout may be ~${Math.abs(kotaniDivergencePct).toFixed(1)}% lower than shown — Kotani rate refreshes at settlement.`}
+                        ? `${kotaniConfig.network} payout may be ~${kotaniDivergencePct.toFixed(1)}% higher than shown — partner rate refreshes at settlement.`
+                        : `${kotaniConfig.network} payout may be ~${Math.abs(kotaniDivergencePct).toFixed(1)}% lower than shown — partner rate refreshes at settlement.`}
                     </Text>
                   </View>
                 )}
@@ -720,7 +729,7 @@ const s = StyleSheet.create({
   input: { borderWidth: 1, borderColor: colors.border, borderRadius: radius.md, paddingHorizontal: spacing.lg, paddingVertical: 14, fontSize: 15, color: colors.onSurface, backgroundColor: colors.surface },
 
   amountCard: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", borderWidth: 1, borderColor: colors.border, borderRadius: radius.md, paddingHorizontal: spacing.lg, paddingVertical: spacing.sm, backgroundColor: colors.surface },
-  amountInput: { flex: 1, fontSize: 28, fontWeight: "700", color: colors.onSurface, letterSpacing: -0.5 },
+  amountInput: { flex: 1, minWidth: 0, fontSize: 28, fontWeight: "700", color: colors.onSurface, letterSpacing: -0.5 },
   fiatPickerRow: { flexDirection: "row", gap: 6 },
   fiatPill: { paddingHorizontal: 10, paddingVertical: 6, borderRadius: radius.pill, borderWidth: 1, borderColor: colors.border },
   fiatPillActive: { backgroundColor: colors.brand, borderColor: colors.brand },

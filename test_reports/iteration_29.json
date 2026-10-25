@@ -1,0 +1,45 @@
+{
+  "summary": "Iteration 29 — Payout orchestrator (Kotani/Yellow Card), beta test-money mode, live-FX estimate fallback and delete-account. Backend: 24/24 pytest passing (tests/test_iteration29_payouts_beta.py) + 8/8 orchestrator checks run via python (tests/manual_iter29_payout_orchestrator.py). BUG FIX VERIFIED: /api/remit/reverse/quote now returns 200 with kotani.mode='estimated' for NG/KE/GH/ZA → GBP/EUR (e.g. NG 100000 → £54.34 / €64.88; KE 10000 → £55.52; GH 1000 → £61.93; ZA 2000 → £87.72). /api/offramp/mpesa/quote returns success with fiatAmount>0 for KES/GHS/TZS/ZMW/UGX/NGN (mode 'estimated', provider 'kotani'). /api/remit/quote regression OK for GBP→KE/NG. /api/app/config = {beta_test_mode:true, payout_provider:'kotani', payout_provider_label:'Kotani Pay', stripe_mode:'test'}. /api/admin/payouts GET/PUT → 403 for smoketest. YC webhook without/invalid signature → 401. Delete-account: wrong pw → 403, correct → {ok:true}, then login → 401 and old token → 401. Orchestrator: kotani KE → simulated/settled (Kotani 401), kotani IN → simulated, yellowcard KE/GH/NG → mock/settled, yellowcard IN → simulated; beta OFF: kotani IN → skipped (pending), kotani KE → failed (pending). Settings reset to (kotani, beta true), all 9 TEST_ txs deleted. Frontend (390x844): beta banner + preview banner + KYC banner render on /remit; KE partner row shows '8,612.7 KES' with ' · est. from live FX'; Send to UK/EU tab shows £54.34 quote with no 'Live rate unavailable'. Settings 'Delete account' link (44px tall) opens sheet; empty pw → 'Enter your password to confirm.'; wrong pw → 'Incorrect password.' and user stays logged in (survives reload); Cancel closes; throwaway user deleted via UI → redirected to /login and re-login shows 'Invalid email or password'. /video-call renders without crash but shows raw red RN-WebView unsupported text on web. Fixed one layout bug (amount TextInput overflow on web). No deprecated Expo packages (expo-av/expo-barcode-scanner/expo-background-fetch) detected.",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {"endpoint": "payouts.dispatch_payout_for_remit (yellowcard)", "issue": "When provider=yellowcard and YC keys are missing (mock mode), a payout is marked mode 'mock' and the tx is set to status 'settled' EVEN WHEN beta_test_mode is OFF (verified: yellowcard/KE beta-off → mode=mock status=settled). If an admin turns beta off before YC keys are set, users would see 'settled' while no money moved. Should treat mock as 'simulated' only in beta, and fail/skip when beta is off."},
+      {"endpoint": "payouts.dispatch_payout_for_remit (kotani, beta off)", "issue": "On Kotani failure with beta off the function returns {failed:true} but nothing is persisted on the transaction (no payout field / failure reason), so ops have no record to retry from the admin dashboard."},
+      {"endpoint": "POST /api/payouts/yellowcard/webhook", "issue": "No status-transition guard: a late/out-of-order event can overwrite a 'settled' tx with 'failed'/'processing'. Webhook secret silently falls back to YC_API_SECRET if YC_WEBHOOK_SECRET is unset."},
+      {"endpoint": "POST /api/auth/delete-account", "issue": "De-identification nulls recipient_name/memo but keeps counterparty (recipient phone / wallet address) on retained transactions — the sheet copy says records are kept 'without your details'. Consider masking counterparty."}
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [
+      {"component": "app/video-call.tsx (web)", "issue": "On web, react-native-webview renders raw red text 'React Native WebView does not support this platform.' at the top-left, overlapping the 'End-to-end encrypted · Daily.co' pill. No crash, but add a Platform.OS==='web' fallback (iframe of the Daily URL or 'Open on your phone' message).", "testID": "n/a", "priority": "LOW"},
+      {"component": "Remit amount inputs (FIXED by T1)", "issue": "On web, TextInput with flex:1 and no minWidth pushed the GBP/USD/EUR source pills off-screen on /remit and clipped the 'NGN' suffix on Send to UK/EU. Added minWidth:0 to amountInput in app/remit.tsx and src/components/ReverseRemitPanel.tsx; verified pills + suffix now visible.", "testID": "remit-amount, reverse-amount", "priority": "MEDIUM"}
+    ],
+    "integration_issues": [],
+    "design_issues": [
+      {"screen": "Send Money (/remit)", "issues": ["Partner rate label reads 'M-Pesa live rate · est. from live FX' — 'live rate' + 'est.' is contradictory; suggest 'M-Pesa rate (est.)' when mode=estimated.", "Inbound quote badge 'Estimated · Kotani onramp enabling' exposes vendor integration status to end users; suggest 'Estimated rate'."]},
+      {"screen": "Tabs (Settings)", "issues": ["Bottom tab bar labels (Wallet/Chat/Activity/Settings) look clipped at the bottom edge at 390x844 on web."]}
+    ],
+    "react_native_issues": []
+  },
+  "test_report_links": ["/app/backend/tests/test_iteration29_payouts_beta.py", "/app/backend/tests/manual_iter29_payout_orchestrator.py", "/app/test_reports/pytest/iter29.xml"],
+  "action_items": [
+    "payouts.py: don't mark Yellow Card mock payouts 'settled' when beta_test_mode is off (treat no-keys as unavailable → failed/skipped).",
+    "payouts.py: persist payout failure details on the tx when Kotani fails with beta off so admins can retry.",
+    "YC webhook: ignore status regressions after terminal 'settled'/'failed'; require YC_WEBHOOK_SECRET explicitly.",
+    "video-call.tsx: add a web fallback instead of the raw RN-WebView unsupported message.",
+    "Copy tweaks: partner-rate label for estimated mode and inbound 'Kotani onramp enabling' badge.",
+    "Optional: mask counterparty on de-identified transactions after account deletion."
+  ],
+  "critical_code_review_comments": [
+    "payouts.partner_offramp_quote with provider=yellowcard and no keys skips straight to estimate (mode 'estimated') — fine, but there is no 'mock' path, so UI ' · sandbox est.' label is only reachable for Kotani.",
+    "estimated_onramp/estimated_offramp spreads/fees are hard-coded constants (0.8%/1.5%, 1%/2.5%) — consider env/config so ops can tune without deploy.",
+    "remit.tsx is 851 lines (>700) — consider splitting quote card / funding picker into components."
+  ],
+  "updated_files": ["/app/frontend/app/remit.tsx", "/app/frontend/src/components/ReverseRemitPanel.tsx", "/app/backend/tests/test_iteration29_payouts_beta.py", "/app/backend/tests/manual_iter29_payout_orchestrator.py"],
+  "success_rate": {"backend": "100% (24/24 pytest + 8/8 orchestrator)", "frontend": "95% (all requested flows pass; video-call web shows unsupported-WebView text)"},
+  "seed_data_creation": "Throwaway users test_del_*@vaulted.app and test_uidel_9437@vaulted.app created and deleted via delete-account. TEST_ transactions inserted by orchestrator script were deleted. db.config payouts reset to provider=kotani, beta_test_mode=true.",
+  "retest_needed": false,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "Login flow on web requires tapping preview-ack-continue (PreviewAcknowledgementGate) before the login form. EXPO env key is EXPO_PUBLIC_BACKEND_URL in frontend/.env. Kotani sandbox 401 is expected; partner quotes fall back to mode 'estimated'. Orchestrator script tests/manual_iter29_payout_orchestrator.py is safe to rerun (resets settings + cleans TEST_ txs).",
+  "rca_of_issue": "Amount input overflow: on react-native-web, TextInput renders as <input> with an intrinsic min-width; in a flex row with flex:1 and no minWidth:0 it refuses to shrink and pushes sibling pills out of the card. Mitigated with minWidth:0."
+}

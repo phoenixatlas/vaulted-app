@@ -41,7 +41,7 @@ from deps import (
 )
 from audit import EventType, write_event as audit_write
 from models import StripeDepositIn, StripeSyncIn
-from routers.offramp import trigger_kotani_offramp_for_remit
+import payouts
 from routers.kyc import _apply_identity_verified, _apply_identity_requires_input
 
 # Stripe library is configured module-level in server.py — no need to
@@ -88,6 +88,7 @@ def _success_cancel_urls(flow: str) -> tuple[str, str]:
 async def stripe_checkout_deposit(body: StripeDepositIn, user=Depends(get_current_user)):
     if not STRIPE_API_KEY:
         raise HTTPException(status_code=503, detail="Stripe not configured")
+    await payouts.assert_test_money_ok()
     amount_cents = int(round(body.amount_usd * 100))
     success, cancel = _success_cancel_urls("deposit")
     try:
@@ -115,6 +116,7 @@ async def stripe_checkout_deposit(body: StripeDepositIn, user=Depends(get_curren
 async def stripe_checkout_subscription(user=Depends(get_current_user)):
     if not STRIPE_API_KEY:
         raise HTTPException(status_code=503, detail="Stripe not configured")
+    await payouts.assert_test_money_ok()
     price_id = await _get_or_create_vault_pro_price()
     success, cancel = _success_cancel_urls("subscription")
 
@@ -281,23 +283,22 @@ async def _apply_checkout_session(session_obj: dict) -> dict:
         except Exception as e:  # noqa: BLE001
             logger.warning("remit_fund audit_write failed: %s", e)
 
-        # === Auto-trigger Kotani Pay M-Pesa off-ramp for Kenya sends ===
-        # Non-fatal: any Kotani failure leaves the Stripe charge in place
-        # and the tx in "processing" so ops can retry. Mock mode returns
-        # SUCCESS immediately, so mock-mode receipts render "settled".
-        kotani_result: dict = {}
+        # === Auto-dispatch the recipient payout via the active partner ===
+        # (Kotani Pay or Yellow Card, switchable from /admin). Non-fatal:
+        # any partner failure leaves the Stripe charge in place and the tx
+        # in "processing" so ops can retry. In Beta test mode a blocked
+        # partner falls back to a clearly-labelled simulated payout.
+        payout_result: dict = {}
         try:
-            if (metadata.get("destination_code") or "").upper() == "KE":
-                kotani_result = await trigger_kotani_offramp_for_remit(record)
-                # Reload the record so the returned tx has the fresh kotani state
-                fresh = await db.transactions.find_one({"id": record["id"]}, {"_id": 0})
-                if fresh:
-                    record = fresh
+            payout_result = await payouts.dispatch_payout_for_remit(record)
+            fresh = await db.transactions.find_one({"id": record["id"]}, {"_id": 0})
+            if fresh:
+                record = fresh
         except Exception as e:  # noqa: BLE001
-            logger.warning("kotani offramp trigger failed for tx %s: %s", tx_id, e)
-            kotani_result = {"error": str(e)[:200]}
+            logger.warning("payout dispatch failed for tx %s: %s", tx_id, e)
+            payout_result = {"error": str(e)[:200]}
 
-        return {"applied": True, "kind": "remit_fund", "tx": record, **kotani_result}
+        return {"applied": True, "kind": "remit_fund", "tx": record, **payout_result}
 
     if mode == "subscription":
         sub_id = session_obj.get("subscription")

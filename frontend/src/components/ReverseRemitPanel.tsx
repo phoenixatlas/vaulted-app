@@ -241,7 +241,7 @@ export default function ReverseRemitPanel({
                 <View style={s.estBadge}>
                   <Text style={s.estBadgeText}>
                     {quote.kotani.mode === "estimated"
-                      ? "Estimated · Kotani onramp enabling"
+                      ? "Estimated from live FX"
                       : "Sandbox estimate"}
                   </Text>
                 </View>
@@ -361,7 +361,7 @@ const s = StyleSheet.create({
     borderWidth: 1, borderColor: colors.border, borderRadius: radius.md,
     paddingHorizontal: spacing.lg, paddingVertical: spacing.sm, backgroundColor: colors.surface,
   },
-  amountInput: { flex: 1, fontSize: 26, fontWeight: "700", color: colors.onSurface, letterSpacing: -0.5 },
+  amountInput: { flex: 1, minWidth: 0, fontSize: 26, fontWeight: "700", color: colors.onSurface, letterSpacing: -0.5 },
   amountCcy: { fontSize: 14, fontWeight: "700", color: colors.onSurfaceSecondary, letterSpacing: 0.5 },
 
   destRow: { flexDirection: "row", gap: spacing.sm, marginBottom: spacing.md },

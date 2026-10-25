@@ -31,6 +31,7 @@ logger = logging.getLogger("vaulted.audit")
 
 # ---- Canonical event-type constants ----------------------------------------
 class EventType:
+    ACCOUNT_DELETED = "account.deleted"
     KYC_SESSION_CREATED = "kyc.session_created"
     KYC_SESSION_FORCE_NEW = "kyc.session_force_new"
     KYC_VERIFIED = "kyc.verified"

@@ -18,6 +18,7 @@ import json
 from fastapi import APIRouter, Depends, HTTPException, Request
 
 import kotani
+import payouts
 from audit import EventType, write_event as audit_write
 from deps import APP_PUBLIC_URL, db, get_current_user, iso, logger, now_utc, require_admin
 from models import OfframpQuoteIn
@@ -167,15 +168,11 @@ async def offramp_mpesa_quote(body: OfframpQuoteIn, user=Depends(get_current_use
     """Show the user what KES they'll get for a given USD amount. Used
     by the frontend as a secondary rate check next to our own remit quote —
     if Kotani's rate diverges > 3%, we warn the user."""
-    res = await kotani.offramp_rate(
-        from_token="USDC",
-        to_currency=body.to_currency,
-        crypto_amount=body.amount_usd,
-    )
-    return {
-        "kotani": res,
-        "mode": "live" if kotani.live_mode() else "mock",
-    }
+    # Routed through the active payout partner (Kotani / Yellow Card);
+    # falls back to a live-FX estimate when the partner is unavailable.
+    # Response key stays `kotani` for app back-compat.
+    res, mode, provider = await payouts.partner_offramp_quote(body.to_currency, body.amount_usd)
+    return {"kotani": res, "mode": mode, "provider": provider}
 
 
 @router.get("/offramp/mpesa/status/{reference_id}")

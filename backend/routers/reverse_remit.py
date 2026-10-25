@@ -46,6 +46,7 @@ from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
 
 import kotani
+import payouts
 from deps import db, iso, logger, now_utc
 from remit import refresh_fx_rates, convert_fiat
 
@@ -202,21 +203,14 @@ async def reverse_quote(body: ReverseQuoteIn):
         chain=BRIDGE_CHAIN,
     )
 
-    # Kotani sandbox has ONRAMP disabled per-integrator (same permission
-    # gate that blocked the offramp customer_create call). Fall back to
-    # our internal FX-cache mock quote so the UI still delivers a usable
-    # rate — we flag it as `estimated` so the sender knows.
-    kotani_service_disabled = (
-        not kot.get("success")
-        and "not available" in (kot.get("data") or {}).get("message", "").lower()
-    )
+    # Any Kotani failure (service not enabled, account blocked/401, outage)
+    # falls back to an estimate built from the LIVE FX cache, flagged as
+    # `estimated` so the sender knows it isn't a partner-locked rate.
     mode = "live" if kotani.live_mode() else "mock"
-    if kotani_service_disabled:
-        logger.info(
-            "[reverse-remit] Kotani ONRAMP not yet enabled for %s — using estimated rate",
-            src_code,
-        )
-        kot = kotani._mock_onramp_rate(corridor["currency"], BRIDGE_TOKEN, src_amount)
+    if not kot.get("success"):
+        logger.info("[reverse-remit] Kotani onramp rate unavailable for %s — using live-FX estimate: %s",
+                    src_code, (kot.get("data") or {}).get("message"))
+        kot = await payouts.estimated_onramp(corridor["currency"], src_amount) or kot
         mode = "estimated"
 
     if not kot.get("success"):

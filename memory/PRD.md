@@ -323,3 +323,12 @@ MONGO_URL, DB_NAME=vaulted, JWT_SECRET, STRIPE_API_KEY (live, rotated), STRIPE_W
 - Codebase intact: config loads (live mode, sandbox URL, API key + webhook secret set), `/health` OK.
 - Webhook `/api/offramp/callback`: valid HMAC → 200, bad/missing signature → 401 (preview + local). Correct.
 - **Kotani now returns 401 "You are not authorized to access this resource" on ALL authenticated endpoints** (rate, customer, offramp, wallet). A bogus key returns "Invalid API Key" instead → our key is recognised but the integrator account is blocked/suspended on Kotani's side. Previously errors were "Service X not enabled". Combined with portal login failure → account-level issue at Kotani. User to contact Kotani support (email draft provided).
+
+## 🔁 Payout Partner Switch + Beta Readiness (2026-06)
+- **Yellow Card** backup partner (`backend/yellowcard.py`): HMAC `YcHmacV1` signing, rates/channels/networks/send/status, webhook `POST /api/payouts/yellowcard/webhook` (X-YC-Signature). MOCK until `YC_API_KEY` + `YC_API_SECRET` set (`YC_BASE_URL` defaults to sandbox). Covers KE, GH, UG, TZ, ZM (mobile money) + NG (bank).
+- **Orchestrator** (`backend/payouts.py`): `db.config{_id:"payouts"}` → `provider` (kotani|yellowcard) + `beta_test_mode` (default ON). Fiat remit payouts dispatched via active partner; in beta, blocked/unsupported partner → clearly-labelled simulated payout (`tx.payout.mode="simulated"`). Production partner URLs never hit in beta. Stripe checkouts refuse `sk_live` keys while beta mode is on (409).
+- **Live rates fix**: Kotani 401 broke `/remit/reverse/quote` (502 in prod). Now any partner failure → estimate from live open.er-api FX (`mode: estimated`). `/offramp/mpesa/quote` routes through active partner with same fallback.
+- **Endpoints**: `GET /api/app/config` (public), `GET|PUT /api/admin/payouts`.
+- **Admin**: `PayoutProviderCard` — switch partner, probe status, beta toggle, Stripe mode.
+- **App Store**: `POST /api/auth/delete-account` (password, 403 on wrong) + Settings "Delete account" sheet; app.json name "Vaulted", buildNumber, camera/mic Info.plist strings, ITSAppUsesNonExemptEncryption=false, Android CAMERA/RECORD_AUDIO; video-call Android runtime permission flow w/ Open Settings.
+- OPay: skipped for now (user choice).

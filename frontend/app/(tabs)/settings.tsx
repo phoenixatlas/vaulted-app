@@ -9,6 +9,7 @@ import { useCurrency, CURRENCIES } from "@/src/lib/currency";
 import { api } from "@/src/lib/api";
 import { colors, spacing, radius } from "@/src/lib/theme";
 import { authenticate, getCapabilities, labelFor, BiometricCapabilities } from "@/src/lib/biometric";
+import DeleteAccountSheet from "@/src/components/DeleteAccountSheet";
 
 export default function Settings() {
   const { user, setUser, logout } = useAuth();
@@ -16,6 +17,7 @@ export default function Settings() {
   const { currency, setCurrency, meta, loading: fxLoading, fetchedAt, refresh: refreshFx } = useCurrency();
   const router = useRouter();
   const [bioCaps, setBioCaps] = useState<BiometricCapabilities | null>(null);
+  const [deleteOpen, setDeleteOpen] = useState(false);
 
   // Human-readable "updated N min ago" for the FX chip. Recomputed each
   // render — cheap enough that we don't bother memoising, and we WANT
@@ -261,7 +263,15 @@ export default function Settings() {
           <Ionicons name="log-out-outline" size={18} color={colors.error} />
           <Text style={s.logoutText}>{t("logout")}</Text>
         </Pressable>
+        <Pressable testID="delete-account-button" onPress={() => setDeleteOpen(true)} style={s.deleteBtn} hitSlop={8}>
+          <Text style={s.deleteText}>Delete account</Text>
+        </Pressable>
       </ScrollView>
+      <DeleteAccountSheet
+        visible={deleteOpen}
+        onClose={() => setDeleteOpen(false)}
+        onDeleted={async () => { setDeleteOpen(false); await logout(); router.replace("/(auth)/login"); }}
+      />
     </SafeAreaView>
   );
 }
@@ -281,6 +291,8 @@ const s = StyleSheet.create({
   sep: { height: 1, backgroundColor: colors.divider, marginLeft: spacing.lg + 32 + spacing.md },
   logout: { flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 8, marginTop: spacing.xl, marginHorizontal: spacing.xl, paddingVertical: spacing.lg, borderRadius: radius.md, borderWidth: 1, borderColor: colors.border },
   logoutText: { color: colors.error, fontWeight: "600", fontSize: 15 },
+  deleteBtn: { alignItems: "center", justifyContent: "center", minHeight: 44, marginTop: spacing.md, marginBottom: spacing.xl },
+  deleteText: { color: colors.onSurfaceTertiary, fontSize: 13, fontWeight: "600", textDecorationLine: "underline" },
   proBadge: { backgroundColor: colors.brand, paddingHorizontal: 8, paddingVertical: 3, borderRadius: radius.pill, marginRight: 8 },
   proBadgeText: { color: "#fff", fontSize: 10, fontWeight: "800", letterSpacing: 0.5 },
   currencyChipsWrap: {
