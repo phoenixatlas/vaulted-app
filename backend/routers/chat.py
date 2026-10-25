@@ -15,9 +15,13 @@ import hashlib
 import uuid
 
 from eth_account import Account
-from fastapi import APIRouter, Depends, HTTPException
+from typing import Optional
 
-from deps import MULTISIG_THRESHOLD_ETH, db, get_current_user, is_user_pro, iso, logger, now_utc
+from fastapi import APIRouter, Depends, HTTPException
+from pydantic import BaseModel, Field
+
+from deps import ADMIN_EMAILS, MULTISIG_THRESHOLD_ETH, db, get_current_user, is_user_pro, iso, logger, now_utc
+from emails import send_email_via_resend
 from models import CreateGroupIn, SendChatCryptoIn, SendMessageIn
 from push import send_push
 
@@ -51,7 +55,68 @@ async def get_messages(conversation_id: str, user=Depends(get_current_user)):
     await db.conversations.update_one({"id": conversation_id}, {"$set": {"unread": 0}})
     cur = db.messages.find({"conversation_id": conversation_id}, {"_id": 0}).sort("created_at", 1)
     msgs = await cur.to_list(1000)
-    return {"conversation": conv, "messages": msgs}
+    blocked = bool(conv.get("contact_id")) and conv.get("contact_id") in (user.get("blocked_contacts") or [])
+    return {"conversation": conv, "messages": msgs, "blocked": blocked}
+
+
+class BlockIn(BaseModel):
+    contact_id: str
+    block: bool = True
+
+
+class ReportIn(BaseModel):
+    conversation_id: str
+    reason: str = Field(min_length=1, max_length=200)
+    message_id: Optional[str] = None
+    block: bool = True
+
+
+@router.post("/chat/block")
+async def block_contact(body: BlockIn, user=Depends(get_current_user)):
+    if body.block and not await db.conversations.find_one({"user_id": user["id"], "contact_id": body.contact_id}, {"_id": 1}):
+        raise HTTPException(status_code=404, detail="Contact not found")
+    op = "$addToSet" if body.block else "$pull"
+    await db.users.update_one({"id": user["id"]}, {op: {"blocked_contacts": body.contact_id}})
+    return {"contact_id": body.contact_id, "blocked": body.block}
+
+
+@router.get("/chat/blocked")
+async def list_blocked(user=Depends(get_current_user)):
+    return {"blocked_contacts": user.get("blocked_contacts") or []}
+
+
+@router.post("/chat/report")
+async def report_conversation(body: ReportIn, user=Depends(get_current_user)):
+    conv = await db.conversations.find_one({"id": body.conversation_id, "user_id": user["id"]}, {"_id": 0})
+    if not conv:
+        raise HTTPException(status_code=404, detail="Conversation not found")
+    report = {
+        "id": str(uuid.uuid4()),
+        "reporter_id": user["id"],
+        "reporter_email": user.get("email"),
+        "conversation_id": body.conversation_id,
+        "contact_id": conv.get("contact_id"),
+        "contact_name": conv.get("group_name") or conv.get("contact_name"),
+        "message_id": body.message_id,
+        "reason": body.reason,
+        "status": "open",
+        "created_at": iso(now_utc()),
+    }
+    await db.chat_reports.insert_one(report)
+    report.pop("_id", None)
+    if body.block and conv.get("contact_id"):
+        await db.users.update_one({"id": user["id"]}, {"$addToSet": {"blocked_contacts": conv["contact_id"]}})
+    # Alert admins so reports are actioned within 24h (Apple 1.2)
+    try:
+        html = (
+            f"<p>New chat report from {user.get('email')}</p>"
+            f"<p>Conversation: {report['contact_name']} ({body.conversation_id})<br>Reason: {body.reason}</p>"
+        )
+        for admin in ADMIN_EMAILS:
+            await send_email_via_resend(admin, "Vaulted: new chat report", html, text=f"Chat report: {body.reason}")
+    except Exception as e:  # noqa: BLE001
+        logger.warning("chat report email failed: %s", e)
+    return {"ok": True, "id": report["id"]}
 
 
 @router.post("/chat/messages")
@@ -59,6 +124,8 @@ async def send_message(body: SendMessageIn, user=Depends(get_current_user)):
     conv = await db.conversations.find_one({"id": body.conversation_id, "user_id": user["id"]}, {"_id": 0})
     if not conv:
         raise HTTPException(status_code=404, detail="Conversation not found")
+    if conv.get("contact_id") and conv["contact_id"] in (user.get("blocked_contacts") or []):
+        raise HTTPException(status_code=403, detail="You blocked this contact. Unblock to send messages.")
     msg = {
         "id": str(uuid.uuid4()),
         "conversation_id": body.conversation_id,
@@ -141,6 +208,10 @@ async def chat_send_crypto(body: SendChatCryptoIn, user=Depends(get_current_user
     `to_contact_id` MUST identify a member of the group. UX guard caps
     in-chat sends below MULTISIG_THRESHOLD_ETH to avoid email-approval gating.
     """
+    blocked_ids = user.get("blocked_contacts") or []
+    blocked_conv = await db.conversations.find_one({"id": body.conversation_id, "user_id": user["id"]}, {"_id": 0, "contact_id": 1})
+    if blocked_conv and blocked_conv.get("contact_id") in blocked_ids:
+        raise HTTPException(status_code=403, detail="You blocked this contact. Unblock to send crypto.")
     if body.amount_eth >= MULTISIG_THRESHOLD_ETH:
         raise HTTPException(
             status_code=400,

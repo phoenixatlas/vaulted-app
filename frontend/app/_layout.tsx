@@ -16,6 +16,8 @@ import PreviewAcknowledgementGate from "@/src/components/PreviewAcknowledgementG
 import FeedbackButton from "@/src/components/FeedbackButton";
 import { captureRefCodeFromUrl } from "@/src/lib/refCode";
 
+export { default as ErrorBoundary } from "@/src/components/AppErrorBoundary";
+
 LogBox.ignoreAllLogs(true);
 SplashScreen.preventAutoHideAsync();
 

@@ -1,4 +1,6 @@
-import { View, Text, StyleSheet, Pressable, ScrollView, Switch, Alert, Platform } from "react-native";
+import { View, Text, StyleSheet, Pressable, ScrollView, Switch, Alert, Platform, Linking } from "react-native";
+import { PRO_PURCHASE_ENABLED } from "@/src/lib/iap";
+import { PRIVACY_URL, TERMS_URL, SUPPORT_MAILTO } from "@/src/lib/legal";
 import { useEffect, useState } from "react";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { useRouter } from "expo-router";
@@ -94,8 +96,8 @@ export default function Settings() {
           <Text style={s.email}>{user?.email}</Text>
         </View>
 
-        <Text style={s.section}>Subscription</Text>
-        <View style={s.card}>
+        {(PRO_PURCHASE_ENABLED || user?.is_pro) && <Text style={s.section}>Subscription</Text>}
+        {(PRO_PURCHASE_ENABLED || user?.is_pro) && <View style={s.card}>
           <Pressable
             testID="open-vaultpro"
             onPress={() => router.push("/vault-pro")}
@@ -115,7 +117,7 @@ export default function Settings() {
             )}
             <Ionicons name="chevron-forward" size={18} color={colors.onSurfaceTertiary} />
           </Pressable>
-        </View>
+        </View>}
 
         <Text style={s.section}>{t("language")}</Text>
         <View style={s.card}>
@@ -225,7 +227,8 @@ export default function Settings() {
                 value={!!user?.multisig_enabled}
                 onValueChange={(v) => {
                   if (!user?.is_pro && v) {
-                    router.push("/vault-pro");
+                    if (PRO_PURCHASE_ENABLED) router.push("/vault-pro");
+                    else Alert.alert("Multi-signature", "Multi-signature is available to Vault Pro members.");
                     return;
                   }
                   toggleSecurity("multisig_enabled", v);
@@ -276,6 +279,15 @@ export default function Settings() {
             testID="open-export-key"
             onPress={() => router.push("/export-key")}
           />
+        </View>
+
+        <Text style={s.section}>Help & legal</Text>
+        <View style={s.card}>
+          <Row icon="help-buoy" label="Contact support" testID="open-support" onPress={() => Linking.openURL(SUPPORT_MAILTO)} />
+          <View style={s.sep} />
+          <Row icon="lock-closed" label="Privacy policy" testID="open-privacy" onPress={() => Linking.openURL(PRIVACY_URL)} />
+          <View style={s.sep} />
+          <Row icon="document" label="Terms of service" testID="open-terms" onPress={() => Linking.openURL(TERMS_URL)} />
         </View>
 
         <Pressable testID="logout-button" onPress={async () => { await logout(); router.replace("/(auth)/login"); }} style={s.logout}>

@@ -13,6 +13,8 @@ import { api } from "@/src/lib/api";
 import { getPendingRefCode, clearPendingRefCode } from "@/src/lib/refCode";
 import PreviewBanner from "@/src/components/PreviewBanner";
 import { PasswordInput } from "@/src/components/PasswordInput";
+import { Linking } from "react-native";
+import { PRIVACY_URL, TERMS_URL } from "@/src/lib/legal";
 
 type ValidateResp = {
   valid: boolean;
@@ -206,6 +208,13 @@ export default function Register() {
           >
             {loading ? <ActivityIndicator color="#fff" /> : <Text style={s.ctaText}>{t("sign_up")}</Text>}
           </Pressable>
+
+          <Text testID="reg-legal" style={[s.muted, { textAlign: "center", marginTop: 12, fontSize: 12 }]}>
+            By signing up you agree to our{" "}
+            <Text style={s.linkText} onPress={() => Linking.openURL(TERMS_URL)}>Terms</Text>
+            {" "}(no tolerance for abusive content or users) and{" "}
+            <Text style={s.linkText} onPress={() => Linking.openURL(PRIVACY_URL)}>Privacy policy</Text>.
+          </Text>
 
           <View style={s.switchRow}>
             <Text style={s.muted}>{t("have_account")} </Text>

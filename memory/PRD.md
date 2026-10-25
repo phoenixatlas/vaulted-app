@@ -362,3 +362,10 @@ MONGO_URL, DB_NAME=vaulted, JWT_SECRET, STRIPE_API_KEY (live, rotated), STRIPE_W
 ## 🎟️ Beta Invite Code · 💬 Tell Recipient (2026-06)
 - `backend/invite.py`: shared code in `db.config{_id:"invite"}` (default `VAULTED-BETA` / env BETA_INVITE_CODE, enabled by default). `POST /auth/register` requires `invite_code` when enabled (checked before email lookup, hmac.compare_digest, case-insensitive) → 403 otherwise; stores `users.invited_with`. Login untouched. `GET /api/auth/invite-required` (public), `GET|PUT /api/admin/invite`. Register screen shows invite field when required; Admin `InviteCodeCard`.
 - `TellRecipientButton` on transfer detail when delivered: WhatsApp (wa.me) / Text (sms:) to recipient mobile-money number, or share sheet for bank payouts; message includes share receipt link.
+
+## App Store readiness fixes (iteration 36)
+- iOS hides Stripe-billed Vault Pro purchase/price/billing portal (src/lib/iap.ts PRO_PURCHASE_ENABLED), remit paywall shows "resets on the 1st" on iOS
+- Chat Report & Block (POST /api/chat/block, GET /api/chat/blocked, POST /api/chat/report → chat_reports + admin email); blocked contacts can't be messaged or sent crypto
+- Settings "Help & legal" (support mailto, privacy, terms); register screen terms/privacy consent line
+- Root ErrorBoundary (src/components/AppErrorBoundary.tsx)
+- Pending manual: export-compliance answer (E2E chat encryption), App Review demo account + invite code notes

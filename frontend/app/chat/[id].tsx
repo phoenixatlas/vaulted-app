@@ -12,6 +12,7 @@ import { useI18n } from "@/src/lib/i18n";
 import { encryptText, decryptText, ensureSecretKey, getPublicFingerprint } from "@/src/lib/crypto";
 import { authenticate } from "@/src/lib/biometric";
 import { colors, spacing, radius } from "@/src/lib/theme";
+import ChatSafetySheet from "@/src/components/ChatSafetySheet";
 
 type Msg = {
   id: string;
@@ -33,6 +34,7 @@ type Msg = {
 type Conv = {
   id: string;
   contact_name: string;
+  contact_id?: string;
   contact_avatar?: string;
   is_group?: boolean;
   group_name?: string;
@@ -55,6 +57,8 @@ export default function Conversation() {
   const [cryptoSending, setCryptoSending] = useState(false);
   const [cryptoErr, setCryptoErr] = useState<string | null>(null);
   const [recipientId, setRecipientId] = useState<string | null>(null);
+  const [blocked, setBlocked] = useState(false);
+  const [showSafety, setShowSafety] = useState(false);
   const listRef = useRef<FlatList>(null);
 
   const decorate = async (rows: Msg[]): Promise<Msg[]> => {
@@ -74,6 +78,7 @@ export default function Conversation() {
     try {
       const d = await api<{ conversation: Conv; messages: Msg[] }>(`/chat/messages/${id}`);
       setConv(d.conversation);
+      setBlocked(!!d.blocked);
       setMsgs(await decorate(d.messages));
     } catch (e) {
       console.log(e);
@@ -170,10 +175,21 @@ export default function Conversation() {
             </Text>
           </View>
         </View>
-        <Pressable testID="chat-call" onPress={() => router.push("/video-call")}>
+        <Pressable testID="chat-call" onPress={() => router.push("/video-call")} hitSlop={12}>
           <Ionicons name="videocam" size={22} color={colors.brand} />
         </Pressable>
+        <Pressable testID="chat-safety" onPress={() => setShowSafety(true)} hitSlop={12}>
+          <Ionicons name="ellipsis-vertical" size={20} color={colors.onSurface} />
+        </Pressable>
       </View>
+      <ChatSafetySheet
+        visible={showSafety}
+        onClose={() => setShowSafety(false)}
+        conversationId={id as string}
+        contactId={conv?.is_group ? undefined : conv?.contact_id}
+        blocked={blocked}
+        onBlockedChange={setBlocked}
+      />
       <KeyboardAvoidingView behavior={Platform.OS === "ios" ? "padding" : "height"} style={{ flex: 1 }}>
         {loading ? (
           <ActivityIndicator color={colors.brand} style={{ marginTop: 40 }} />
@@ -242,6 +258,14 @@ export default function Conversation() {
             }}
           />
         )}
+        {blocked ? (
+          <View style={s.composer} testID="chat-blocked-banner">
+            <Text style={[s.enc, { flex: 1, fontSize: 13 }]}>You blocked this contact.</Text>
+            <Pressable testID="chat-unblock" onPress={() => setShowSafety(true)} hitSlop={8}>
+              <Text style={{ color: colors.brand, fontWeight: "700" }}>Manage</Text>
+            </Pressable>
+          </View>
+        ) : (
         <View style={s.composer}>
           <Pressable
             testID="chat-attach-crypto"
@@ -268,6 +292,7 @@ export default function Conversation() {
             <Ionicons name="arrow-up" size={20} color="#0F0B08" />
           </Pressable>
         </View>
+        )}
       </KeyboardAvoidingView>
 
       <Modal

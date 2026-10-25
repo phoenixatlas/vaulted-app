@@ -9,6 +9,7 @@ import { Ionicons } from "@expo/vector-icons";
 import { api } from "@/src/lib/api";
 import { useAuth } from "@/src/lib/auth";
 import { colors, spacing, radius } from "@/src/lib/theme";
+import { PRO_PURCHASE_ENABLED } from "@/src/lib/iap";
 
 type Cosigner = { id: string; email: string; label: string; status: string; added_at: string };
 
@@ -94,7 +95,7 @@ export default function CosignersScreen() {
             {adding ? <ActivityIndicator color="#fff" /> : <Text style={s.ctaText}>{user?.is_pro ? "Send invite email" : "Vault Pro required"}</Text>}
           </Pressable>
 
-          {!user?.is_pro && (
+          {!user?.is_pro && PRO_PURCHASE_ENABLED && (
             <Pressable testID="cosigner-upsell" onPress={() => router.push("/vault-pro")} style={s.upsell}>
               <Text style={s.upsellText}>Unlock with Vault Pro →</Text>
             </Pressable>

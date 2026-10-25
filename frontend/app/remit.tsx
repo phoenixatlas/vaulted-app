@@ -17,6 +17,9 @@ import ReverseRemitPanel from "@/src/components/ReverseRemitPanel";
 import { useAppConfig } from "@/src/lib/appConfig";
 import SavedRecipients from "@/src/components/SavedRecipients";
 import NgBankFields, { NgBank, NgResolved } from "@/src/components/NgBankFields";
+import { PRO_PURCHASE_ENABLED } from "@/src/lib/iap";
+
+const FREE_SENDS_USED = "You've used all 3 free cross-border sends this month. They reset on the 1st.";
 
 type Corridor = {
   code: string;
@@ -319,7 +322,11 @@ export default function Remit() {
       setErr("Recipient full name is required for bank / mobile-money payouts.");
       return;
     }
-    if (paywall) { router.push("/vault-pro"); return; }
+    if (paywall) {
+      if (PRO_PURCHASE_ENABLED) router.push("/vault-pro");
+      else setErr(FREE_SENDS_USED);
+      return;
+    }
     if (kycRequired) { router.push({ pathname: "/kyc", params: { reason: "over_limit" } }); return; }
 
     if (user?.biometric_enabled) {
@@ -394,7 +401,8 @@ export default function Remit() {
     } catch (e: any) {
       // 402 → paywall
       if (e?.status === 402 || (e?.message || "").includes("free_tier_exhausted")) {
-        router.push("/vault-pro");
+        if (PRO_PURCHASE_ENABLED) router.push("/vault-pro");
+        else setErr(FREE_SENDS_USED);
         return;
       }
       // 403 → KYC required (over limit) or corridor blocked
@@ -629,10 +637,12 @@ export default function Remit() {
               <Ionicons name={paywall ? "lock-closed" : "gift-outline"} size={16} color={paywall ? colors.error : colors.brand} />
               <Text style={[s.freeTierText, paywall && { color: colors.error }]}>
                 {paywall
-                  ? "You've used all 3 free cross-border sends this month. Upgrade to Vault Pro for unlimited."
+                  ? PRO_PURCHASE_ENABLED
+                    ? "You've used all 3 free cross-border sends this month. Upgrade to Vault Pro for unlimited."
+                    : FREE_SENDS_USED
                   : `${quote.free_tier.remaining_this_month} of ${quote.free_tier.limit_per_month} free cross-border sends left this month.`}
               </Text>
-              {paywall && (
+              {paywall && PRO_PURCHASE_ENABLED && (
                 <Pressable testID="remit-upgrade-cta" onPress={() => router.push("/vault-pro")} style={s.upgradeBtn}>
                   <Text style={s.upgradeBtnText}>Upgrade</Text>
                 </Pressable>
@@ -785,7 +795,7 @@ export default function Remit() {
             ) : (
               <Text style={s.ctaText}>
                 {paywall
-                  ? "Upgrade to send"
+                  ? PRO_PURCHASE_ENABLED ? "Upgrade to send" : "Free sends used this month"
                   : canSubmit
                     ? isFiatFunding
                       ? `Pay ${FIAT_SYMBOL[srcFiat]}${amount} & send to ${selectedCorridor?.country ?? ""}`

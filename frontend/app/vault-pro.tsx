@@ -8,6 +8,7 @@ import { startSubscriptionCheckout, syncStripeSession, cancelSubscription } from
 import { api } from "@/src/lib/api";
 import { colors, spacing, radius } from "@/src/lib/theme";
 import PreviewBanner from "@/src/components/PreviewBanner";
+import { PRO_PURCHASE_ENABLED } from "@/src/lib/iap";
 
 const PERKS = [
   { icon: "shield-checkmark", title: "Multi-signature wallet", desc: "Require multiple approvals for large sends." },
@@ -78,15 +79,21 @@ export default function VaultPro() {
       </View>
       <ScrollView contentContainerStyle={{ padding: spacing.xl, paddingBottom: spacing.xxxl }}>
         <PreviewBanner
-          message="Preview mode - Vault Pro subscription is billed LIVE via Stripe. Vaulted is not yet FCA authorized; features shown are the planned launch scope."
+          message={PRO_PURCHASE_ENABLED
+            ? "Preview mode - Vault Pro subscription is billed LIVE via Stripe. Vaulted is not yet FCA authorized; features shown are the planned launch scope."
+            : "Preview mode - Vaulted is not yet FCA authorized; features shown are the planned launch scope."}
         />
         <View style={s.hero}>
           <View style={s.heroIcon}>
             <Ionicons name="star" size={28} color={colors.brand} />
           </View>
           <Text style={s.heroTitle}>{isPro ? "You're a Pro member" : "Unlock Vault Pro"}</Text>
-          <Text style={s.heroPrice} testID="vaultpro-price">£9.99 / month</Text>
-          <Text style={s.heroSub}>Cancel anytime. Securely billed by Stripe.</Text>
+          {PRO_PURCHASE_ENABLED && (
+            <>
+              <Text style={s.heroPrice} testID="vaultpro-price">£9.99 / month</Text>
+              <Text style={s.heroSub}>Cancel anytime. Securely billed by Stripe.</Text>
+            </>
+          )}
           {isPro && (
             <View style={s.activeBadge}>
               <Ionicons name="checkmark-circle" size={14} color={colors.success} />
@@ -120,7 +127,11 @@ export default function VaultPro() {
           </Text>
         )}
 
-        {!isPro ? (
+        {!isPro && !PRO_PURCHASE_ENABLED ? (
+          <Text testID="vaultpro-ios-unavailable" style={s.msg}>
+            Vault Pro isn&apos;t available in the iPhone app yet.
+          </Text>
+        ) : !isPro ? (
           <Pressable
             testID="vaultpro-subscribe"
             onPress={subscribe}
@@ -135,7 +146,7 @@ export default function VaultPro() {
           </Pressable>
         ) : (
           <>
-            <Pressable
+            {PRO_PURCHASE_ENABLED && <Pressable
               testID="vaultpro-manage-billing"
               onPress={async () => {
                 try {
@@ -148,7 +159,7 @@ export default function VaultPro() {
               style={({ pressed }) => [s.ctaOutlineBrand, pressed && { opacity: 0.7 }]}
             >
               <Text style={[s.ctaText, { color: colors.brand }]}>Manage billing</Text>
-            </Pressable>
+            </Pressable>}
             <Pressable
               testID="vaultpro-cancel"
               onPress={onCancel}

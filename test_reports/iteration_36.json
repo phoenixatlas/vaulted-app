@@ -1,0 +1,42 @@
+{
+  "summary": "Iteration 36: tested the App Store readiness fixes at 390x844, with backend checks through the public URL. Backend: 10/10 pytest passed. Auth guards return 401/403 on block, blocked and report. POST /chat/block adds and removes the contact, and blocking twice does not duplicate it. GET /chat/blocked and the blocked flag in GET /chat/messages/{id} match the block state. POST /chat/messages returns 403 while the contact is blocked and 200 after unblock. POST /chat/report saves a chat_reports doc (confirmed in the DB) and blocks the contact; with block=false it does not block. A conversation that isn't yours gives 404. An empty reason or one over 200 characters gives 422. The admin Resend email returned 200. Frontend: register shows reg-legal, and its Terms and Privacy links open phoenix-atlas.com/terms and /privacy (both return 200). Settings has the 'Help & legal' section (open-support, open-privacy and open-terms, each 342x56), the privacy and terms rows open the right URLs, and the Subscription section is visible on web. In chat/[id], chat-safety opens chat-safety-sheet with Report and Block. The report-reason screen lists 4 reasons. Reporting shows the confirmation, blocks the contact and replaces the composer with chat-blocked-banner, and this survives a reload. Unblocking via Manage or chat-block-toggle brings the composer back, blocking from the toggle works, tapping the backdrop closes the sheet, and messages send again after unblock. On /vault-pro (smoketest is already Pro) vaultpro-price shows £9.99/month and vaultpro-manage-billing shows; vaultpro-subscribe is correctly hidden for a Pro user and could not be checked with this account. /remit loads normally. No page errors. AppErrorBoundary is exported from app/_layout.tsx (code review only; a crash was not triggered). Cleanup: the smoketest user has no blocked contacts, and test reports and TEST_ messages were deleted.",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {"endpoint": "POST /api/chat/block", "issue": "contact_id is not checked: any string, including another user's contact id, is added to blocked_contacts. Check that the contact belongs to the user (db.contacts {id, user_id}) and return 404 if not."},
+      {"endpoint": "POST /api/chat/send_crypto", "issue": "Block is not enforced here. You can still send crypto to a blocked contact in the chat, though the UI hides the composer. Decide whether this is intended; otherwise return 403 like /chat/messages."},
+      {"endpoint": "POST /api/chat/report", "issue": "Admin emails are sent one after another before the response returns, which adds latency (about 400ms with 2 admins). Consider asyncio.create_task or a background task."}
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [
+      {"screen": "chat/[id] header", "issues": ["The chat-safety ellipsis is 20x23px (hitSlop 8, so about 36px on native, and hitSlop does not apply on web). chat-call is 22x24px with no hitSlop. Both are below the 44pt minimum; give them a minWidth/minHeight 44 wrapper."]},
+      {"screen": "ChatSafetySheet", "issues": ["In report-reason mode there is no Back option to return to the Safety menu, only Close."]},
+      {"screen": "register", "issues": ["The inline Terms and Privacy policy links are 12px text with no testIDs and small tap targets. Add testIDs reg-terms-link and reg-privacy-link."]},
+      {"screen": "vault-pro (iOS)", "issues": ["Possible Apple 3.1.1/3.1.3 risk: the PreviewBanner text 'billed LIVE via Stripe' and the 'Securely billed by Stripe' tinyNote are shown on every platform, and for existing Pro users on iOS, vaultpro-manage-billing opens the Stripe portal (an external payment mechanism). Consider gating these behind PRO_PURCHASE_ENABLED as well."]}
+    ],
+    "react_native_issues": []
+  },
+  "test_report_links": ["/app/backend/tests/test_iteration36_chat_block_report.py", "/app/test_reports/pytest/iter36.xml"],
+  "action_items": [
+    "(Optional, Apple 3.1.1 hardening) In vault-pro.tsx, hide the Stripe wording in the PreviewBanner and tinyNote, and the Manage billing button (Stripe portal), when Platform.OS==='ios'.",
+    "Make the chat header icons (chat-safety, chat-call) at least 44x44.",
+    "Validate contact ownership in POST /api/chat/block.",
+    "(Optional) Enforce block in /api/chat/send_crypto.",
+    "(Optional) Add a Back option in ChatSafetySheet report mode, and testIDs on the register Terms and Privacy links."
+  ],
+  "critical_code_review_comments": [
+    "The iOS gating via PRO_PURCHASE_ENABLED is applied consistently in settings (Subscription row and multisig upsell), remit (upgrade CTA and paywall copy), cosigners (upsell) and vault-pro (price and subscribe).",
+    "Blocking is enforced only on the user's own outbound path (/chat/messages). Push notifications from blocked contacts are not filtered, which is acceptable for this seeded-contact model.",
+    "A report on a group conversation stores contact_id=None and does not block anyone; the UI hides Block for groups, which is consistent."
+  ],
+  "updated_files": ["/app/backend/tests/test_iteration36_chat_block_report.py"],
+  "success_rate": {"backend": "100% (10/10)", "frontend": "100% of requested flows"},
+  "seed_data_creation": "None. Test chat_reports for smoketest created from 2026-10-25T21:00 on were deleted, including one at 21:06:05 that may have come from the main agent's sanity check. TEST_ plaintext messages were deleted. blocked_contacts is [] for smoketest.",
+  "retest_needed": false,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "On the web preview, click [data-testid=preview-ack-continue] on the risk gate first, otherwise it blocks clicks. Smoketest is already Vault Pro, so vaultpro-subscribe is hidden for it; use a new VAULTED-BETA signup to check the subscribe button. Maya Chen's conversation id is 5688b282-9fbb-4648-80ff-861b5bd6b1c3. Each report sends a real Resend email to ADMIN_EMAILS.",
+  "rca_of_issue": ""
+}
