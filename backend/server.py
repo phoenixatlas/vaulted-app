@@ -298,3 +298,25 @@ async def _start_backup_scheduler():
     logger.info("[backup] in-process weekly Mongo backup scheduler armed")
 
 
+@app.on_event("startup")
+async def _start_delivery_scheduler():
+    """Every 60s: confirm pending crypto sends on-chain and email senders
+    whose money has been delivered (safety net for the inline triggers)."""
+    import asyncio
+
+    async def _loop():
+        await asyncio.sleep(30)
+        while True:
+            try:
+                from delivery import delivery_tick
+                res = await delivery_tick()
+                if res["confirmed"] or res["emailed"]:
+                    logger.info(f"[delivery] tick: {res}")
+            except Exception as e:  # noqa: BLE001
+                logger.warning(f"[delivery] scheduler tick failed: {e}")
+            await asyncio.sleep(60)
+
+    asyncio.create_task(_loop())
+    logger.info("[delivery] delivery-email scheduler armed")
+
+

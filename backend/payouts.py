@@ -20,6 +20,7 @@ from fastapi import HTTPException
 import kotani
 import yellowcard
 from deps import STRIPE_API_KEY, db, iso, logger, now_utc
+from delivery import safe_notify
 from remit import refresh_fx_rates
 
 PROVIDERS = ("kotani", "yellowcard")
@@ -146,6 +147,7 @@ async def _simulate(record: dict, provider: str, reason: str) -> dict:
         "initiated_at": iso(now_utc()),
     }
     await db.transactions.update_one({"id": record["id"]}, {"$set": {"payout": payout, "status": "settled"}})
+    await safe_notify(record["id"])
     return payout
 
 
@@ -230,6 +232,8 @@ async def dispatch_payout_for_remit(record: dict) -> dict:
     if bucket == "settled" and mode == "mock":
         update["status"] = "settled"
     await db.transactions.update_one({"id": record["id"]}, {"$set": update})
+    if update.get("status") == "settled":
+        await safe_notify(record["id"])
     return {"payout": payout}
 
 

@@ -118,4 +118,7 @@ async def yellowcard_webhook(request: Request):
         {"$set": update},
     )
     logger.info("[yellowcard-webhook] seq=%s status=%s matched=%s", seq, status, res.matched_count)
+    if bucket == "settled" and res.modified_count:
+        from delivery import safe_notify
+        await safe_notify(seq)
     return {"ok": True, "handled": bucket}

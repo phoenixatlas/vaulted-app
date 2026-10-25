@@ -345,3 +345,7 @@ MONGO_URL, DB_NAME=vaulted, JWT_SECRET, STRIPE_API_KEY (live, rotated), STRIPE_W
 - Send again → `/remit?repeat=1&destination_code&source_fiat&amount&funding&recipient_address&recipient_name&bank_id&bank_name` prefills form (user reviews + confirms). Crypto remit records now store `remit.destination_country_code`.
 - Feedback replies: `POST /api/admin/feedback/{id}/reply`, `GET /api/feedback/mine` (+unread), `POST /api/feedback/mine/read`. Feedback tab shows red dot on unread; sheet has "New report" / "My reports" tabs. Admin FeedbackCard has reply box.
 - Crypto-funded remit sends (saved `pending` at broadcast) are confirmed lazily on `GET /transactions/{id}` via chain RPC (XLM Horizon, XRPL `tx`, EVM `eth_getTransactionReceipt`) → `settled`/`failed` + `confirmed_at`. Transfer screen polls only while focused.
+
+## ✉️ Delivery Emails (2026-06)
+- `backend/delivery.py`: `notify_if_delivered(tx_id)` atomic claim on `delivery_email_sent_at` (max 3 attempts, skips if Kotani PDF `receipt_emailed_at` already sent, skips deleted users, only txs created after `db.config{_id:"delivery_emails"}.since`). Branded dark email "Delivered: <amount> to <name>", beta-test note for simulated/mock payouts.
+- Inline triggers: simulated payout, YC mock settle, YC webhook settle, on-chain confirmation in `GET /transactions/{id}`. Safety net: 60s scheduler `delivery_tick` (also confirms pending crypto sends on-chain).

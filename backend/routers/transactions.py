@@ -339,6 +339,9 @@ async def get_transaction(tx_id: str, user=Depends(get_current_user)):
             await db.transactions.update_one({"id": tx_id}, {"$set": {"status": outcome, "confirmed_at": iso(now_utc())}})
             tx["status"] = outcome
             tx["confirmed_at"] = iso(now_utc())
+            if outcome == "settled":
+                from delivery import safe_notify
+                await safe_notify(tx_id)
     status = (tx.get("status") or "").lower()
     return {
         "tx": tx,

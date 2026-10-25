@@ -364,7 +364,7 @@ async def _handle_offramp_event(data: dict) -> dict:
             try:
                 fresh_tx = await db.transactions.find_one({"id": tx["id"]}, {"_id": 0}) or tx
                 # Flag so re-deliveries of the same webhook don't double-email.
-                if not fresh_tx.get("receipt_emailed_at"):
+                if not fresh_tx.get("receipt_emailed_at") and not fresh_tx.get("delivery_email_sent_at"):
                     from emails import send_offramp_receipt_email
                     ok = await send_offramp_receipt_email(
                         to=user_doc["email"], tx=fresh_tx, user=user_doc,
