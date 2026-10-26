@@ -41,6 +41,8 @@ from typing import Optional
 
 import httpx
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
+
+from brand import brand_logo_img
 from pydantic import BaseModel, EmailStr, Field
 
 from deps import db, iso, logger, now_utc
@@ -480,9 +482,7 @@ def _confirmation_html(
     return (
         '<div style="font-family: -apple-system, BlinkMacSystemFont, \'Segoe UI\', Roboto, sans-serif; max-width: 560px; margin: 0 auto; padding: 24px; color: #1a1a1a;">'
         '<div style="text-align: center; padding: 32px 0 24px;">'
-        '<div style="width: 56px; height: 56px; margin: 0 auto 16px; background: #C9A35B; border-radius: 14px; display: inline-flex; align-items: center; justify-content: center;">'
-        '<span style="color: white; font-size: 24px; font-weight: 700;">V</span>'
-        '</div>'
+        f'{brand_logo_img(72)}'
         '<h1 style="font-size: 22px; font-weight: 700; margin: 0 0 8px; color: #1a1a1a;">Welcome to the Vaulted waitlist.</h1>'
         '<p style="color: #666; margin: 0; font-size: 14px;">Thanks for signing up \u2014 we\u2019ll be in touch.</p>'
         f'{corridor_line}'

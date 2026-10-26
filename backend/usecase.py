@@ -27,6 +27,8 @@ from reportlab.lib.units import mm
 from reportlab.lib import colors
 from reportlab.pdfbase.pdfmetrics import stringWidth
 
+from brand import LOGO_PATH, draw_logo
+
 from docx import Document
 from docx.enum.text import WD_ALIGN_PARAGRAPH
 from docx.enum.table import WD_ALIGN_VERTICAL
@@ -231,11 +233,7 @@ def _draw_header(c, width: float, height: float) -> float:
     y_top = height - 22 * mm
 
     # Logo mark
-    c.setFillColor(GOLD)
-    c.roundRect(20 * mm, y_top - 4 * mm, 14 * mm, 14 * mm, 2.5 * mm, fill=1, stroke=0)
-    c.setFillColor(colors.white)
-    c.setFont("Helvetica-Bold", 15)
-    c.drawCentredString(27 * mm, y_top, "V")
+    draw_logo(c, 20 * mm, y_top - 5 * mm, 16 * mm)
 
     # Wordmark + product-of
     c.setFillColor(INK)
@@ -622,7 +620,8 @@ def build_psb_usecase_docx(**overrides) -> bytes:
 
     p1 = left_cell.paragraphs[0]
     p1.alignment = WD_ALIGN_PARAGRAPH.LEFT
-    _run(p1, "VAULTED", bold=True, size=22, color=_INK_HEX)
+    p1.add_run().add_picture(str(LOGO_PATH), width=Mm(18))
+    _run(p1, "  VAULTED", bold=True, size=22, color=_INK_HEX)
     p2 = left_cell.add_paragraph()
     _run(p2, "A product of Phoenix-Atlas Technologies Ltd",
          italic=True, size=9, color=_SUBTLE_HEX)

@@ -20,6 +20,8 @@ from io import BytesIO
 from typing import Any
 
 from reportlab.lib import colors
+
+from brand import draw_logo
 from reportlab.lib.pagesizes import A4
 from reportlab.lib.styles import ParagraphStyle
 from reportlab.lib.units import mm
@@ -102,11 +104,7 @@ def _draw_cover_hero(c: rl_canvas.Canvas, width: float, height: float) -> None:
     Founder contact + booking CTA now live on Slide 5 next to the Ask."""
     # Logo mark — small gold square, top-left
     y_top = height - 24 * mm
-    c.setFillColor(GOLD)
-    c.roundRect(20 * mm, y_top - 2 * mm, 12 * mm, 12 * mm, 2 * mm, fill=1, stroke=0)
-    c.setFillColor(colors.white)
-    c.setFont("Helvetica-Bold", 13)
-    c.drawCentredString(26 * mm, y_top + 1 * mm, "V")
+    draw_logo(c, 20 * mm, y_top - 3 * mm, 14 * mm)
 
     # Wordmark + product-of line, right of the logo
     c.setFillColor(INK)

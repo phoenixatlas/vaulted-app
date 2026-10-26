@@ -22,6 +22,8 @@ from io import BytesIO
 from typing import Any, Optional
 
 from reportlab.pdfgen import canvas as rl_canvas
+
+from brand import draw_logo
 from reportlab.lib.pagesizes import A4
 from reportlab.lib.units import mm
 from reportlab.lib import colors
@@ -124,11 +126,7 @@ def build_offramp_receipt_pdf(tx: dict, user: Optional[dict] = None) -> bytes:
     y_top = height - 22 * mm
 
     # Logo chip
-    c.setFillColor(GOLD)
-    c.roundRect(20 * mm, y_top - 4 * mm, 14 * mm, 14 * mm, 2.5 * mm, fill=1, stroke=0)
-    c.setFillColor(colors.white)
-    c.setFont("Helvetica-Bold", 15)
-    c.drawCentredString(27 * mm, y_top, "V")
+    draw_logo(c, 20 * mm, y_top - 5 * mm, 16 * mm)
 
     c.setFillColor(INK)
     c.setFont("Helvetica-Bold", 20)

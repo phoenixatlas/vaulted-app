@@ -27,6 +27,8 @@ from io import BytesIO
 from typing import Any
 
 from reportlab.lib import colors
+
+from brand import draw_logo
 from reportlab.lib.pagesizes import A4
 from reportlab.lib.styles import ParagraphStyle
 from reportlab.lib.units import mm
@@ -91,11 +93,7 @@ def _draw_header(c: rl_canvas.Canvas, width: float, height: float) -> None:
 
     # Logo mark (rounded gold square with "V")
     x, y = 22 * mm, height - 26 * mm
-    c.setFillColor(GOLD)
-    c.roundRect(x, y, 12 * mm, 12 * mm, 2 * mm, fill=1, stroke=0)
-    c.setFillColor(colors.white)
-    c.setFont("Helvetica-Bold", 14)
-    c.drawCentredString(x + 6 * mm, y + 3.6 * mm, "V")
+    draw_logo(c, x - 1 * mm, y - 1 * mm, 14 * mm)
 
     # Wordmark
     c.setFillColor(INK)

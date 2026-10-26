@@ -369,3 +369,6 @@ MONGO_URL, DB_NAME=vaulted, JWT_SECRET, STRIPE_API_KEY (live, rotated), STRIPE_W
 - Settings "Help & legal" (support mailto, privacy, terms); register screen terms/privacy consent line
 - Root ErrorBoundary (src/components/AppErrorBoundary.tsx)
 - Pending manual: export-compliance answer (E2E chat encryption), App Review demo account + invite code notes
+
+## Brand logo swap (2026-06)
+- Brown & gold phoenix "VAULTED" logo (backend/assets/vaulted-logo.png, helper backend/brand.py) replaces the gold "V" chip in: investor deck, one-pager, letterhead PDF+DOCX, use-case PDF+DOCX, payout receipt PDF, investor + waitlist emails (img via public GET /api/brand/logo.png)

@@ -43,6 +43,7 @@ import asyncio
 import os
 
 from deps import db, iso, now_utc, logger, JWT_SECRET, require_admin
+from brand import brand_logo_img
 from emails import RESEND_API_KEY, send_email_via_resend
 from onepager import build_onepager_pdf
 from deck import build_deck_pdf
@@ -246,9 +247,7 @@ async def _email_pdf(
     body_html = f"""
     <div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; max-width: 560px; margin: 0 auto; padding: 24px; color: #1a1a1a;">
       <div style="text-align: center; padding: 24px 0;">
-        <div style="width: 52px; height: 52px; margin: 0 auto 14px; background: #C9A35B; border-radius: 12px; display: inline-flex; align-items: center; justify-content: center;">
-          <span style="color: white; font-size: 22px; font-weight: 700;">V</span>
-        </div>
+        {brand_logo_img(64)}
       </div>
       <p style="margin: 0 0 12px;">{greeting}</p>
       <p style="margin: 0 0 12px;">Thanks for the interest in <strong>Vaulted</strong>. The {pdf_label} is attached.</p>
@@ -380,6 +379,14 @@ async def onepager_request(body: InvestorLeadIn, request: Request):
         "download_url": download_url,
         "expires_at": expires_at,
     }
+
+
+@router.get("/brand/logo.png")
+async def brand_logo():
+    """Public brand logo — referenced by <img> tags in outgoing emails."""
+    from fastapi.responses import FileResponse
+    from brand import LOGO_PATH
+    return FileResponse(str(LOGO_PATH), media_type="image/png", headers={"Cache-Control": "public, max-age=86400"})
 
 
 @router.get("/investor/onepager/download")
