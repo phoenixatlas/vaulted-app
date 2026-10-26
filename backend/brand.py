@@ -11,12 +11,17 @@ LOGO_PATH = Path(__file__).parent / "assets" / "vaulted-logo.png"
 _LOGO = ImageReader(str(LOGO_PATH))
 
 
+import os
+
+# Emails always load the logo from the live server (independent of APP_PUBLIC_URL,
+# which points at the web app for reset / KYC links).
+LOGO_URL = os.environ.get("BRAND_LOGO_URL", "https://vaulted-app.onrender.com/api/brand/logo.png")
+
+
 def brand_logo_img(size: int) -> str:
-    """<img> tag for HTML emails, served publicly from /api/brand/logo.png."""
-    import os
-    base = (os.environ.get("APP_PUBLIC_URL", "") or "").rstrip("/")
+    """<img> tag for HTML emails."""
     return (
-        f'<img src="{base}/api/brand/logo.png" width="{size}" height="{size}" alt="Vaulted" '
+        f'<img src="{LOGO_URL}" width="{size}" height="{size}" alt="Vaulted" '
         f'style="display:block;margin:0 auto 14px;border-radius:{size // 5}px;border:0;" />'
     )
 
