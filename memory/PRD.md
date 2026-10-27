@@ -372,3 +372,10 @@ MONGO_URL, DB_NAME=vaulted, JWT_SECRET, STRIPE_API_KEY (live, rotated), STRIPE_W
 
 ## Brand logo swap (2026-06)
 - Brown & gold phoenix "VAULTED" logo (backend/assets/vaulted-logo.png, helper backend/brand.py) replaces the gold "V" chip in: investor deck, one-pager, letterhead PDF+DOCX, use-case PDF+DOCX, payout receipt PDF, investor + waitlist emails (img via public GET /api/brand/logo.png)
+
+## Flutterwave payouts (replaces Yellow Card, 2026-06)
+- backend/flutterwave.py: v4 OAuth (FLW_PUBLIC_KEY=client id, FLW_SECRET_KEY=client secret), sandbox base default, X-Scenario-Key successful in sandbox
+- Countries: NG (bank, account-name resolve), KE M-Pesa, GH/UG/RW MTN, TZ airtel
+- payouts.py: provider "flutterwave" default (db.config payouts.provider set), _dispatch_flutterwave, reconcile_flutterwave polled in delivery_tick (60s) → settled + delivery email
+- /api/payouts/banks + /resolve-account + remit NG check route through payouts.list_ng_banks/resolve_ng_account
+- Yellow Card rejected (volume threshold); Paystack = backup option

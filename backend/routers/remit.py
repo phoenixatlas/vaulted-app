@@ -497,7 +497,7 @@ async def remit_fund(body: RemitFundIn, user=Depends(get_current_user)):
     # Never trust the app's "verified" flag — re-check the account name here.
     recipient_verified = False
     if body.destination_code.upper() == "NG":
-        check = await yellowcard.resolve_bank_account(body.recipient_address.strip(), body.recipient_bank_id)
+        check = await payouts.resolve_ng_account(body.recipient_address.strip(), body.recipient_bank_id)
         if not check.get("success"):
             raise HTTPException(status_code=400, detail="We couldn't confirm that Nigerian bank account. Check the number and bank.")
         recipient_verified = check.get("mode") == "live"

@@ -40,7 +40,7 @@ def _money(amount, currency: str) -> str:
 def delivery_email_html(tx: dict, user: dict) -> str:
     remit = tx.get("remit") or {}
     payout = tx.get("payout") or tx.get("kotani") or {}
-    is_test = payout.get("mode") in ("simulated", "mock")
+    is_test = payout.get("mode") in ("simulated", "mock") or bool(payout.get("sandbox"))
     e = lambda v: html.escape(str(v or ""))  # noqa: E731
     who = e(tx.get("recipient_name") or "your recipient")
     received = e(_money(remit.get("destination_amount"), remit.get("destination_currency", "")))
@@ -127,6 +127,12 @@ async def delivery_tick() -> dict:
             await db.transactions.update_one({"id": p["id"], "status": "pending"},
                                              {"$set": {"status": outcome, "confirmed_at": iso(now_utc())}})
             confirmed += 1
+
+    try:  # settle in-flight Flutterwave payouts (emails go out via safe_notify)
+        from payouts import reconcile_flutterwave
+        await reconcile_flutterwave()
+    except Exception as e:  # noqa: BLE001
+        logger.warning("[delivery] flutterwave reconcile failed: %s", e)
 
     candidates = await db.transactions.find(
         {"type": "send", "remit": {"$exists": True}, "status": {"$in": ["settled", "completed"]},

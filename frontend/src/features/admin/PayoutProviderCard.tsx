@@ -11,7 +11,7 @@ import { api } from "@/src/lib/api";
 import { colors } from "@/src/lib/theme";
 import { s } from "./styles";
 
-type Provider = "kotani" | "yellowcard";
+type Provider = "flutterwave" | "kotani" | "yellowcard";
 type ProviderInfo = {
   label: string;
   config: { mode: string; base_url: string; api_key_configured: boolean };
@@ -93,7 +93,7 @@ export function PayoutProviderCard() {
                     color={info.probe.ok ? colors.success : colors.error}
                   />
                   <Text style={{ flex: 1, fontSize: 12, color: colors.onSurfaceSecondary }} numberOfLines={2}>
-                    {info.probe.ok ? "Connected — rates OK" : info.probe.detail}
+                    {info.probe.ok ? `Connected — ${info.probe.detail}` : info.probe.detail}
                   </Text>
                 </View>
                 <Text style={{ fontSize: 11, color: colors.onSurfaceTertiary, marginTop: 4 }}>

@@ -7,6 +7,7 @@ from typing import Optional
 from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, Field
 
+import flutterwave
 import kotani
 import payouts
 import yellowcard
@@ -31,13 +32,13 @@ async def payout_banks(country: str = "NG", _user=Depends(get_current_user)):
     when keys are set, a built-in list of major Nigerian banks otherwise."""
     if country.upper() != "NG":
         raise HTTPException(status_code=400, detail="Bank list is only available for Nigeria")
-    return await yellowcard.list_banks("NG")
+    return await payouts.list_ng_banks()
 
 
 @router.post("/payouts/resolve-account")
 async def payout_resolve_account(body: ResolveAccountIn, _user=Depends(get_current_user)):
     """Look up the account holder's name before money is sent (NUBAN check)."""
-    res = await yellowcard.resolve_bank_account(body.account_number, body.bank_id)
+    res = await payouts.resolve_ng_account(body.account_number, body.bank_id)
     if not res.get("success"):
         raise HTTPException(status_code=404, detail=res.get("message") or "Account not found")
     return {"account_name": res["account_name"], "mode": res["mode"]}
@@ -63,6 +64,11 @@ async def _probe(provider: str) -> dict:
         r = await kotani.offramp_rate(from_token="USDC", to_currency="KES", crypto_amount=1.0)
         msg = ((r.get("data") or {}).get("message")) or r.get("message")
         return {"ok": bool(r.get("success")), "detail": "Rates OK" if r.get("success") else str(msg)[:200]}
+    if provider == "flutterwave":
+        if not flutterwave.live_mode():
+            return {"ok": False, "detail": "No API key — running in test mode"}
+        r = await flutterwave.list_banks("NG")
+        return {"ok": bool(r["banks"]), "detail": f"{len(r['banks'])} NG banks" if r["banks"] else "Auth or network error"}
     if not yellowcard.live_mode():
         return {"ok": False, "detail": "No API key — running in test mode"}
     r = await yellowcard.get_rate("KES")
@@ -76,6 +82,8 @@ async def admin_payouts(_admin=Depends(require_admin)):
         "settings": cfg,
         "stripe_mode": payouts.stripe_mode(),
         "providers": {
+            "flutterwave": {"label": "Flutterwave", "config": flutterwave.diagnostic_info(), "probe": await _probe("flutterwave"),
+                            "countries": sorted(payouts.SUPPORTED_COUNTRIES["flutterwave"])},
             "kotani": {"label": "Kotani Pay", "config": kotani.diagnostic_info(), "probe": await _probe("kotani"),
                        "countries": sorted(payouts.SUPPORTED_COUNTRIES["kotani"])},
             "yellowcard": {"label": "Yellow Card", "config": yellowcard.diagnostic_info(), "probe": await _probe("yellowcard"),

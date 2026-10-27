@@ -3,7 +3,7 @@ import { api } from "@/src/lib/api";
 
 export type AppConfig = {
   beta_test_mode: boolean;
-  payout_provider: "kotani" | "yellowcard";
+  payout_provider: "flutterwave" | "kotani" | "yellowcard";
   payout_provider_label: string;
   stripe_mode: "test" | "live" | "off";
 };
