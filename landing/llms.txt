@@ -1,0 +1,31 @@
+# Vaulted by Phoenix-Atlas Technologies Ltd
+
+> Vaulted is a fiat-first cross-border remittance app with a self-custody crypto wallet, built by Phoenix-Atlas Technologies Ltd (UK, Company No. 17432346). It is designed for UK/EU to Africa and Africa to UK/EU payments over regulated stablecoin rails. Vaulted is in waitlist / preview mode and is not yet authorized by the FCA; it is not open for customer transactions.
+
+## Pages
+- [Home](https://www.phoenix-atlas.com): Vaulted by Phoenix-Atlas is a UK fintech in build: fiat-first remittance between the UK/EU and Africa on stablecoin rails, with a self-custody wallet and encrypted chat. Join the waitlist.
+- [Send money to Africa](https://www.phoenix-atlas.com/send-money-to-africa): How Vaulted plans to send money from the UK and EU to Kenya (M-Pesa), Nigeria, Ghana, Uganda, Tanzania and more in seconds, funded by card, Apple Pay or bank transfer.
+- [Africa to UK &amp; EU](https://www.phoenix-atlas.com/africa-to-uk): Vaulted's reverse corridor is designed for paying UK tuition, medical bills and suppliers from Africa into GBP or EUR over regulated stablecoin rails instead of SWIFT.
+- [Self-custody wallet](https://www.phoenix-atlas.com/wallet): Vaulted's self-custody wallet generates your keys on your device, supports BTC, ETH, USDC on Polygon, Base and Arbitrum, SOL, XLM and XRP, and adds multi-signature approvals.
+- [Security](https://www.phoenix-atlas.com/security): How Vaulted is engineered so funds stay safe even if our servers are compromised: on-device keys, XChaCha20-Poly1305 encryption, biometrics, multi-signature approvals and no password-based key recovery.
+- [Corridors](https://www.phoenix-atlas.com/corridors): Vaulted's planned payment corridors from the UK/EU to Kenya, Ghana, Tanzania, Zambia, Uganda, Nigeria, Senegal, Côte d'Ivoire, India, the Philippines and Mexico, plus the Africa-to-UK reverse corridor.
+- [Pricing](https://www.phoenix-atlas.com/pricing): Vaulted's planned launch pricing: a free tier with 3 cross-border sends per month and Vault Pro at £9.99/month, compared with Wise, Remitly and the crypto-exchange route for a £50 send.
+- [Business &amp; partners](https://www.phoenix-atlas.com/business): Partner with Phoenix-Atlas: white-label reverse-corridor remittance for African payment banks, stablecoin settlement between Africa and the UK/EU, and off-ramp partnerships.
+- [Investors](https://www.phoenix-atlas.com/investors): Investor information for Vaulted by Phoenix-Atlas Technologies: download the reverse-corridor one-pager or 5-page pitch deck and book a 20-minute call with the founder.
+- [Compliance &amp; launch stages](https://www.phoenix-atlas.com/compliance): Vaulted's regulatory status: Phoenix-Atlas Technologies Ltd (Company No. 17432346) is not yet FCA-authorized. See our launch stages, how we handle KYC and data, and our risk disclosures.
+- [FAQ](https://www.phoenix-atlas.com/faq): Answers to common questions about Vaulted: is it live, how stablecoin remittance works, do I need crypto, which countries, fees, self-custody and security.
+
+## Guides
+- [UK to Nigeria &amp; Kenya](https://www.phoenix-atlas.com/learn/send-money-uk-to-nigeria-kenya): The main ways to send money from the UK to Nigeria and Kenya, what to compare (fees, exchange rate, speed, payout method) and the details your recipient needs.
+- [Stablecoins vs banks](https://www.phoenix-atlas.com/learn/stablecoins-vs-bank-transfers): What stablecoins are, how a stablecoin remittance rail works compared with SWIFT correspondent banking, and the benefits and risks to understand.
+- [Self-custody safety](https://www.phoenix-atlas.com/learn/self-custody-wallet-safety): What self-custody means, how to protect your recovery phrase, when to use biometrics and multi-signature approvals, and how to spot common wallet scams.
+
+## Key facts
+- Company: Phoenix-Atlas Technologies Ltd, registered in England and Wales, Company No. 17432346.
+- Product: Vaulted — cross-border remittance + self-custody wallet + end-to-end encrypted chat and video calls.
+- Status: pre-launch, waitlist and preview app only; live money transfer launches upon applicable FCA authorizations.
+- Directions: UK/EU to Africa (outbound) and Africa to UK/EU (reverse corridor, for school fees, medical bills and business payments).
+- Rails: regulated stablecoins (USDC) and low-cost networks (Stellar XLM, XRP Ledger, Polygon, Base, Arbitrum); payout to mobile money (M-Pesa, MoMo) or bank.
+- Planned pricing: Free tier with 3 cross-border sends per month at a 1.5% service fee (min £0.50, max £9.99); Vault Pro £9.99/month with 50% off fees.
+- Security: keys generated on-device (BIP-39 12-word phrase), biometric authentication, multi-signature approvals, TweetNaCl end-to-end encryption.
+- Contact: hello@phoenix-atlas.com · investors: invest@phoenix-atlas.com · support: support@phoenix-atlas.com.
