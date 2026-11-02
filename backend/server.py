@@ -123,6 +123,8 @@ api.include_router(recipients_router)
 api.include_router(feedback_router)
 api.include_router(invite_router)
 api.include_router(kyc_router)
+from routers.partners import router as partners_router  # noqa: E402
+api.include_router(partners_router)
 
 # Push notifications: register-push uses raw /api/register-push (no double
 # prefix), so it's mounted directly on `app` rather than through `api`.

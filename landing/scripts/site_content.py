@@ -175,6 +175,19 @@ PAGES = [
                 {"title": "UK payment partners", "body": "PSPs and EMIs for GBP and EUR settlement (Faster Payments, SEPA Instant)."},
                 {"title": "Stablecoin liquidity", "body": "Issuers and liquidity providers for USDC on low-cost networks."},
             ]),
+            ("prose", "<h2 id=\"enquire\">Partner enquiry</h2><p>Tell us who you are and which corridor you&rsquo;re interested in &mdash; the founder replies personally.</p>"
+                      "<form id=\"partner-form\" class=\"partner-form\" onsubmit=\"return handlePartnerEnquiry(event)\">"
+                      "<div class=\"pf-row\"><input id=\"pf-name\" required maxlength=\"120\" placeholder=\"Your name\" aria-label=\"Your name\">"
+                      "<input id=\"pf-email\" type=\"email\" required placeholder=\"Work email\" aria-label=\"Work email\"></div>"
+                      "<div class=\"pf-row\"><input id=\"pf-company\" required maxlength=\"160\" placeholder=\"Company\" aria-label=\"Company\">"
+                      "<select id=\"pf-type\" aria-label=\"Partner type\"><option value=\"payment_bank\">Payment bank</option><option value=\"psp_emi\">PSP / EMI</option>"
+                      "<option value=\"offramp\">Off-ramp / payout provider</option><option value=\"mobile_money\">Mobile-money operator</option>"
+                      "<option value=\"liquidity\">Stablecoin liquidity</option><option value=\"other\" selected>Other</option></select></div>"
+                      "<input id=\"pf-corridor\" required maxlength=\"120\" placeholder=\"Corridor of interest, e.g. UK &rarr; Nigeria\" aria-label=\"Corridor\">"
+                      "<textarea id=\"pf-message\" rows=\"4\" maxlength=\"2000\" placeholder=\"Anything else? (optional)\" aria-label=\"Message\"></textarea>"
+                      "<input id=\"pf-website\" tabindex=\"-1\" autocomplete=\"off\" class=\"pf-hp\" aria-hidden=\"true\">"
+                      "<button id=\"pf-btn\" class=\"btn btn-primary btn-large\" type=\"submit\">Send enquiry &rarr;</button>"
+                      "<p id=\"pf-msg\" role=\"status\" aria-live=\"polite\"></p></form>", False),
             ("prose", "<h2>Talk to the founder</h2><p>A 20-minute call covers a live sandbox demo, the rail architecture and the fee waterfall on a real &pound;1,000 send.</p>"
                       "<p><a class=\"btn btn-primary btn-large\" href=\"#\" onclick=\"openBookingModal('business'); return false;\">Book a 20-min call &rarr;</a></p>"
                       "<p>Or email <a href=\"mailto:hello@phoenix-atlas.com\">hello@phoenix-atlas.com</a>. Investors, see <a href=\"/investors\">investor information</a>.</p>", True),

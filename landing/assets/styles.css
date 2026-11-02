@@ -1035,5 +1035,15 @@ a.info-card:hover { border-color: rgba(201,163,91,0.5); }
 .faq-item[open] summary::after { content: '\2212'; }
 .faq-item p { margin-top: 10px; color: var(--text-secondary); }
 .related { margin-top: 56px; }
+.partner-form { display: grid; gap: 12px; margin-top: 20px; }
+.pf-row { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+@media (max-width: 600px) { .pf-row { grid-template-columns: 1fr; } }
+.partner-form input, .partner-form select, .partner-form textarea { width: 100%; background: var(--bg-card);
+  border: 1px solid var(--border); border-radius: 12px; color: var(--text-primary); padding: 14px 16px;
+  font: inherit; font-size: 15px; min-height: 48px; }
+.partner-form input:focus, .partner-form select:focus, .partner-form textarea:focus { outline: none; border-color: var(--gold); }
+.partner-form .btn { justify-self: start; border: none; cursor: pointer; }
+.pf-hp { position: absolute; left: -9999px; width: 1px; height: 1px; opacity: 0; }
+#pf-msg { font-size: 14px; min-height: 20px; margin: 0; }
 .footer-grid { grid-template-columns: 1.6fr repeat(4, 1fr); }
 @media (max-width: 900px) { .footer-grid { grid-template-columns: 1fr 1fr; } }

@@ -101,6 +101,16 @@ a.info-card:hover { border-color: rgba(201,163,91,0.5); }
 .faq-item[open] summary::after { content: '\\2212'; }
 .faq-item p { margin-top: 10px; color: var(--text-secondary); }
 .related { margin-top: 56px; }
+.partner-form { display: grid; gap: 12px; margin-top: 20px; }
+.pf-row { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+@media (max-width: 600px) { .pf-row { grid-template-columns: 1fr; } }
+.partner-form input, .partner-form select, .partner-form textarea { width: 100%; background: var(--bg-card);
+  border: 1px solid var(--border); border-radius: 12px; color: var(--text-primary); padding: 14px 16px;
+  font: inherit; font-size: 15px; min-height: 48px; }
+.partner-form input:focus, .partner-form select:focus, .partner-form textarea:focus { outline: none; border-color: var(--gold); }
+.partner-form .btn { justify-self: start; border: none; cursor: pointer; }
+.pf-hp { position: absolute; left: -9999px; width: 1px; height: 1px; opacity: 0; }
+#pf-msg { font-size: 14px; min-height: 20px; margin: 0; }
 .footer-grid { grid-template-columns: 1.6fr repeat(4, 1fr); }
 @media (max-width: 900px) { .footer-grid { grid-template-columns: 1fr 1fr; } }
 """
@@ -125,6 +135,28 @@ function toggleMenu(force) {
   if (b) { b.setAttribute('aria-expanded', String(open)); b.textContent = open ? '\\u2715' : '\\u2630'; }
 }
 document.addEventListener('keydown', function (e) { if (e.key === 'Escape') toggleMenu(false); });
+async function handlePartnerEnquiry(e) {
+  e.preventDefault();
+  var v = function (id) { return (document.getElementById(id).value || '').trim(); };
+  var btn = document.getElementById('pf-btn'), msg = document.getElementById('pf-msg');
+  btn.disabled = true; btn.textContent = 'Sending\\u2026'; msg.textContent = '';
+  try {
+    var res = await fetch(WAITLIST_API_BASE + '/api/partners/enquiry', {
+      method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({name: v('pf-name'), email: v('pf-email'), company: v('pf-company'), partner_type: v('pf-type'),
+        corridor: v('pf-corridor'), message: v('pf-message'), website: v('pf-website')})
+    });
+    var data = await res.json().catch(function () { return {}; });
+    if (!res.ok) throw new Error(typeof data.detail === 'string' ? data.detail : 'Please check the form and try again.');
+    document.getElementById('partner-form').reset();
+    msg.style.color = 'var(--gold-light)';
+    msg.textContent = 'Thanks \\u2014 we\\u2019ve received your enquiry and will reply within 2 working days.';
+  } catch (err) {
+    msg.style.color = '#ff8a80';
+    msg.textContent = (err && err.message) || 'Something went wrong. Email hello@phoenix-atlas.com instead.';
+  } finally { btn.disabled = false; btn.textContent = 'Send enquiry \\u2192'; }
+  return false;
+}
 // Old one-page anchors (phoenix-atlas.com/#pricing etc.) -> new pages.
 (function () {
   var moved = {'#corridors': '/corridors', '#reverse': '/africa-to-uk', '#features': '/send-money-to-africa#features',
