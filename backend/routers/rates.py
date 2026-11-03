@@ -29,6 +29,8 @@ router = APIRouter()
 SUPPORTED_CODES: tuple[str, ...] = (
     "USD", "GBP", "EUR",
     "NGN", "KES", "GHS", "UGX", "TZS", "ZMW", "ZAR",
+    # Website corridor-page rate widget (planned destinations)
+    "XOF", "INR", "PHP", "MXN",
 )
 
 # Static fallback — snapshot mid-June 2026. Updated anytime we deploy a
@@ -45,6 +47,10 @@ _FALLBACK_RATES: dict[str, float] = {
     "TZS": 2612.0,
     "ZMW": 27.1,
     "ZAR": 18.4,
+    "XOF": 588.0,
+    "INR": 86.0,
+    "PHP": 57.0,
+    "MXN": 18.5,
 }
 
 _CACHE_ID = "usd_base"

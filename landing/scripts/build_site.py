@@ -52,7 +52,17 @@ def legacy_section(marker: str) -> str:
 EXTRA_CSS = """
 /* ---- Multi-page additions (build_site.py) ---- */
 .brand { display: flex; align-items: center; gap: 10px; text-decoration: none; }
-.brand img { width: 36px; height: 36px; border-radius: 9px; }
+.brand img { width: 40px; height: 40px; border-radius: 9px; }
+.brand-by { font-family: 'Cormorant Garamond', serif; font-weight: 600; font-size: 17px; color: var(--gold-cream); white-space: nowrap; }
+@media (max-width: 420px) { .brand-by { font-size: 14px; } }
+.rate-widget { background: var(--bg-card); border: 1px solid rgba(201,163,91,0.35); border-radius: 20px; padding: 24px; margin: 0 0 40px; }
+.rate-widget .rw-row { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+.rate-widget label { font-size: 13px; color: var(--text-secondary); width: 100%; }
+.rate-widget input { background: var(--bg); border: 1px solid var(--border); border-radius: 12px; color: var(--text-primary);
+  font: inherit; font-size: 22px; font-weight: 600; padding: 10px 14px; width: 160px; min-height: 52px; }
+.rate-widget input:focus { outline: none; border-color: var(--gold); }
+.rate-widget .rw-gets { font-family: 'Cormorant Garamond', serif; font-size: clamp(28px, 5vw, 40px); color: var(--gold-light); font-weight: 600; margin: 14px 0 6px; }
+.rate-widget .rw-meta { font-size: 13px; color: var(--text-muted); margin: 0; }
 .nav-links { gap: 20px; }
 .nav-links a { font-size: 13px; white-space: nowrap; }
 .wordmark-tag { white-space: nowrap; }
@@ -137,6 +147,41 @@ function toggleMenu(force) {
   if (b) { b.setAttribute('aria-expanded', String(open)); b.textContent = open ? '\\u2715' : '\\u2630'; }
 }
 document.addEventListener('keydown', function (e) { if (e.key === 'Escape') toggleMenu(false); });
+// Corridor rate widget: indicative recipient amount from live mid-market FX
+// (/api/rates/fiat, USD base) minus the planned free-tier fee (1.5%, min £0.50, max £9.99).
+async function initRateWidgets() {
+  var boxes = document.querySelectorAll('.rate-widget');
+  if (!boxes.length) return;
+  var data;
+  try {
+    var r = await fetch(WAITLIST_API_BASE + '/api/rates/fiat');
+    data = await r.json();
+  } catch (err) { data = null; }
+  boxes.forEach(function (box) {
+    var cur = box.getAttribute('data-currency'), input = box.querySelector('input');
+    var gets = box.querySelector('.rw-gets'), meta = box.querySelector('.rw-meta');
+    var rates = data && data.rates;
+    if (!rates || !rates[cur] || !rates.GBP) {
+      gets.textContent = 'Live rate unavailable right now';
+      meta.textContent = 'Please try again later.';
+      return;
+    }
+    var perGbp = rates[cur] / rates.GBP;
+    var fmt = function (n, d) { return n.toLocaleString('en-GB', {maximumFractionDigits: d, minimumFractionDigits: d}); };
+    var update = function () {
+      var amt = Math.min(Math.max(parseFloat(input.value) || 0, 0), 10000);
+      var fee = amt > 0 ? Math.min(Math.max(amt * 0.015, 0.5), 9.99) : 0;
+      var out = Math.max(amt - fee, 0) * perGbp;
+      gets.textContent = 'Recipient gets \\u2248 ' + fmt(out, perGbp > 100 ? 0 : 2) + ' ' + cur;
+      var when = data.fetched_at ? new Date(data.fetched_at).toLocaleString('en-GB', {day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit'}) : '';
+      meta.textContent = '\\u00a31 = ' + fmt(perGbp, perGbp > 100 ? 2 : 4) + ' ' + cur + ' mid-market' + (when ? ' (updated ' + when + ')' : '')
+        + ' \\u00b7 planned fee \\u00a3' + fmt(fee, 2) + '. Indicative only \\u2014 not an offer; Vaulted is not yet live.';
+    };
+    input.addEventListener('input', update);
+    update();
+  });
+}
+document.addEventListener('DOMContentLoaded', initRateWidgets);
 async function handlePartnerEnquiry(e) {
   e.preventDefault();
   var v = function (id) { return (document.getElementById(id).value || '').trim(); };
@@ -242,7 +287,7 @@ def header(path):
     <div class="container nav">
       <a class="brand" href="/" aria-label="Vaulted home">
         <img src="/logo.png" alt="" width="36" height="36">
-        <span><span class="wordmark">Vaulted</span><span class="wordmark-tag" style="display:block">Self-Custody &middot; Encrypted &middot; Sovereign</span></span>
+        <span class="brand-by">by Phoenix-Atlas Technologies Ltd</span>
       </a>
       <nav class="nav-links" aria-label="Main">
         {desk}
@@ -370,6 +415,15 @@ def country_cards():
                    "href": f"/send-money-to-{c['slug']}", "cta": "See corridor"} for c in COUNTRIES])
 
 
+def rate_widget(c) -> str:
+    """Live sample-rate calculator (filled in by initRateWidgets in site.js)."""
+    return (f'<div class="rate-widget" data-currency="{c["cur"]}" data-country="{_plain(c["name"])}">'
+            f'<div class="rw-row"><label for="rw-amount">You send (GBP)</label>'
+            f'<input id="rw-amount" type="number" inputmode="decimal" min="1" max="10000" step="1" value="100" aria-label="Amount in pounds"></div>'
+            f'<p class="rw-gets" aria-live="polite">Loading today&rsquo;s rate&hellip;</p>'
+            f'<p class="rw-meta">Loading&hellip;</p></div>')
+
+
 def build_country(c):
     path = f"/send-money-to-{c['slug']}"
     name, cap = c["name"], _cap(c["name"])
@@ -384,6 +438,7 @@ def build_country(c):
     body = page_hero(trail, f"UK/EU &rarr; {cap}", f"Send money to <span class=\"gold-text\">{cap}</span>.",
                      f"Pay in pounds or euros; your recipient receives {c['currency']}. {c['why']}")
     body += prose(
+        rate_widget(c) +
         f"<h2>How it works</h2><ol><li>Enter the amount in GBP or EUR and fund by card, Apple Pay, Google Pay or bank transfer.</li>"
         f"<li>Vaulted converts to a regulated USD stablecoin and moves it on the cheapest low-cost network.</li>"
         f"<li>Our local payout partner pays your recipient in {c['currency']}.</li></ol>"

@@ -986,7 +986,17 @@
   
 /* ---- Multi-page additions (build_site.py) ---- */
 .brand { display: flex; align-items: center; gap: 10px; text-decoration: none; }
-.brand img { width: 36px; height: 36px; border-radius: 9px; }
+.brand img { width: 40px; height: 40px; border-radius: 9px; }
+.brand-by { font-family: 'Cormorant Garamond', serif; font-weight: 600; font-size: 17px; color: var(--gold-cream); white-space: nowrap; }
+@media (max-width: 420px) { .brand-by { font-size: 14px; } }
+.rate-widget { background: var(--bg-card); border: 1px solid rgba(201,163,91,0.35); border-radius: 20px; padding: 24px; margin: 0 0 40px; }
+.rate-widget .rw-row { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+.rate-widget label { font-size: 13px; color: var(--text-secondary); width: 100%; }
+.rate-widget input { background: var(--bg); border: 1px solid var(--border); border-radius: 12px; color: var(--text-primary);
+  font: inherit; font-size: 22px; font-weight: 600; padding: 10px 14px; width: 160px; min-height: 52px; }
+.rate-widget input:focus { outline: none; border-color: var(--gold); }
+.rate-widget .rw-gets { font-family: 'Cormorant Garamond', serif; font-size: clamp(28px, 5vw, 40px); color: var(--gold-light); font-weight: 600; margin: 14px 0 6px; }
+.rate-widget .rw-meta { font-size: 13px; color: var(--text-muted); margin: 0; }
 .nav-links { gap: 20px; }
 .nav-links a { font-size: 13px; white-space: nowrap; }
 .wordmark-tag { white-space: nowrap; }

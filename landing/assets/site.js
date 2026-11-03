@@ -370,6 +370,41 @@ function toggleMenu(force) {
   if (b) { b.setAttribute('aria-expanded', String(open)); b.textContent = open ? '\u2715' : '\u2630'; }
 }
 document.addEventListener('keydown', function (e) { if (e.key === 'Escape') toggleMenu(false); });
+// Corridor rate widget: indicative recipient amount from live mid-market FX
+// (/api/rates/fiat, USD base) minus the planned free-tier fee (1.5%, min £0.50, max £9.99).
+async function initRateWidgets() {
+  var boxes = document.querySelectorAll('.rate-widget');
+  if (!boxes.length) return;
+  var data;
+  try {
+    var r = await fetch(WAITLIST_API_BASE + '/api/rates/fiat');
+    data = await r.json();
+  } catch (err) { data = null; }
+  boxes.forEach(function (box) {
+    var cur = box.getAttribute('data-currency'), input = box.querySelector('input');
+    var gets = box.querySelector('.rw-gets'), meta = box.querySelector('.rw-meta');
+    var rates = data && data.rates;
+    if (!rates || !rates[cur] || !rates.GBP) {
+      gets.textContent = 'Live rate unavailable right now';
+      meta.textContent = 'Please try again later.';
+      return;
+    }
+    var perGbp = rates[cur] / rates.GBP;
+    var fmt = function (n, d) { return n.toLocaleString('en-GB', {maximumFractionDigits: d, minimumFractionDigits: d}); };
+    var update = function () {
+      var amt = Math.min(Math.max(parseFloat(input.value) || 0, 0), 10000);
+      var fee = amt > 0 ? Math.min(Math.max(amt * 0.015, 0.5), 9.99) : 0;
+      var out = Math.max(amt - fee, 0) * perGbp;
+      gets.textContent = 'Recipient gets \u2248 ' + fmt(out, perGbp > 100 ? 0 : 2) + ' ' + cur;
+      var when = data.fetched_at ? new Date(data.fetched_at).toLocaleString('en-GB', {day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit'}) : '';
+      meta.textContent = '\u00a31 = ' + fmt(perGbp, perGbp > 100 ? 2 : 4) + ' ' + cur + ' mid-market' + (when ? ' (updated ' + when + ')' : '')
+        + ' \u00b7 planned fee \u00a3' + fmt(fee, 2) + '. Indicative only \u2014 not an offer; Vaulted is not yet live.';
+    };
+    input.addEventListener('input', update);
+    update();
+  });
+}
+document.addEventListener('DOMContentLoaded', initRateWidgets);
 async function handlePartnerEnquiry(e) {
   e.preventDefault();
   var v = function (id) { return (document.getElementById(id).value || '').trim(); };

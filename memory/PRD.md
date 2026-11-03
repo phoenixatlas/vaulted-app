@@ -392,3 +392,7 @@ MONGO_URL, DB_NAME=vaulted, JWT_SECRET, STRIPE_API_KEY (live, rotated), STRIPE_W
 - Enquiry: branded auto-reply + operator alert sent in background task; throttle keys on rightmost X-Forwarded-For hop
 - Landing: 11 /send-money-to-<country> pages (COUNTRIES in site_content.py) with FAQPage JSON-LD, linked from /corridors and /send-money-to-africa, in sitemap + llms.txt
 - Known: waitlist dropdown lacks Senegal/CI/India/PH/MX
+
+## Corridor rate widget + header byline
+- Country pages: .rate-widget (GBP input → indicative recipient amount = (amt − fee 1.5% min £0.50 max £9.99) × mid-market rate from public GET /api/rates/fiat); rates.py SUPPORTED_CODES + fallback now include XOF, INR, PHP, MXN
+- Site header: logo image + "by Phoenix-Atlas Technologies Ltd" (wordmark text removed from header only)
