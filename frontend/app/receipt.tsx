@@ -86,6 +86,13 @@ export default function Receipt() {
           <Row label="Date" value={new Date().toLocaleString()} />
           {isRemit && <Row label="FX rate" value={`1 ${remit.source_currency} = ${remit.fx_rate?.toFixed(4)} ${remit.destination_currency}`} />}
           {isRemit && <Row label="Delivery" value={remit.receive_via} />}
+          {isRemit && Number(remit.bank_saving) > 0 && (
+            <Row
+              label="Saved vs a typical bank*"
+              value={`≈ ${Number(remit.bank_saving).toLocaleString(undefined, { maximumFractionDigits: remit.fx_rate > 100 ? 0 : 2 })} ${remit.destination_currency}`}
+              valueColor={colors.success}
+            />
+          )}
           {isRemit && isFiatFunded && <Row label="Paid via" value={paymentLabel} />}
           {isMpesaOfframp && mpesaReceipt && <Row label="M-Pesa receipt" value={mpesaReceipt} valueColor={colors.success} />}
           {isRemit && !!partnerLabel && <Row label="Payout partner" value={isTestPayout ? `${partnerLabel} · test` : partnerLabel} />}
@@ -93,6 +100,11 @@ export default function Receipt() {
           <Row label={isFiat || isFiatFunded ? "Receipt ID" : "Tx hash"} value={ref.length > 22 ? ref.slice(0, 12) + "…" + ref.slice(-6) : ref} />
           <Row label="Status" value={statusLabel} valueColor={statusColor} />
         </View>
+        {isRemit && Number(remit.bank_saving) > 0 && (
+          <Text testID="receipt-saving-note" style={s.testNote}>
+            *Illustrative: compared with a typical bank transfer charging a £25 fee and a 3% exchange-rate margin. Real bank costs vary.
+          </Text>
+        )}
         {isRemit && isTestPayout && (
           <Text testID="receipt-test-note" style={s.testNote}>
             Test payout: no real money was sent to the recipient during the beta.

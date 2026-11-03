@@ -398,3 +398,4 @@ MONGO_URL, DB_NAME=vaulted, JWT_SECRET, STRIPE_API_KEY (live, rotated), STRIPE_W
 - Site header: logo image + "by Phoenix-Atlas Technologies Ltd" (wordmark text removed from header only)
 - Rate widget comparison line: recipient amount vs illustrative bank transfer (£25 fee + 3% FX margin), footnoted (BANK_FEE_GBP/BANK_FX_MARGIN in site.js)
 - In-app BankComparisonLine under remit quote (hidden when amount ≤ £25 bank fee; net of Vaulted service fee); partner lead reminder (remind_stale_leads in delivery_tick, once per lead after 2 working days)
+- Receipts: remit.bank_saving stored at send (savings.py, also Stripe path); shown on app receipt (green row + footnote) and public share page /api/r/{token} when delivered

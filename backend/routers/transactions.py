@@ -24,6 +24,7 @@ from fastapi.responses import HTMLResponse, StreamingResponse
 
 from deps import db, now_utc, iso, get_current_user
 from models import FiatTxIn
+from savings import NOTE as SAVING_NOTE
 
 router = APIRouter()
 
@@ -397,7 +398,11 @@ def _share_page(tx: dict, sender: dict) -> str:
         ("Date (UTC)", e(when)),
         ("Receipt ID", e(tx.get("receipt_id") or tx.get("id", "")[:8].upper())),
     ]
+    saving = remit.get("bank_saving")
+    if delivered and saving:
+        rows.insert(3, ("Saved vs a typical bank*", f'<span style="color:#7FC77F">≈ {e(money(saving, remit.get("destination_currency", "")))}</span>'))
     row_html = "".join(f"<tr><td>{k}</td><td>{v}</td></tr>" for k, v in rows if v)
+    saving_note = f'<p class="f">*{e(SAVING_NOTE)}</p>' if delivered and saving else ""
     if delivered:
         badge = ("#3FA672", "Delivered")
     elif status == "failed":
@@ -418,7 +423,7 @@ td:first-child{{color:#B8AFA1}}td:last-child{{text-align:right;font-weight:600}}
 .f{{font-size:11px;color:#6d7a73;margin-top:32px;line-height:18px}}</style></head>
 <body><div class="c"><div class="b">Vaulted</div><div class="k">Transfer receipt</div>
 <span class="pill">{badge[1]}</span><div class="amt">{received}</div>
-<table>{row_html}</table>{test}
+<table>{row_html}</table>{test}{saving_note}
 <p class="f">Sent with Vaulted, the self custody wallet for cross border transfers.<br/>Vaulted · Phoenix Atlas Technologies Ltd · UK</p></div></body></html>"""
 
 

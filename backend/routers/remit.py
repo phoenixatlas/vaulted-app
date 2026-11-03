@@ -63,6 +63,7 @@ from referrals import spend_credit_for_fee
 from market import _refresh_market_prices
 from routers.wallet import _ensure_multichain_addresses
 from routers.stripe_router import _success_cancel_urls
+from savings import bank_saving
 
 
 router = APIRouter()
@@ -426,6 +427,7 @@ async def remit_send(body: RemitSendIn, user=Depends(get_current_user)):
             "chain": chain,
             "fx_rate": quote["fx_rate"],
             "receive_via": dst["receive_via"],
+            "bank_saving": bank_saving(quote),
         },
     }
     await db.transactions.insert_one(record)

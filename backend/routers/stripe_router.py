@@ -45,6 +45,22 @@ import payouts
 from routers.recipients import save_recipient
 from routers.kyc import _apply_identity_verified, _apply_identity_requires_input
 
+
+async def _stripe_bank_saving(metadata: dict, src_amount: float, dst_amount: float, fx_rate: float, fee_usd: float):
+    """Bank-comparison saving for card-funded remits (Stripe metadata lacks GBP/USD amounts)."""
+    try:
+        from remit import convert_fiat, refresh_fx_rates
+        from savings import bank_saving
+        src = (metadata.get("source_fiat") or "GBP").upper()
+        rates = (await refresh_fx_rates(db)).get("rates") or {}
+        quote = {"source": {"amount": src_amount, "amount_gbp": convert_fiat(src_amount, src, "GBP", rates),
+                            "amount_usd": convert_fiat(src_amount, src, "USD", rates)},
+                 "fx_rate": fx_rate, "destination": {"amount": dst_amount}, "fees": {"vaulted_service_usd": fee_usd}}
+        return bank_saving(quote)
+    except Exception as e:  # noqa: BLE001
+        logger.warning("[stripe] bank saving calc failed: %s", e)
+        return None
+
 # Stripe library is configured module-level in server.py — no need to
 # re-set stripe.api_key here (the same process share the module).
 
@@ -247,6 +263,7 @@ async def _apply_checkout_session(session_obj: dict) -> dict:
                 "chain": None,  # hidden from user — fiat rails
                 "fx_rate": fx_rate,
                 "receive_via": metadata.get("receive_via"),
+                "bank_saving": await _stripe_bank_saving(metadata, src_amount, dst_amount, fx_rate, svc_fee_usd),
             },
         }
         await db.transactions.insert_one(record)
