@@ -397,3 +397,4 @@ MONGO_URL, DB_NAME=vaulted, JWT_SECRET, STRIPE_API_KEY (live, rotated), STRIPE_W
 - Country pages: .rate-widget (GBP input → indicative recipient amount = (amt − fee 1.5% min £0.50 max £9.99) × mid-market rate from public GET /api/rates/fiat); rates.py SUPPORTED_CODES + fallback now include XOF, INR, PHP, MXN
 - Site header: logo image + "by Phoenix-Atlas Technologies Ltd" (wordmark text removed from header only)
 - Rate widget comparison line: recipient amount vs illustrative bank transfer (£25 fee + 3% FX margin), footnoted (BANK_FEE_GBP/BANK_FX_MARGIN in site.js)
+- In-app BankComparisonLine under remit quote (hidden when amount ≤ £25 bank fee; net of Vaulted service fee); partner lead reminder (remind_stale_leads in delivery_tick, once per lead after 2 working days)

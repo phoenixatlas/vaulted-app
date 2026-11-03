@@ -134,6 +134,12 @@ async def delivery_tick() -> dict:
     except Exception as e:  # noqa: BLE001
         logger.warning("[delivery] flutterwave reconcile failed: %s", e)
 
+    try:  # nudge the operator about partner leads left at "New" for 2 working days
+        from routers.partners import remind_stale_leads
+        await remind_stale_leads()
+    except Exception as e:  # noqa: BLE001
+        logger.warning("[delivery] partner lead reminder failed: %s", e)
+
     candidates = await db.transactions.find(
         {"type": "send", "remit": {"$exists": True}, "status": {"$in": ["settled", "completed"]},
          "created_at": {"$gte": since}, "delivery_email_sent_at": {"$exists": False},

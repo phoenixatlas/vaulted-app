@@ -18,6 +18,7 @@ import { useAppConfig } from "@/src/lib/appConfig";
 import SavedRecipients from "@/src/components/SavedRecipients";
 import NgBankFields, { NgBank, NgResolved } from "@/src/components/NgBankFields";
 import { PRO_PURCHASE_ENABLED } from "@/src/lib/iap";
+import BankComparisonLine from "@/src/components/BankComparisonLine";
 
 const FREE_SENDS_USED = "You've used all 3 free cross-border sends this month. They reset on the 1st.";
 
@@ -554,6 +555,15 @@ export default function Remit() {
                     <Text style={s.quoteCcy}>{quote.destination.currency}</Text>
                   </View>
                   <Text style={s.quoteVia}>{quote.destination.flag} {quote.destination.receive_via} · {quote.destination.eta}</Text>
+                  <BankComparisonLine
+                    sourceAmount={Number(quote.source.amount)}
+                    sourceAmountGbp={Number(quote.source.amount_gbp)}
+                    sourceAmountUsd={Number(quote.source.amount_usd)}
+                    serviceFeeUsd={Number(quote.fees?.vaulted_service_usd ?? 0)}
+                    fxRate={quote.fx_rate}
+                    recipientAmount={quote.destination.amount}
+                    currency={quote.destination.currency}
+                  />
                 </View>
                 <View style={s.divider} />
                 <View style={s.quoteRow}>

@@ -105,6 +105,43 @@ def _auto_reply_html(e: dict) -> str:
 </div>"""
 
 
+def _working_days_since(created_iso: str) -> int:
+    """Whole Mon–Fri days elapsed since `created_iso` (UTC)."""
+    from datetime import datetime, timedelta
+    start = datetime.fromisoformat(created_iso.replace("Z", "+00:00"))
+    now = now_utc()
+    days, d = 0, start
+    while d + timedelta(days=1) <= now:
+        d += timedelta(days=1)
+        if d.weekday() < 5:
+            days += 1
+    return days
+
+
+async def remind_stale_leads() -> int:
+    """Email the operator team once per lead still 'new' after 2 working days."""
+    rows = await db.partner_enquiries.find(
+        {"status": "new", "reminded_at": {"$exists": False}}, {"_id": 0}).to_list(100)
+    stale = [r for r in rows if _working_days_since(r["created_at"]) >= 2]
+    if not stale:
+        return 0
+    items = "".join(
+        f"<li><b>{html.escape(r['company'])}</b> · {html.escape(r['corridor'])} — {html.escape(r['name'])} "
+        f"(<a href='mailto:{html.escape(r['email'])}'>{html.escape(r['email'])}</a>), received {r['created_at'][:10]}</li>"
+        for r in stale)
+    page = (f"<h2>{len(stale)} partner lead{'s' if len(stale) > 1 else ''} waiting for a reply</h2>"
+            f"<p>These enquiries have been 'New' for 2+ working days. Their auto-reply promised a response within 2 working days.</p>"
+            f"<ul>{items}</ul><p>Mark them Contacted or Closed in the admin dashboard → Partner leads.</p>")
+    for to in await _recipients():
+        try:
+            await send_email_via_resend(to, f"Reminder: {len(stale)} partner lead(s) need a reply", page)
+        except Exception as ex:  # noqa: BLE001
+            logger.warning("[partners] reminder email failed: %s", ex)
+    await db.partner_enquiries.update_many(
+        {"id": {"$in": [r["id"] for r in stale]}}, {"$set": {"reminded_at": iso(now_utc())}})
+    return len(stale)
+
+
 class LeadStatusIn(BaseModel):
     status: str = Field(pattern="^(new|contacted|closed)$")
 

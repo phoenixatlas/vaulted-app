@@ -1,0 +1,29 @@
+{
+  "summary": "Tested the BankComparisonLine feature on /remit in the Expo web preview at a 375x667 viewport, logged in as smoketest@vaulted.app. testID remit-bank-comparison appears inside remit-quote-card, directly under 'Recipient gets' and the receive-via line, together with the illustrative note. The displayed N matched the /api/remit/quote formula (dest.amount - max(amt - 25*(amt/amount_gbp),0)*fx_rate*0.97), rounded, in all 9 cases: GBP100->NG 49,197 NGN (expected 49,196.57); GBP100->KE 4,741 KES (4,740.63); EUR100->NG 48,297 (48,296.67); EUR100->KE 4,654 (4,653.91); USD100->KE 4,609 (4,608.57); GBP10->NG 18,054; GBP10->KE 1,740; GBP26->KE 4,354 (4,354.42); and Card funding GBP100->KE 4,741. Regression checks: the quote card, Kotani rate row, Stripe hint and the confirm CTA ('Pay £100 & send to Kenya') all render. No console errors on /remit. No transfer was submitted. One logic/UX issue: for amounts of £25 or less, the bank amount is clamped to 0, so the line claims the full recipient amount is 'more than a bank'.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [
+      {"component": "BankComparisonLine", "issue": "For amounts of £25 or less (in GBP terms), bankGets is clamped to 0, so diff equals the whole recipient amount. Example: £10 to NG shows '≈ 18,054 NGN more than a typical bank transfer', which is 100% of the payout. That overstates the claim. Suggest hiding the line, or using different copy (e.g. 'A typical £25 bank fee would exceed this transfer'), when sourceAmountGbp <= 25. Reference: /app/frontend/src/components/BankComparisonLine.tsx:22", "testID": "remit-bank-comparison", "priority": "MEDIUM"}
+    ],
+    "integration_issues": [],
+    "design_issues": [],
+    "react_native_issues": []
+  },
+  "test_report_links": [".screenshots/ng100.png", ".screenshots/ke100.png", ".screenshots/ng10.png"],
+  "action_items": [
+    "BankComparisonLine: handle sourceAmountGbp <= BANK_FEE_GBP. Either hide the line or show alternative copy instead of claiming the full payout as savings.",
+    "Optional: also subtract Vaulted's own service fee (quote.fees.vaulted_service_usd converted to destination currency) so the comparison is like-for-like."
+  ],
+  "critical_code_review_comments": [
+    "BankComparisonLine.tsx:22 Math.max(...,0) clamp leads to a 100%-of-payout 'savings' claim on small sends.",
+    "The comparison uses gross destination.amount and ignores Vaulted's service fee, which is charged separately (e.g. $1.00 on £100). The figure is slightly optimistic. Minor.",
+    "The digits rule (fxRate > 100 ? 0 : 2) is sensible: NGN and KES show whole numbers."
+  ],
+  "updated_files": [],
+  "success_rate": {"backend": "N/A (frontend only; /api/remit/quote verified via curl, amount_gbp present)", "frontend": "100% of requested checks pass; 1 UX/logic issue on small amounts"},
+  "seed_data_creation": "None",
+  "retest_needed": false,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "A preview acknowledgement gate blocks the login screen on first visit. Bypass it by setting localStorage 'vaulted.preview.ack.version'='2026-07-preview-v1' and reloading, then log in through login-email-input / login-password-input / login-submit-button. Quote response: destination.amount = amount * fx_rate (gross); source.amount_gbp is present.",
+  "rca_of_issue": "The small-amount over-claim comes from bankGets = max(amount - 25*(amount/amount_gbp), 0) * rate * 0.97. When amount_gbp <= 25 this is 0, so diff = recipientAmount."
+}

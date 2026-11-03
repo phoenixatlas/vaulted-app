@@ -401,7 +401,7 @@ async function initRateWidgets() {
       var bank = Math.max(amt - BANK_FEE_GBP, 0) * perGbp * (1 - BANK_FX_MARGIN);
       var diff = out - bank, cmp = box.querySelector('.rw-compare');
       if (cmp) {
-        cmp.textContent = diff > 0
+        cmp.textContent = diff > 0 && amt > BANK_FEE_GBP
           ? '\u2248 ' + fmt(diff, perGbp > 100 ? 0 : 2) + ' ' + cur + ' more than a typical bank transfer*'
           : '';
       }
