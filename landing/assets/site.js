@@ -373,6 +373,7 @@ document.addEventListener('keydown', function (e) { if (e.key === 'Escape') togg
 // Corridor rate widget: indicative recipient amount from live mid-market FX
 // (/api/rates/fiat, USD base) minus the planned free-tier fee (1.5%, min £0.50, max £9.99).
 async function initRateWidgets() {
+  var BANK_FEE_GBP = 25, BANK_FX_MARGIN = 0.03;
   var boxes = document.querySelectorAll('.rate-widget');
   if (!boxes.length) return;
   var data;
@@ -396,9 +397,19 @@ async function initRateWidgets() {
       var fee = amt > 0 ? Math.min(Math.max(amt * 0.015, 0.5), 9.99) : 0;
       var out = Math.max(amt - fee, 0) * perGbp;
       gets.textContent = 'Recipient gets \u2248 ' + fmt(out, perGbp > 100 ? 0 : 2) + ' ' + cur;
+      // Illustrative typical UK bank transfer: £25 fee + 3% exchange-rate margin.
+      var bank = Math.max(amt - BANK_FEE_GBP, 0) * perGbp * (1 - BANK_FX_MARGIN);
+      var diff = out - bank, cmp = box.querySelector('.rw-compare');
+      if (cmp) {
+        cmp.textContent = diff > 0
+          ? '\u2248 ' + fmt(diff, perGbp > 100 ? 0 : 2) + ' ' + cur + ' more than a typical bank transfer*'
+          : '';
+      }
       var when = data.fetched_at ? new Date(data.fetched_at).toLocaleString('en-GB', {day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit'}) : '';
       meta.textContent = '\u00a31 = ' + fmt(perGbp, perGbp > 100 ? 2 : 4) + ' ' + cur + ' mid-market' + (when ? ' (updated ' + when + ')' : '')
-        + ' \u00b7 planned fee \u00a3' + fmt(fee, 2) + '. Indicative only \u2014 not an offer; Vaulted is not yet live.';
+        + ' \u00b7 planned fee \u00a3' + fmt(fee, 2) + '. Indicative only \u2014 not an offer; Vaulted is not yet live.'
+        + ' *Bank comparison assumes an illustrative \u00a3' + BANK_FEE_GBP + ' transfer fee and a ' + (BANK_FX_MARGIN * 100)
+        + '% exchange-rate margin; actual bank costs vary and may include intermediary charges.';
     };
     input.addEventListener('input', update);
     update();

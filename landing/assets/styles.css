@@ -1000,6 +1000,7 @@
 .rate-widget input:focus { outline: none; border-color: var(--gold); }
 .rate-widget .rw-gets { font-family: 'Cormorant Garamond', serif; font-size: clamp(28px, 5vw, 40px); color: var(--gold-light); font-weight: 600; margin: 14px 0 6px; }
 .rate-widget .rw-meta { font-size: 13px; color: var(--text-muted); margin: 0; }
+.rate-widget .rw-compare { font-size: 15px; font-weight: 600; color: #7FC77F; margin: 0 0 10px; min-height: 1px; }
 .nav-links { gap: 20px; }
 .nav-links a { font-size: 13px; white-space: nowrap; }
 .wordmark-tag { white-space: nowrap; }

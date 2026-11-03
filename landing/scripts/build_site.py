@@ -66,6 +66,7 @@ EXTRA_CSS = """
 .rate-widget input:focus { outline: none; border-color: var(--gold); }
 .rate-widget .rw-gets { font-family: 'Cormorant Garamond', serif; font-size: clamp(28px, 5vw, 40px); color: var(--gold-light); font-weight: 600; margin: 14px 0 6px; }
 .rate-widget .rw-meta { font-size: 13px; color: var(--text-muted); margin: 0; }
+.rate-widget .rw-compare { font-size: 15px; font-weight: 600; color: #7FC77F; margin: 0 0 10px; min-height: 1px; }
 .nav-links { gap: 20px; }
 .nav-links a { font-size: 13px; white-space: nowrap; }
 .wordmark-tag { white-space: nowrap; }
@@ -153,6 +154,7 @@ document.addEventListener('keydown', function (e) { if (e.key === 'Escape') togg
 // Corridor rate widget: indicative recipient amount from live mid-market FX
 // (/api/rates/fiat, USD base) minus the planned free-tier fee (1.5%, min £0.50, max £9.99).
 async function initRateWidgets() {
+  var BANK_FEE_GBP = 25, BANK_FX_MARGIN = 0.03;
   var boxes = document.querySelectorAll('.rate-widget');
   if (!boxes.length) return;
   var data;
@@ -176,9 +178,19 @@ async function initRateWidgets() {
       var fee = amt > 0 ? Math.min(Math.max(amt * 0.015, 0.5), 9.99) : 0;
       var out = Math.max(amt - fee, 0) * perGbp;
       gets.textContent = 'Recipient gets \\u2248 ' + fmt(out, perGbp > 100 ? 0 : 2) + ' ' + cur;
+      // Illustrative typical UK bank transfer: £25 fee + 3% exchange-rate margin.
+      var bank = Math.max(amt - BANK_FEE_GBP, 0) * perGbp * (1 - BANK_FX_MARGIN);
+      var diff = out - bank, cmp = box.querySelector('.rw-compare');
+      if (cmp) {
+        cmp.textContent = diff > 0
+          ? '\\u2248 ' + fmt(diff, perGbp > 100 ? 0 : 2) + ' ' + cur + ' more than a typical bank transfer*'
+          : '';
+      }
       var when = data.fetched_at ? new Date(data.fetched_at).toLocaleString('en-GB', {day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit'}) : '';
       meta.textContent = '\\u00a31 = ' + fmt(perGbp, perGbp > 100 ? 2 : 4) + ' ' + cur + ' mid-market' + (when ? ' (updated ' + when + ')' : '')
-        + ' \\u00b7 planned fee \\u00a3' + fmt(fee, 2) + '. Indicative only \\u2014 not an offer; Vaulted is not yet live.';
+        + ' \\u00b7 planned fee \\u00a3' + fmt(fee, 2) + '. Indicative only \\u2014 not an offer; Vaulted is not yet live.'
+        + ' *Bank comparison assumes an illustrative \\u00a3' + BANK_FEE_GBP + ' transfer fee and a ' + (BANK_FX_MARGIN * 100)
+        + '% exchange-rate margin; actual bank costs vary and may include intermediary charges.';
     };
     input.addEventListener('input', update);
     update();
@@ -428,6 +440,7 @@ def rate_widget(c) -> str:
             f'<div class="rw-row"><label for="rw-amount">You send (GBP)</label>'
             f'<input id="rw-amount" type="number" inputmode="decimal" min="1" max="10000" step="1" value="100" aria-label="Amount in pounds"></div>'
             f'<p class="rw-gets" aria-live="polite">Loading today&rsquo;s rate&hellip;</p>'
+            f'<p class="rw-compare" aria-live="polite"></p>'
             f'<p class="rw-meta">Loading&hellip;</p></div>')
 
 
