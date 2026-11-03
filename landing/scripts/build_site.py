@@ -51,9 +51,12 @@ def legacy_section(marker: str) -> str:
 
 EXTRA_CSS = """
 /* ---- Multi-page additions (build_site.py) ---- */
+/* Never fall back to the browser's default blue / visited-purple link colour. */
+:where(a), :where(a:visited) { color: var(--gold-light); }
 .brand { display: flex; align-items: center; gap: 10px; text-decoration: none; }
 .brand img { width: 40px; height: 40px; border-radius: 9px; }
-.brand-by { font-family: 'Cormorant Garamond', serif; font-weight: 600; font-size: 17px; color: var(--gold-cream); white-space: nowrap; }
+.brand, .brand:visited, .brand:hover { color: var(--gold-light); }
+.brand-by { font-family: 'Cormorant Garamond', serif; font-weight: 600; font-size: 17px; color: var(--gold-light) !important; white-space: nowrap; }
 @media (max-width: 420px) { .brand-by { font-size: 14px; } }
 .rate-widget { background: var(--bg-card); border: 1px solid rgba(201,163,91,0.35); border-radius: 20px; padding: 24px; margin: 0 0 40px; }
 .rate-widget .rw-row { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
@@ -214,6 +217,10 @@ async function handlePartnerEnquiry(e) {
 """
 
 # ---------------------------------------------------------------- templates
+import hashlib  # noqa: E402
+
+# Cache-buster so phones never keep an old stylesheet after a deploy.
+ASSET_VER = hashlib.sha1((CSS + EXTRA_CSS + JS_MENU).encode()).hexdigest()[:8]
 ORG_LD = {
     "@context": "https://schema.org", "@type": "Organization", "name": "Phoenix-Atlas Technologies Ltd",
     "url": SITE["url"], "logo": SITE["url"] + "/logo.png", "email": "hello@phoenix-atlas.com",
@@ -263,7 +270,7 @@ def head(title, desc, path, extra_ld=()):
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:wght@500;600;700&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="/assets/styles.css">
+  <link rel="stylesheet" href="/assets/styles.css?v={ASSET_VER}">
   {lds}
 </head>
 <body>
@@ -287,7 +294,7 @@ def header(path):
     <div class="container nav">
       <a class="brand" href="/" aria-label="Vaulted home">
         <img src="/logo.png" alt="" width="36" height="36">
-        <span class="brand-by">by Phoenix-Atlas Technologies Ltd</span>
+        <span class="brand-by" style="color:#E6C879">by Phoenix-Atlas Technologies Ltd</span>
       </a>
       <nav class="nav-links" aria-label="Main">
         {desk}
@@ -394,7 +401,7 @@ def render(path, title, desc, body, trail=None, extra_ld=()):
     html = (head(title, desc, path, lds) + header(path) + "  <main>" + body
             + legacy_section("waitlist") + "\n  </main>\n" + FOOTER.replace("GUIDE_LINKS", guide_links)
             + "\n  " + MODAL_HTML + "\n  " + MODAL_CSS
-            + '\n  <script src="/assets/site.js"></script>\n</body>\n</html>\n')
+            + f'\n  <script src="/assets/site.js?v={ASSET_VER}"></script>\n</body>\n</html>\n')
     out = ROOT / (("index" if path == "/" else path.strip("/")) + ".html")
     out.parent.mkdir(parents=True, exist_ok=True)
     out.write_text(html)

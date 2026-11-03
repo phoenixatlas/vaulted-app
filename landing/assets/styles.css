@@ -985,9 +985,12 @@
     }
   
 /* ---- Multi-page additions (build_site.py) ---- */
+/* Never fall back to the browser's default blue / visited-purple link colour. */
+:where(a), :where(a:visited) { color: var(--gold-light); }
 .brand { display: flex; align-items: center; gap: 10px; text-decoration: none; }
 .brand img { width: 40px; height: 40px; border-radius: 9px; }
-.brand-by { font-family: 'Cormorant Garamond', serif; font-weight: 600; font-size: 17px; color: var(--gold-cream); white-space: nowrap; }
+.brand, .brand:visited, .brand:hover { color: var(--gold-light); }
+.brand-by { font-family: 'Cormorant Garamond', serif; font-weight: 600; font-size: 17px; color: var(--gold-light) !important; white-space: nowrap; }
 @media (max-width: 420px) { .brand-by { font-size: 14px; } }
 .rate-widget { background: var(--bg-card); border: 1px solid rgba(201,163,91,0.35); border-radius: 20px; padding: 24px; margin: 0 0 40px; }
 .rate-widget .rw-row { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
