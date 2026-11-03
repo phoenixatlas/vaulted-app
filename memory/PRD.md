@@ -386,3 +386,9 @@ MONGO_URL, DB_NAME=vaulted, JWT_SECRET, STRIPE_API_KEY (live, rotated), STRIPE_W
 
 ## Partner enquiry form
 - phoenix-atlas.com/business#enquire form → POST /api/partners/enquiry (routers/partners.py): honeypot, 30s per-IP throttle, stored in partner_enquiries, emailed to waitlist alert recipients (fallback ADMIN_EMAILS)
+
+## Partner leads inbox, auto-reply, corridor pages (iteration 38)
+- GET /api/admin/partners (counts via count_documents), PATCH /api/admin/partners/{id} {status new|contacted|closed}; admin card PartnerLeadsCard
+- Enquiry: branded auto-reply + operator alert sent in background task; throttle keys on rightmost X-Forwarded-For hop
+- Landing: 11 /send-money-to-<country> pages (COUNTRIES in site_content.py) with FAQPage JSON-LD, linked from /corridors and /send-money-to-africa, in sitemap + llms.txt
+- Known: waitlist dropdown lacks Senegal/CI/India/PH/MX

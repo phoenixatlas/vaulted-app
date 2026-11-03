@@ -20,6 +20,19 @@
 - [Stablecoins vs banks](https://www.phoenix-atlas.com/learn/stablecoins-vs-bank-transfers): What stablecoins are, how a stablecoin remittance rail works compared with SWIFT correspondent banking, and the benefits and risks to understand.
 - [Self-custody safety](https://www.phoenix-atlas.com/learn/self-custody-wallet-safety): What self-custody means, how to protect your recovery phrase, when to use biometrics and multi-signature approvals, and how to spot common wallet scams.
 
+## Corridors
+- [Send money to Kenya](https://www.phoenix-atlas.com/send-money-to-kenya): Kenyan shillings (KES); Sandbox-tested with our payout partner (test money only)
+- [Send money to Nigeria](https://www.phoenix-atlas.com/send-money-to-nigeria): Nigerian naira (NGN); Sandbox-tested with our payout partner (test money only)
+- [Send money to Ghana](https://www.phoenix-atlas.com/send-money-to-ghana): Ghanaian cedis (GHS); Supported in our payout partner&rsquo;s sandbox
+- [Send money to Uganda](https://www.phoenix-atlas.com/send-money-to-uganda): Ugandan shillings (UGX); Supported in our payout partner&rsquo;s sandbox
+- [Send money to Tanzania](https://www.phoenix-atlas.com/send-money-to-tanzania): Tanzanian shillings (TZS); Supported in our payout partner&rsquo;s sandbox
+- [Send money to Zambia](https://www.phoenix-atlas.com/send-money-to-zambia): Zambian kwacha (ZMW); Planned corridor
+- [Send money to Senegal](https://www.phoenix-atlas.com/send-money-to-senegal): West African CFA francs (XOF); Planned corridor
+- [Send money to Côte d'Ivoire](https://www.phoenix-atlas.com/send-money-to-cote-divoire): West African CFA francs (XOF); Planned corridor
+- [Send money to India](https://www.phoenix-atlas.com/send-money-to-india): Indian rupees (INR); Planned corridor
+- [Send money to the Philippines](https://www.phoenix-atlas.com/send-money-to-philippines): Philippine pesos (PHP); Planned corridor
+- [Send money to Mexico](https://www.phoenix-atlas.com/send-money-to-mexico): Mexican pesos (MXN); Planned corridor
+
 ## Key facts
 - Company: Phoenix-Atlas Technologies Ltd, registered in England and Wales, Company No. 17432346.
 - Product: Vaulted — cross-border remittance + self-custody wallet + end-to-end encrypted chat and video calls.

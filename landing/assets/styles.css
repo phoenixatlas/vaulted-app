@@ -1035,6 +1035,8 @@ a.info-card:hover { border-color: rgba(201,163,91,0.5); }
 .faq-item[open] summary::after { content: '\2212'; }
 .faq-item p { margin-top: 10px; color: var(--text-secondary); }
 .related { margin-top: 56px; }
+footer { overflow-x: hidden; }
+.footer-grid > * { min-width: 0; overflow-wrap: anywhere; }
 .partner-form { display: grid; gap: 12px; margin-top: 20px; }
 .pf-row { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
 @media (max-width: 600px) { .pf-row { grid-template-columns: 1fr; } }

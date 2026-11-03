@@ -16,7 +16,7 @@ import re
 from datetime import date
 from pathlib import Path
 
-from site_content import FAQ, GUIDES, PAGES, SITE, NAV
+from site_content import COUNTRIES, FAQ, GUIDES, PAGES, SITE, NAV
 
 ROOT = Path(__file__).resolve().parent.parent
 LEGACY = (ROOT / "src" / "legacy.html").read_text()
@@ -101,6 +101,8 @@ a.info-card:hover { border-color: rgba(201,163,91,0.5); }
 .faq-item[open] summary::after { content: '\\2212'; }
 .faq-item p { margin-top: 10px; color: var(--text-secondary); }
 .related { margin-top: 56px; }
+footer { overflow-x: hidden; }
+.footer-grid > * { min-width: 0; overflow-wrap: anywhere; }
 .partner-form { display: grid; gap: 12px; margin-top: 20px; }
 .pf-row { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
 @media (max-width: 600px) { .pf-row { grid-template-columns: 1fr; } }
@@ -355,6 +357,59 @@ def render(path, title, desc, body, trail=None, extra_ld=()):
 
 
 # ---------------------------------------------------------------- build
+def _plain(s: str) -> str:
+    return re.sub("<[^>]+>", "", s).replace("&rsquo;", "'").replace("&mdash;", "—").replace("&amp;", "&")
+
+
+def _cap(name: str) -> str:
+    return name[0].upper() + name[1:]
+
+
+def country_cards():
+    return cards([{"title": f"Send money to {_cap(c['name'])}", "body": f"{c['currency']} &middot; {c['status']}",
+                   "href": f"/send-money-to-{c['slug']}", "cta": "See corridor"} for c in COUNTRIES])
+
+
+def build_country(c):
+    path = f"/send-money-to-{c['slug']}"
+    name, cap = c["name"], _cap(c["name"])
+    trail = [("Home", "/"), ("Corridors", "/corridors"), (f"Send money to {cap}", path)]
+    sandbox = c["status"].startswith("Sandbox")
+    partner = c["status"].startswith("Supported")
+    title = f"Send Money to {_plain(cap)} from the UK | Vaulted"
+    desc = (f"Vaulted's planned UK/EU to {_plain(name)} corridor: payout to "
+            f"{_plain(c['payout'][0]).split(',')[0].lower()}, recipient details, fees and launch status.")
+    li = lambda xs: "<ul>" + "".join(f"<li>{x}</li>" for x in xs) + "</ul>"  # noqa: E731
+    others = [x for x in COUNTRIES if x["slug"] != c["slug"]][:4]
+    body = page_hero(trail, f"UK/EU &rarr; {cap}", f"Send money to <span class=\"gold-text\">{cap}</span>.",
+                     f"Pay in pounds or euros; your recipient receives {c['currency']}. {c['why']}")
+    body += prose(
+        f"<h2>How it works</h2><ol><li>Enter the amount in GBP or EUR and fund by card, Apple Pay, Google Pay or bank transfer.</li>"
+        f"<li>Vaulted converts to a regulated USD stablecoin and moves it on the cheapest low-cost network.</li>"
+        f"<li>Our local payout partner pays your recipient in {c['currency']}.</li></ol>"
+        f"<h2>How your recipient gets paid</h2>{li(c['payout'])}"
+        f"<h2>What you&rsquo;ll need</h2>{li(c['needs'])}"
+        f"<h2>Planned fees</h2><p>Free tier: 3 cross-border sends a month at a 1.5% service fee (minimum &pound;0.50, maximum &pound;9.99). "
+        f"Vault Pro (&pound;9.99/month) halves the fee. See <a href=\"/pricing\">pricing</a>.</p>"
+        f"<h2>Corridor status</h2><div class=\"stage\"><b>{c['status']}.</b> "
+        + ("Rates and payouts have been tested end-to-end in our partner&rsquo;s sandbox. " if sandbox else
+           "Our payout partner supports this destination in test mode; end-to-end tests are next. " if partner else
+           "This destination is on our roadmap and will open after earlier corridors. ")
+        + "Live transfers open corridor by corridor once applicable FCA authorizations are in place &mdash; "
+          "<a href=\"/compliance\">see our launch stages</a>.</div>"
+        + '<p style="font-size:13px;color:var(--text-muted)">Vaulted is not yet FCA-authorized and is not open for customer transactions. Fees and timings are illustrative targets.</p>'
+        + '<div class="related"><h3>Other corridors</h3>' + cards(
+            [{"title": f"Send money to {_cap(o['name'])}", "body": o["currency"], "href": f"/send-money-to-{o['slug']}"} for o in others]
+            + [{"title": "All corridors", "body": "Every planned destination and the reverse corridor.", "href": "/corridors"}]) + "</div>")
+    faq = [(f"Can I send money from the UK to {_plain(name)} with Vaulted today?",
+            "Not yet. Vaulted is in waitlist and preview mode ahead of FCA authorization and is not open for customer transactions."),
+           (f"How will my recipient in {_plain(name)} receive the money?", _plain(" or ".join(c["payout"])) + "."),
+           ("Do I need crypto?", "No. You pay in pounds or euros and your recipient receives local currency; the stablecoin rail runs in the background.")]
+    ld = [{"@context": "https://schema.org", "@type": "FAQPage", "mainEntity": [
+        {"@type": "Question", "name": q, "acceptedAnswer": {"@type": "Answer", "text": a}} for q, a in faq]}]
+    return render(path, title, desc, body, trail, ld)
+
+
 def build():
     (ROOT / "assets").mkdir(exist_ok=True)
     (ROOT / "assets" / "styles.css").write_text(CSS + EXTRA_CSS)
@@ -374,6 +429,8 @@ def build():
                 body += prose(block[1], bg=len(block) > 2 and block[2])
             elif kind == "cards":
                 body += prose(block[1] + cards(block[2]), bg=len(block) > 3 and block[3])
+            elif kind == "countries":
+                body += prose("<h2>Send money by country</h2>" + country_cards(), bg=True)
             elif kind == "faq":
                 items = "".join(f'<details class="faq-item"><summary>{q}</summary><p>{a}</p></details>' for q, a in FAQ)
                 body += prose(items)
@@ -383,6 +440,10 @@ def build():
                 {"@type": "Question", "name": q, "acceptedAnswer": {"@type": "Answer", "text": re.sub("<[^>]+>", "", a)}}
                 for q, a in FAQ]})
         paths.append(render(p["path"], p["title"], p["desc"], body, trail if p["path"] != "/" else None, lds))
+
+    # Per-country corridor pages
+    for c in COUNTRIES:
+        paths.append(build_country(c))
 
     # Learn hub + guides
     learn_trail = [("Home", "/"), ("Learn", "/learn")]
@@ -417,6 +478,8 @@ def build():
             "> " + SITE["summary"], ""]
     llms += ["## Pages"] + [f"- [{p['crumb']}]({SITE['url']}{p['path'] if p['path'] != '/' else ''}): {p['desc']}" for p in PAGES]
     llms += ["", "## Guides"] + [f"- [{g['short']}]({SITE['url']}/learn/{g['slug']}): {g['desc']}" for g in GUIDES]
+    llms += ["", "## Corridors"] + [f"- [Send money to {_plain(c['name'])}]({SITE['url']}/send-money-to-{c['slug']}): "
+                                    f"{_plain(c['currency'])}; {c['status']}" for c in COUNTRIES]
     llms += ["", "## Key facts"] + [f"- {f}" for f in SITE["facts"]]
     (ROOT / "llms.txt").write_text("\n".join(llms) + "\n")
     print(f"built {len(paths)} pages")

@@ -1,0 +1,60 @@
+{
+  "summary": "Partner Leads feature and corridor landing pages tested. Backend: 12/12 pytest pass. POST /api/partners/enquiry returns {ok,id} and stores the lead with status 'new' (email lowercased, unknown partner_type becomes 'other'). A bad email or empty company gives 422. The honeypot 'website' returns ok without an id and nothing is stored. A second call from the same X-Forwarded-For within 30s gives 429. GET /api/admin/partners gives 401 without a token and 403 for smoketest; for admin it returns leads newest first, with counts {new,contacted,closed}, total, and no _id. PATCH new->contacted->closed->new persists. An invalid status gives 422 and an unknown id gives 404. Resend: emails to example.com are rejected by Resend with 422 (expected, logged as a warning, request still 200); the resend.dev auto-reply was sent with no error. Frontend (390x844, admin token injected): the Partner leads card renders with chips New/Contacted/Closed/All and their counts. Marking a lead Contacted moves it out of the New filter and the chip counts update (New 2->1, Contacted 0->1). Closed moves it into the Closed filter, and the status survives a page reload. Static site: build_site.py is deterministic (a rebuild gives no diff, 26 pages). All 11 send-money-to-<slug>.html pages exist. Each has a unique title and meta description, the correct canonical https://www.phoenix-atlas.com/send-money-to-<slug>, valid JSON-LD (Organization, FAQPage, BreadcrumbList) and exactly one h1. corridors.html and send-money-to-africa.html link to all of them, sitemap.xml includes all 11, and there are 0 broken internal links across all HTML. Rendered over http.server 8090 (now killed) with no JS errors and no 4xx assets. All test partner_enquiries were deleted.",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {"endpoint": "POST /api/partners/enquiry", "issue": "The throttle key is the first X-Forwarded-For entry, which the client controls (the ingress keeps it). A bot can bypass the 30s limit by rotating the header. Confirmed: different XFF values were never throttled. _last_by_ip is also an in-memory dict that is never pruned (grows without bound, per-process only)."},
+      {"endpoint": "POST /api/partners/enquiry", "issue": "The admin-alert and auto-reply Resend calls are awaited one after another inside the request (12s timeout each). The response can take (N_recipients+1)*12s when Resend is slow. Move them to FastAPI BackgroundTasks or asyncio.create_task."},
+      {"endpoint": "GET /api/admin/partners", "issue": "The list is capped at to_list(200), and counts are computed from those capped rows. Once there are more than 200 leads, the counts will be wrong. Use count_documents/aggregate for counts, or paginate."}
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [
+      {"screen": "Admin > Partner leads card", "issues": [
+        "Filter chips partner-filter-* are 36px tall and the status buttons partner-status-* are 40px tall, both below the 44px touch-target minimum.",
+        "The mailto Pressable (name · email) has no testID or accessibilityRole.",
+        "An error from a failed PATCH (setErr) stays on screen forever and has no dismiss or retry. There is also no pull-to-refresh or reload button for new leads.",
+        "The floating chat FAB overlaps the right edge of the card at 390px (affects the whole admin screen)."
+      ]},
+      {"screen": "Static site (all pages, mobile 390px)", "issues": [
+        "There is a horizontal overflow of 6px (scrollWidth 396 > 390), caused by the footer .footer-col block. It affects every page, not just the new ones.",
+        "Titles are 68-87 characters (Google cuts them off at about 60). 6 of the 11 meta descriptions are over 160 characters (nigeria 168, ghana 172, senegal 185, cote-divoire 182, philippines 167, mexico 163).",
+        "The titles say '... in Seconds', but the pages say the corridor is 'Planned' and that Vaulted is not FCA-authorized. This is a possible financial-promotion wording risk; consider removing 'in Seconds' for planned corridors.",
+        "The Philippines breadcrumb and title use 'The Philippines' (capital T) while the h1 uses 'the Philippines'.",
+        "The waitlist corridor <select> on the corridor pages only offers KE/GH/NG/UG/TZ/ZM/ZA/Other. Senegal, Côte d'Ivoire, India, Philippines and Mexico visitors cannot pick their own country, and the select is not pre-filled for the page's country."
+      ]}
+    ],
+    "react_native_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_iteration38_partner_leads.py",
+    "/app/backend/tests/iter38_landing_audit.py",
+    "/app/backend/tests/iter38_helper.py",
+    "/app/test_reports/pytest/iter38.xml"
+  ],
+  "action_items": [
+    "(Optional, hardening) Throttle on the real client IP from a trusted proxy (the last hop instead of the client-supplied first XFF entry), or add a per-email throttle. Prune _last_by_ip.",
+    "Send the partner alert and auto-reply emails in the background (BackgroundTasks) so the public form responds right away.",
+    "Compute /admin/partners counts with count_documents rather than from the 200-row capped list.",
+    "Raise the Partner leads chip and status button heights to 44px or more. Add a testID to the mailto row.",
+    "Landing: shorten the titles and meta descriptions, reconsider 'in Seconds' for planned corridors, add the new countries to (or pre-select them in) the waitlist corridor select, and fix the 6px footer overflow on mobile."
+  ],
+  "critical_code_review_comments": [
+    "partners.py: the honeypot check runs before the throttle, so bot hits do not consume the throttle. This is fine. Pydantic validation (422) runs before the handler, so invalid bodies do not consume the throttle either.",
+    "_auto_reply_html uses HTML-escaped values. Good: injection is prevented. The logo is hard-coded to the vaulted-app.onrender.com brand URL through brand_logo_img, which matches the existing pattern.",
+    "PartnerLeadsCard.tsx follows the guidelines: it uses RN components and has loading and error states."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_iteration38_partner_leads.py (new)",
+    "/app/backend/tests/iter38_landing_audit.py (new)",
+    "/app/backend/tests/iter38_helper.py (new)"
+  ],
+  "success_rate": {"backend": "100% (12/12)", "frontend": "100% (admin leads flow + static site audit)"},
+  "seed_data_creation": "Temporary partner_enquiries with @example.com and @resend.dev emails were created and then all deleted (pytest teardown and iter38_helper.py clean).",
+  "retest_needed": false,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "The admin password is unknown. Mint an admin JWT with deps.make_token(<user id of umar.sani@phoenix-atlas.com>), e.g. python /app/backend/tests/iter38_helper.py seed (prints lead_id and token; clean removes the test leads). On web, inject the token with page.context.add_init_script setting localStorage 'vaulted_token' to a JSON string BEFORE navigation. Setting localStorage after the first load gave 'Session expired'. Dismiss [data-testid=preview-ack-continue]. Static audit: python3 /app/backend/tests/iter38_landing_audit.py. Resend rejects example.com recipients with 422; use delivered@resend.dev.",
+  "rca_of_issue": ""
+}

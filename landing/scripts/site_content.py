@@ -70,6 +70,7 @@ PAGES = [
             ("legacy", "features"),
             ("legacy", "Three steps to sovereignty"),
             ("legacy", "who-its-for"),
+            ("countries",),
             ("prose", "<h2>What you&rsquo;ll need to send</h2><ul>"
                       "<li><strong>Kenya:</strong> the recipient&rsquo;s M-Pesa phone number.</li>"
                       "<li><strong>Nigeria:</strong> the 10-digit account number (NUBAN) and bank &mdash; Vaulted checks the account holder&rsquo;s name before you confirm.</li>"
@@ -145,6 +146,7 @@ PAGES = [
             ("hero", "Payment corridors", "Eleven planned countries. <span class=\"gold-text\">Both directions</span>.",
              "Where Vaulted plans to send money, how recipients get paid, and where each corridor is in its rollout."),
             ("legacy", "corridors"),
+            ("countries",),
             ("prose", "<h2>How corridors launch</h2><div class=\"stage\"><b>Sandbox</b> &mdash; rates and payouts tested with our off-ramp partners using test money.</div>"
                       "<div class=\"stage\"><b>Licensing &amp; partner go-live</b> &mdash; local partner approval and the applicable UK authorizations.</div>"
                       "<div class=\"stage\"><b>Live</b> &mdash; opened to waitlist members corridor by corridor.</div>"
@@ -307,4 +309,47 @@ GUIDES = [
                 "<p>See how Vaulted applies these principles on the <a href=\"/security\">security page</a>.</p>",
         "related": [_REL["wallet"], _REL["sec"], _REL["faq"]],
     },
+]
+
+# ---- Per-country corridor landing pages (/send-money-to-<slug>) ----------
+SANDBOX = "Sandbox-tested with our payout partner (test money only)"
+PARTNER = "Supported in our payout partner&rsquo;s sandbox"
+PLANNED = "Planned corridor"
+COUNTRIES = [
+    {"slug": "kenya", "name": "Kenya", "currency": "Kenyan shillings (KES)", "status": SANDBOX,
+     "payout": ["M-Pesa mobile money, straight to the recipient&rsquo;s phone", "Kenyan bank accounts"],
+     "needs": ["The recipient&rsquo;s M-Pesa-registered phone number (2547XXXXXXXX)", "Their full name as registered with M-Pesa"],
+     "why": "Family support, school fees and emergencies &mdash; M-Pesa is how most Kenyans receive money."},
+    {"slug": "nigeria", "name": "Nigeria", "currency": "Nigerian naira (NGN)", "status": SANDBOX,
+     "payout": ["Any Nigerian bank account (NUBAN)"],
+     "needs": ["The 10-digit account number (NUBAN) and bank", "Vaulted checks the account holder&rsquo;s name before you confirm"],
+     "why": "Supporting family, paying bills and covering school fees in naira."},
+    {"slug": "ghana", "name": "Ghana", "currency": "Ghanaian cedis (GHS)", "status": PARTNER,
+     "payout": ["MTN MoMo and other mobile-money wallets"],
+     "needs": ["The recipient&rsquo;s mobile-money number", "Their full name as registered"],
+     "why": "Monthly support and urgent payments to mobile-money wallets."},
+    {"slug": "uganda", "name": "Uganda", "currency": "Ugandan shillings (UGX)", "status": PARTNER,
+     "payout": ["MTN Mobile Money"], "needs": ["The recipient&rsquo;s mobile-money number", "Their full name as registered"],
+     "why": "Fast mobile-money transfers to family and businesses."},
+    {"slug": "tanzania", "name": "Tanzania", "currency": "Tanzanian shillings (TZS)", "status": PARTNER,
+     "payout": ["Mobile-money wallets"], "needs": ["The recipient&rsquo;s mobile-money number", "Their full name as registered"],
+     "why": "Support for family and small businesses via mobile money."},
+    {"slug": "zambia", "name": "Zambia", "currency": "Zambian kwacha (ZMW)", "status": PLANNED,
+     "payout": ["Mobile-money wallets"], "needs": ["The recipient&rsquo;s mobile-money number", "Their full name as registered"],
+     "why": "Family support delivered to mobile money."},
+    {"slug": "senegal", "name": "Senegal", "currency": "West African CFA francs (XOF)", "status": PLANNED,
+     "payout": ["Mobile-money wallets such as Orange Money and Wave"], "needs": ["The recipient&rsquo;s mobile-money number", "Their full name"],
+     "why": "Sending to family across the CFA franc zone."},
+    {"slug": "cote-divoire", "name": "Côte d&rsquo;Ivoire", "currency": "West African CFA francs (XOF)", "status": PLANNED,
+     "payout": ["Mobile-money wallets such as Orange Money, MTN and Wave"], "needs": ["The recipient&rsquo;s mobile-money number", "Their full name"],
+     "why": "Fast support for family in Abidjan and beyond."},
+    {"slug": "india", "name": "India", "currency": "Indian rupees (INR)", "status": PLANNED,
+     "payout": ["Indian bank accounts", "UPI"], "needs": ["Bank account number and IFSC, or a UPI ID", "The recipient&rsquo;s full name"],
+     "why": "Family support and bills paid in rupees."},
+    {"slug": "philippines", "name": "the Philippines", "currency": "Philippine pesos (PHP)", "status": PLANNED,
+     "payout": ["Philippine bank accounts", "E-wallets such as GCash"], "needs": ["Bank details or e-wallet mobile number", "The recipient&rsquo;s full name"],
+     "why": "Supporting family at home in pesos."},
+    {"slug": "mexico", "name": "Mexico", "currency": "Mexican pesos (MXN)", "status": PLANNED,
+     "payout": ["Mexican bank accounts (CLABE)"], "needs": ["The recipient&rsquo;s 18-digit CLABE", "Their full name"],
+     "why": "Family support paid straight to Mexican bank accounts."},
 ]

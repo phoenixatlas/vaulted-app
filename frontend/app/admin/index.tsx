@@ -22,6 +22,7 @@ import {
   KotaniHealthCard,
   PayoutProviderCard,
   FeedbackCard,
+  PartnerLeadsCard,
   InviteCodeCard,
   WaitlistCard,
   DailySignupsCard,
@@ -283,6 +284,8 @@ function AdminHomeInner() {
           <InviteCodeCard />
 
           <FeedbackCard />
+
+          <PartnerLeadsCard />
 
           <KotaniHealthCard
             health={health}
