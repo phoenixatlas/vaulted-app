@@ -1033,6 +1033,9 @@
 .prose p, .prose li { color: var(--text-secondary); font-size: 16px; margin-bottom: 14px; }
 .prose ul, .prose ol { padding-left: 22px; margin-bottom: 18px; }
 .prose a { color: var(--gold-light); }
+/* Buttons inside text sections keep the standard dark label (beats .prose a). */
+.prose a.btn-primary, .prose a.btn-primary:visited, .prose a.btn-primary:hover,
+.partner-form .btn-primary { color: #0F0B08; }
 .prose strong { color: var(--text-primary); }
 .card-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 18px; margin-top: 32px; }
 .info-card { background: var(--bg-card); border: 1px solid var(--border); border-radius: 18px; padding: 24px;
