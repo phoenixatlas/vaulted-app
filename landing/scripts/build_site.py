@@ -53,11 +53,12 @@ EXTRA_CSS = """
 /* ---- Multi-page additions (build_site.py) ---- */
 /* Never fall back to the browser's default blue / visited-purple link colour. */
 :where(a), :where(a:visited) { color: var(--gold-light); }
-.brand { display: flex; align-items: center; gap: 10px; text-decoration: none; }
-.brand img { width: 40px; height: 40px; border-radius: 9px; }
+.brand { display: flex; align-items: center; gap: 12px; text-decoration: none; margin-right: 28px; flex-shrink: 0; }
+.brand img { width: 60px; height: 60px; border-radius: 12px; }
+@media (max-width: 600px) { .brand img { width: 48px; height: 48px; border-radius: 10px; } }
 .brand, .brand:visited, .brand:hover { color: var(--gold-light); }
 .brand-by { font-family: 'Cormorant Garamond', serif; font-weight: 600; font-size: 17px; color: var(--gold-light) !important; white-space: nowrap; }
-@media (max-width: 420px) { .brand-by { font-size: 14px; } }
+@media (max-width: 420px) { .brand-by { font-size: 13px; white-space: normal; max-width: 170px; line-height: 1.2; } }
 .rate-widget { background: var(--bg-card); border: 1px solid rgba(201,163,91,0.35); border-radius: 20px; padding: 24px; margin: 0 0 40px; }
 .rate-widget .rw-row { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
 .rate-widget label { font-size: 13px; color: var(--text-secondary); width: 100%; }
@@ -75,7 +76,7 @@ EXTRA_CSS = """
 .menu-toggle { display: none; background: none; border: 1px solid var(--border); color: var(--gold-cream);
   border-radius: 10px; width: 44px; height: 44px; font-size: 20px; cursor: pointer; }
 .mobile-menu { display: none; }
-@media (max-width: 1180px) {
+@media (max-width: 1360px) {
   .nav-links a:not(.btn) { display: none; }
   .menu-toggle { display: inline-flex; align-items: center; justify-content: center; }
   body.menu-open .mobile-menu { display: block; position: fixed; left: 0; right: 0; bottom: 0;
@@ -308,8 +309,8 @@ def header(path):
   <header>
     <div class="container nav">
       <a class="brand" href="/" aria-label="Vaulted home">
-        <img src="/logo.png" alt="" width="36" height="36">
-        <span class="brand-by" style="color:#E6C879">by Phoenix-Atlas Technologies Ltd</span>
+        <img src="/logo.png" alt="Vaulted logo" width="60" height="60">
+        <span class="brand-by" style="color:#E6C879">A product of Phoenix-Atlas Technologies Ltd</span>
       </a>
       <nav class="nav-links" aria-label="Main">
         {desk}

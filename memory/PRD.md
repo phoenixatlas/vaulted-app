@@ -400,3 +400,4 @@ MONGO_URL, DB_NAME=vaulted, JWT_SECRET, STRIPE_API_KEY (live, rotated), STRIPE_W
 - In-app BankComparisonLine under remit quote (hidden when amount ≤ £25 bank fee; net of Vaulted service fee); partner lead reminder (remind_stale_leads in delivery_tick, once per lead after 2 working days)
 - Receipts: remit.bank_saving stored at send (savings.py, also Stripe path); shown on app receipt (green row + footnote) and public share page /api/r/{token} when delivered
 - Landing: buttons inside text sections (.prose a.btn-primary, partner form) forced to dark #0F0B08 label
+- Landing header: logo 60px (48px mobile), text 'A product of Phoenix-Atlas Technologies Ltd', nav collapses to menu ≤1360px
