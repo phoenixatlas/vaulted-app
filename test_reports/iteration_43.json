@@ -1,0 +1,41 @@
+{
+  "summary": "Tested the Saved Institutions feature for Bill Payments on the backend and the frontend (375x667). Backend: 21/21 pytest pass (5 new tests in iter43 + 16 iter40 regression). POST /api/bills with save_institution:true upserts one row, deduped by lowercased and trimmed institution name plus account number. The stored reference is blank. A different account creates a new row, and save_institution:false saves nothing. GET /api/bills/saved returns only the caller's rows, with no _id or user_id, and is not captured by /bills/{bill_id}. DELETE works for the owner and returns 404 for another user's row or an unknown id. Frontend: the bill-save-institution switch is ON by default on /bills/new?category=... and is hidden on saved prefill. Submitting with it ON created a new 'Pay again' row. Tapping bills-saved-{id} opened /bills/new?saved={id} with bill-saved-banner. Category, subtype, purpose fields, payer, payout and every payee field were prefilled, including routing for USD. Reference, amount and invoice started empty. Uploading the invoice (web file chooser), entering reference and amount, getting a quote, ticking the declaration and submitting led to /bills/{id} with status Under review. The trash button bills-saved-remove-{id} removed the row, and it stayed gone after reload. Admin BillsReviewCard regression passed: it lists the new bills with the payee reference, and View invoice, Approve and Reject show.",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {"endpoint": "POST /api/bills (save upsert)", "issue": "No unique index on bill_saved_institutions(user_id, institution_key, account_number). Two concurrent submits could insert duplicate rows."},
+      {"endpoint": "GET /api/bills/saved", "issue": "The response includes the internal institution_key field. Harmless, but it could be excluded in SAVED_FIELDS."}
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [
+      {"flow": "Pay again", "issue": "When prefilled from a saved row, save_institution is forced false. Edits to prefilled payee or bank details are never written back, and updated_at is never bumped, so the most recently used institution does not move to the top.", "affected_testIDs": ["bill-submit", "bill-saved-banner"]},
+      {"flow": "Pay again with a stale id", "issue": "If /bills/new?saved={id} points to a deleted or unknown row, the form silently shows blank, with no message or banner.", "affected_testIDs": ["bill-saved-banner"]}
+    ],
+    "design_issues": [
+      {"screen": "/bills/new and /bills/[id]", "issues": ["The global floating chat button on the right edge overlaps content: the end of the declaration text on /bills/new, and the quote Total value on /bills/[id] (the 'NGN' suffix is clipped). The issue existed before this feature."]},
+      {"screen": "/bills (web)", "issues": ["On web the trash button deletes the saved institution immediately, with no confirmation or undo. Native shows an Alert."]}
+    ],
+    "react_native_issues": []
+  },
+  "test_report_links": ["/app/backend/tests/test_iteration43_saved_institutions.py", "/app/backend/tests/test_iteration40_bill_payments.py", "/app/test_reports/pytest/pytest_iter43.xml"],
+  "action_items": [
+    "Optional: create a unique index on bill_saved_institutions {user_id, institution_key, account_number}.",
+    "Optional: on a pay-again submit, bump the saved row's updated_at (and optionally offer 'update saved details' if the payee fields changed).",
+    "Optional: show a 'Saved institution not found' message when the saved param doesn't match any row.",
+    "Optional: add a confirmation before deleting a saved institution on web.",
+    "Optional: give the right-edge chat FAB some clearance on the bill screens."
+  ],
+  "critical_code_review_comments": [
+    "routers/bills.py: /bills/saved is declared before /bills/{bill_id}, so route order is correct (verified).",
+    "routers/bills.py: the saved payee reference is set to '' while the Payee model requires min_length=1 for new bills. The UI correctly makes the user enter a new reference; an empty reference gets 422 (verified).",
+    "new.tsx: the prefill effect runs independently of the config load. This works because chips and fields derive from state, but there is no loading indicator while /bills/saved is fetched."
+  ],
+  "updated_files": ["/app/backend/tests/test_iteration40_bill_payments.py (added the now-required quote_id to the test bodies; the old test was failing with 422)", "/app/backend/tests/test_iteration43_saved_institutions.py (new)"],
+  "success_rate": {"backend": "100%", "frontend": "100%"},
+  "seed_data_creation": "Created TEST_ bills for smoketest@vaulted.app. These have no delete API, so they remain: several are under_review in the admin queue, and the iter40 suite created one approved and one rejected. Every saved institution created during testing was deleted by id; the smoketest saved list is now empty.",
+  "retest_needed": false,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "Login: click preview-ack-continue, then the login-* fields. The web invoice upload works through page.expect_file_chooser when clicking bill-upload-invoice, using a small %PDF file. Admin UI: mint a token with deps.make_token(admin_id) and run localStorage.setItem('vaulted_token', JSON.stringify(token)), then go to /admin; the card is admin-bills-card. Env var for the URL is EXPO_PUBLIC_BACKEND_URL."
+}

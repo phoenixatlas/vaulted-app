@@ -415,3 +415,4 @@ MONGO_URL, DB_NAME=vaulted, JWT_SECRET, STRIPE_API_KEY (live, rotated), STRIPE_W
 - Polygon Amoy RPC switched to publicnode; send endpoints return 503 (not 502) on upstream failure.
 - Multi-sig ETH send checks balance before emailing co-signer.
 - iPad: supportsTablet + requireFullScreen; app content centred in 720px column (TabletFrame) incl. bottom sheets.
+- 2026-11: Saved Institutions for bill payments — `bill_saved_institutions` (upsert by user+institution+account), GET/DELETE /api/bills/saved, "Pay again" list on /bills, prefill via /bills/new?saved=id. Invoice, reference and amount required each time.
