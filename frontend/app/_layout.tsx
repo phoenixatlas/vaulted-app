@@ -14,6 +14,7 @@ import { CurrencyProvider } from "@/src/lib/currency";
 import { BiometricGate } from "@/src/components/BiometricGate";
 import PreviewAcknowledgementGate from "@/src/components/PreviewAcknowledgementGate";
 import FeedbackButton from "@/src/components/FeedbackButton";
+import TabletFrame from "@/src/components/TabletFrame";
 import { captureRefCodeFromUrl } from "@/src/lib/refCode";
 
 export { default as ErrorBoundary } from "@/src/components/AppErrorBoundary";
@@ -100,8 +101,10 @@ export default function RootLayout() {
           <PreviewAcknowledgementGate>
             <AuthProvider>
               <BiometricGate>
-                <Stack screenOptions={{ headerShown: false, contentStyle: { backgroundColor: "#FBF8F2" } }} />
-                <FeedbackButton />
+                <TabletFrame>
+                  <Stack screenOptions={{ headerShown: false, contentStyle: { backgroundColor: "#FBF8F2" } }} />
+                  <FeedbackButton />
+                </TabletFrame>
               </BiometricGate>
             </AuthProvider>
           </PreviewAcknowledgementGate>

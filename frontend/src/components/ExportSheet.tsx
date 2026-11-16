@@ -190,6 +190,7 @@ const s = StyleSheet.create({
   backdrop: { ...StyleSheet.absoluteFillObject, backgroundColor: "rgba(15,11,8,0.55)" },
   sheet: {
     position: "absolute", left: 0, right: 0, bottom: 0,
+    width: "100%", maxWidth: 720, alignSelf: "center", marginHorizontal: "auto",
     backgroundColor: colors.surface,
     borderTopLeftRadius: 24, borderTopRightRadius: 24,
     padding: spacing.xl, paddingBottom: Platform.OS === "ios" ? spacing.xxl + 8 : spacing.xl,

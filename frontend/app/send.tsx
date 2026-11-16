@@ -58,7 +58,6 @@ export default function SendCrypto() {
   const isXlm = sel === "XLM";
   const isXrp = sel === "XRP";
   const isOnChain = isEth || isUsdc || isBtc || isSol || isXlm || isXrp;
-  const sendDisabled = !isOnChain;
   const isPro = !!user?.is_pro;
   const baseServiceFee = 0.10;
   const serviceFee = isPro ? baseServiceFee * 0.5 : baseServiceFee;
@@ -72,10 +71,6 @@ export default function SendCrypto() {
 
   const submit = async () => {
     setErr(null);
-    if (sendDisabled) {
-      setErr(`${sel} sends are coming soon. Receive works now.`);
-      return;
-    }
     const amt = parseFloat(amount);
     if (!amt || amt <= 0) { setErr("Enter a valid amount"); return; }
     if (!addr.trim()) { setErr("Enter recipient address"); return; }
@@ -148,7 +143,7 @@ export default function SendCrypto() {
         </View>
         <ScrollView contentContainerStyle={{ padding: spacing.xl }} keyboardShouldPersistTaps="handled">
           <PreviewBanner
-            message="Preview mode - broadcasts run on Ethereum Sepolia testnet. On-chain sends are real but use testnet tokens with no monetary value."
+            message={`Preview mode - this send runs on the ${isUsdc ? (usdcChain === "sepolia" ? "Ethereum Sepolia testnet" : `${selectedEvmChain?.short ?? "L2"} testnet`) : isEth ? "Ethereum Sepolia testnet" : isBtc ? "Bitcoin Testnet3" : isSol ? "Solana Devnet" : isXlm ? "Stellar Testnet" : isXrp ? "XRPL Testnet" : "test network"}. Testnet tokens only - no real value.`}
           />
           <Text style={s.label}>Asset</Text>
           <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: spacing.sm, paddingVertical: 4 }} style={{ marginBottom: spacing.lg }}>
@@ -239,27 +234,18 @@ export default function SendCrypto() {
             </View>
           </View>
 
-          {sendDisabled && (
-            <View style={s.warnCard} testID="send-disabled-warn">
-              <Ionicons name="time-outline" size={16} color={colors.brandDeep} />
-              <Text style={s.warnText}>{sel} send is coming soon. Receive works now — tap an asset on the wallet to grab your address.</Text>
-            </View>
-          )}
-
           {err && <Text testID="send-error" style={s.error}>{err}</Text>}
 
           <Pressable
             testID="send-confirm"
-            disabled={submitting || sendDisabled}
+            disabled={submitting}
             onPress={submit}
-            style={({ pressed }) => [s.cta, (pressed || sendDisabled) && { opacity: 0.55 }]}
+            style={({ pressed }) => [s.cta, pressed && { opacity: 0.55 }]}
           >
             {submitting
               ? <ActivityIndicator color="#0F0B08" />
               : <Text style={s.ctaText}>
-                  {sendDisabled
-                    ? `${sel} send coming soon`
-                    : `${t("confirm")} ${isEth ? "on Sepolia" : isUsdc ? `USDC on ${selectedEvmChain?.short ?? "Sepolia"}` : isBtc ? "on BTC Testnet" : isSol ? "on SOL Devnet" : isXlm ? "on Stellar Testnet" : isXrp ? "on XRPL Testnet" : ""}`.trim()}
+                  {`${t("confirm")} ${isEth ? "on Sepolia" : isUsdc ? `USDC on ${selectedEvmChain?.short ?? "Sepolia"}` : isBtc ? "on BTC Testnet" : isSol ? "on SOL Devnet" : isXlm ? "on Stellar Testnet" : isXrp ? "on XRPL Testnet" : ""}`.trim()}
                 </Text>}
           </Pressable>
 
@@ -318,7 +304,7 @@ const s = StyleSheet.create({
   chipActive: { borderColor: colors.brand, backgroundColor: colors.brandTertiary },
   chipDot: { width: 10, height: 10, borderRadius: 5 },
   chipText: { color: colors.onSurface, fontWeight: "600", fontSize: 13 },
-  feeCard: { marginTop: spacing.lg, padding: spacing.md, backgroundColor: colors.surfaceSecondary, borderRadius: radius.md, gap: 6 },
+  feeCard: { marginTop: spacing.lg, padding: spacing.md, paddingRight: 52, backgroundColor: colors.surfaceSecondary, borderRadius: radius.md, gap: 6 },
   feeRow: { flexDirection: "row", justifyContent: "space-between", alignItems: "center" },
   feeLabel: { fontSize: 12, color: colors.onSurfaceSecondary },
   feeValue: { fontSize: 12, color: colors.onSurface, fontWeight: "600" },
@@ -329,8 +315,6 @@ const s = StyleSheet.create({
   ctaText: { color: "#0F0B08", fontSize: 16, fontWeight: "600" },
   faucet: { flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 6, marginTop: spacing.lg, padding: spacing.sm },
   faucetText: { color: colors.brand, fontSize: 13, fontWeight: "500" },
-  warnCard: { flexDirection: "row", gap: 8, alignItems: "flex-start", padding: spacing.md, backgroundColor: colors.brandTertiary, borderRadius: radius.md, borderWidth: 1, borderColor: "rgba(201,163,91,0.40)", marginTop: spacing.lg },
-  warnText: { color: colors.brandDeep, fontSize: 12, lineHeight: 16, fontWeight: "500", flex: 1 },
   error: { color: colors.error, marginTop: spacing.md, fontSize: 14 },
   l2Chip: { minWidth: 140, paddingHorizontal: spacing.md, paddingVertical: 10, borderRadius: radius.md, borderWidth: 1, borderColor: colors.border, backgroundColor: colors.surface },
   l2ChipActive: { borderColor: colors.brand, backgroundColor: colors.brandTertiary },

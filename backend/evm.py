@@ -55,7 +55,7 @@ _CHAIN_REGISTRY: dict[str, dict] = {
         "chain_id_mainnet": 137,
         "chain_id_testnet": 80002,
         "rpc_mainnet": "https://polygon-rpc.com",
-        "rpc_testnet": "https://rpc-amoy.polygon.technology",
+        "rpc_testnet": "https://polygon-amoy-bor-rpc.publicnode.com",
         "usdc_mainnet": "0x3c499c542cEF5E3811e1192ce70d8cC03d5c3359",
         "usdc_testnet": "0x41E94Eb019C0762f9Bfcf9Fb1E58725BfB0e7582",
         "explorer_mainnet": "https://polygonscan.com",

@@ -87,7 +87,7 @@ async def evm_usdc_send(body: SendEvmUsdcIn, user=Depends(get_current_user)):
     try:
         bal_micro = await fetch_usdc_balance_on_chain(chain, addr)
     except Exception as e:
-        raise HTTPException(status_code=502, detail=f"USDC balance error on {chain}: {e}") from e
+        raise HTTPException(status_code=503, detail=f"USDC balance error on {chain}: {e}") from e
     need_micro = int(round(body.amount_usdc * 1_000_000))
     if bal_micro < need_micro:
         raise HTTPException(

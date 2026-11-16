@@ -73,7 +73,7 @@ export default function DeleteAccountSheet({ visible, onClose, onDeleted }: Prop
 
 const st = StyleSheet.create({
   backdrop: { flex: 1, backgroundColor: "rgba(0,0,0,0.45)" },
-  sheet: { backgroundColor: colors.surface, borderTopLeftRadius: radius.lg, borderTopRightRadius: radius.lg, padding: spacing.xl, paddingBottom: spacing.xl + 16 },
+  sheet: { width: "100%", maxWidth: 720, alignSelf: "center", backgroundColor: colors.surface, borderTopLeftRadius: radius.lg, borderTopRightRadius: radius.lg, padding: spacing.xl, paddingBottom: spacing.xl + 16 },
   iconWrap: { width: 48, height: 48, borderRadius: 24, backgroundColor: colors.surfaceSecondary, alignItems: "center", justifyContent: "center", alignSelf: "center", marginBottom: spacing.md },
   title: { fontSize: 18, fontWeight: "700", color: colors.onSurface, textAlign: "center" },
   body: { fontSize: 13, lineHeight: 19, color: colors.onSurfaceSecondary, marginTop: spacing.sm, marginBottom: spacing.lg, textAlign: "center" },

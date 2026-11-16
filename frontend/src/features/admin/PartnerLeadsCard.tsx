@@ -63,7 +63,7 @@ export function PartnerLeadsCard() {
           <Pressable key={f} testID={`partner-filter-${f}`} onPress={() => setFilter(f)}
             style={{ minHeight: 44, paddingHorizontal: 14, borderRadius: 22, justifyContent: "center",
               backgroundColor: filter === f ? colors.brand : colors.brandTertiary }}>
-            <Text style={{ fontSize: 12, fontWeight: "700", color: filter === f ? colors.onBrand : colors.brandDeep }}>
+            <Text style={{ fontSize: 12, fontWeight: "700", color: filter === f ? "#0F0B08" : colors.brandDeep }}>
               {f === "all" ? "All" : LABEL[f]} · {count(f)}
             </Text>
           </Pressable>

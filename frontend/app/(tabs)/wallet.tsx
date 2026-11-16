@@ -95,6 +95,17 @@ export default function Wallet() {
         </View>
 
         <Pressable
+          testID="bills-hero-cta"
+          onPress={() => router.push("/bills")}
+          style={({ pressed }) => [s.remitCta, pressed && { opacity: 0.9 }]}
+        >
+          <View style={s.remitCtaLeft}>
+            <Text style={s.remitCtaTitle}>International Bill Payments</Text>
+            <Text style={s.remitCtaSub}>Pay school fees, hospital bills and business invoices abroad from Nigeria, Kenya, Ghana or South Africa.</Text>
+          </View>
+        </Pressable>
+
+        <Pressable
           testID="remit-hero-cta"
           onPress={() => router.push("/remit")}
           style={({ pressed }) => [s.remitCta, pressed && { opacity: 0.9 }]}

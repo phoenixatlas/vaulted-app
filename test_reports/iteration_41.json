@@ -1,0 +1,51 @@
+{
+  "summary": "Tested the all-coin send flows (backend and UI) and the iPad TabletFrame layout. The Send screen has no 'coming soon' text. All 6 chips (XRP, BTC, ETH, USDC, SOL, XLM) show a working, enabled 'Confirm on <network>' button, and each one calls its own backend endpoint. With a bogus address, every chain shows its specific 'Invalid ... address' message. With a valid address and too little balance, ETH, BTC, SOL, XLM, USDC-Sepolia, USDC-Base and USDC-Arbitrum show a clear 'Insufficient ...' message. A real 0.001 XRP testnet send went all the way to the Receipt screen and was confirmed on the XRPL testnet (tesSUCCESS). Two problems found: (1) USDC on Polygon returns a 502 because the Polygon Amoy RPC hostname does not resolve, so the UI shows 'Request failed (502)'. (2) The ETH multi-sig path accepts an impossible amount (999999 ETH) as a pending approval and emails the co-signer, with no balance check. The iPad layout at 1024x1366 and 820x1180 works: login, wallet, activity, chat, send, remit, bills/new and settings stay inside a centred 720px column. The tab bar is limited to the column and switching tabs works. The Feedback button, the delete-account sheet and the feedback sheet all stay inside the column (sheets measured exactly 720px wide). On a 390x844 phone, wallet, send and settings are still full width. No deprecated Expo packages were found (expo-av, expo-barcode-scanner, expo-background-fetch).",
+  "backend_issues": {
+    "critical": [
+      {"endpoint": "POST /api/wallet/evm/usdc/send (chain=polygon)", "issue": "Returns a 502. The configured RPC host rpc-amoy.polygon.technology does not resolve in this environment (backend log: 'USDC balance failed on polygon: [Errno -2] Name or service not known'). Cloudflare replaces the 502 response body with an HTML page, so the app shows 'Request failed (502)'. /wallet/evm/chains also hides the error and reports polygon balance as 0. Fix: switch to or add a fallback RPC, https://polygon-amoy-bor-rpc.publicnode.com (I checked it: returns chainId 0x13882). Also return a JSON 503 or 400 instead of a 502, because Cloudflare replaces the body of 502 responses.", "priority": "HIGH"},
+      {"endpoint": "POST /api/wallet/eth/send (multisig on)", "issue": "When multi-sig is on and the amount is at or above MULTISIG_THRESHOLD_ETH (0.01), the send becomes a pending approval and the co-signer gets an email WITHOUT any balance check. A 999999 ETH send from an account holding 0 ETH returned 200 approval_required:true and emailed the co-signer (oumarsanii@yahoo.co.uk). In the UI the user is sent to /approvals for a send that can never go through. Fix: fetch the balance and check value + gas against it in eth_send before creating the approval (same check as in _broadcast_eth_send).", "priority": "HIGH"}
+    ],
+    "minor": [
+      {"endpoint": "POST /api/wallet/xrp/send (and the other chain sends)", "issue": "The saved record has status 'pending' even though submit_and_wait has already validated the tx (tesSUCCESS), so the receipt shows 'Pending' for a send that has settled."},
+      {"endpoint": "_xrp_to_usd / _price_usd", "issue": "When the price lookup fails it silently returns fiat_value 0. Activity shows '-$0.00' for older 5 XRP sends even though XRP is about $1.30."}
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [
+      {"component": "Send – USDC Polygon", "issue": "Shows the generic 'Request failed (502)' instead of a readable message (see the backend Polygon RPC issue).", "testID": "send-error", "priority": "HIGH"}
+    ],
+    "integration_issues": [
+      {"flow": "Send ETH with multi-sig enabled", "issue": "The user is sent to /approvals even when the amount is far above their balance (no balance check before parking the approval).", "affected_testIDs": ["send-confirm"]}
+    ],
+    "design_issues": [
+      {"screen": "Send (all chains)", "issues": ["The PreviewBanner always says 'broadcasts run on Ethereum Sepolia testnet', which is wrong for BTC, SOL, XLM and XRP. Make it depend on the selected chain.", "On a 390px phone the Feedback button (right edge, top 58%) covers the right-hand network-fee value in the fee card (e.g. '~0.00001 XRP')."]},
+      {"screen": "Wallet (phone + iPad)", "issues": ["The Feedback button covers the right-aligned price text on the 3rd asset row (Ethereum '+0.28% / $2,343.10/ETH') at 1024x1366 and on the Bitcoin row at 820x1180."]},
+      {"screen": "Tab bar (web preview, all viewports)", "issues": ["The tab labels (Wallet/Chat/Activity/Settings) are cut off at the bottom: on web the tab bar is 64px tall with 8px top and 8px bottom padding. iOS uses 84px, so this may only affect web, but please check on an iPad build."]},
+      {"screen": "Wallet/Activity/Remit (iPad)", "issues": ["The PreviewBanner is 8px wider than the content column on each side (x=168 vs 176). Cosmetic."]}
+    ],
+    "react_native_issues": []
+  },
+  "test_report_links": ["/app/backend/tests/test_iteration41_send_all_chains.py", "/app/test_reports/pytest/pytest_iter41.xml"],
+  "action_items": [
+    "HIGH: Fix the Polygon Amoy RPC. rpc-amoy.polygon.technology does not resolve; use https://polygon-amoy-bor-rpc.publicnode.com or add a fallback list in evm.py. Return JSON 503 or 400 instead of 502 so Cloudflare does not replace the error body.",
+    "HIGH: In POST /api/wallet/eth/send, check the balance (value + gas) BEFORE creating a multi-sig approval and emailing the co-signer.",
+    "MEDIUM: Make the Send screen PreviewBanner text depend on the selected chain instead of always saying 'Ethereum Sepolia'.",
+    "LOW: Move or shift the Feedback button so it does not cover right-aligned values (fee card, asset price rows), e.g. a lower top position or extra right padding on content.",
+    "LOW: Make the tab bar taller on web, or check the label clipping on an iPad build.",
+    "LOW: Save XRP/XLM sends as 'confirmed' when submit_and_wait returns tesSUCCESS. Handle the price-fetch fallback so fiat_value does not silently become 0."
+  ],
+  "critical_code_review_comments": [
+    "send.tsx: the /wallet/assets fetch has no .catch and no loading or error state. If it fails, the chip row is empty and nothing tells the user why.",
+    "wallet.py eth_send: the multi-sig branch skips address checksum and balance validation. The only checks are startswith('0x') and len==42.",
+    "Backend send endpoints raise 502 on RPC failures (eth, sol, usdc). Cloudflare replaces 502 bodies, so the 'detail' message never reaches the client. Use 503 or 400.",
+    "wallet.py is 1007 lines (more than 700). Consider splitting the per-chain send/info routes into separate modules.",
+    "TabletFrame is implemented correctly (outer view centres the content, inner view has maxWidth 720). Sheets use maxWidth 720 with alignSelf center. PreviewAcknowledgementGate sits outside the frame but has its own maxWidth 720, which is fine."
+  ],
+  "updated_files": ["/app/backend/tests/test_iteration41_send_all_chains.py"],
+  "success_rate": {"backend": "90% (18/20 pytest; failures: polygon 502, ETH multi-sig with no balance check)", "frontend": "92% (all 6 chips work, 7/8 valid-address flows show the correct error or a receipt; Polygon shows a generic 502; iPad and phone layouts pass)"},
+  "seed_data_creation": "No seed data was created. Side effects on the smoketest account: (a) one eth_approvals record (id 125ddd40-...) was created by the 999999 ETH test and I deleted it by id, but the co-signer approval email to oumarsanii@yahoo.co.uk had already been sent; (b) one real testnet XRP send of 0.001 XRP to rrrrrrrrrrrrrrrrrrrrBZbvji (tx 753F64F66CF124B46056676B09E6A7010C0F3C0A9748F0CD7AD870C815D59F68). The on-chain tx cannot be undone; I deleted its transactions record (id e318471c-...) by id.",
+  "retest_needed": true,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "The smoketest account has multisig_enabled=true and an active co-signer, so any ETH send >= 0.01 becomes a pending approval and EMAILS the co-signer. Use amounts below 0.01 ETH for ETH tests. The account has about 380 XRP on testnet; all other chains have 0 balance. The frontend env key is EXPO_PUBLIC_BACKEND_URL. The test file reads EXPO_PUBLIC_BACKEND_URL (falls back to EXPO_BACKEND_URL). After fixing the ETH balance check, test_insufficient_funds_4xx[ETH] should pass without creating an approval.",
+  "rca_of_issue": "Polygon 502: evm.py chain config uses rpc_url https://rpc-amoy.polygon.technology, which fails DNS resolution (getent hosts gives nothing) → fetch_usdc_balance_on_chain raises → multichain_router raises 502 → Cloudflare replaces the body. ETH multi-sig: eth_send computes needs_approval only from multisig_on, the co-signer and the amount threshold, then inserts the approval and emails the co-signer before any balance lookup; the balance is only checked later in _broadcast_eth_send."
+}

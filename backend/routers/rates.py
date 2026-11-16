@@ -31,6 +31,8 @@ SUPPORTED_CODES: tuple[str, ...] = (
     "NGN", "KES", "GHS", "UGX", "TZS", "ZMW", "ZAR",
     # Website corridor-page rate widget (planned destinations)
     "XOF", "INR", "PHP", "MXN",
+    # International Bill Payments payout currency
+    "CAD",
 )
 
 # Static fallback — snapshot mid-June 2026. Updated anytime we deploy a
@@ -51,6 +53,7 @@ _FALLBACK_RATES: dict[str, float] = {
     "INR": 86.0,
     "PHP": 57.0,
     "MXN": 18.5,
+    "CAD": 1.37,
 }
 
 _CACHE_ID = "usd_base"

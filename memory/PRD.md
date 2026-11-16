@@ -401,3 +401,17 @@ MONGO_URL, DB_NAME=vaulted, JWT_SECRET, STRIPE_API_KEY (live, rotated), STRIPE_W
 - Receipts: remit.bank_saving stored at send (savings.py, also Stripe path); shown on app receipt (green row + footnote) and public share page /api/r/{token} when delivered
 - Landing: buttons inside text sections (.prose a.btn-primary, partner form) forced to dark #0F0B08 label
 - Landing header: logo 60px (48px mobile), text 'A product of Phoenix-Atlas Technologies Ltd', nav collapses to menu ≤1360px
+
+## International Bill Payments (beta, test mode)
+- Categories education / healthcare / business; payer NG/KE/GH/ZA → payout GBP/EUR/USD/CAD
+- backend/bill_providers.py: partner registry + select_provider (cheapest eligible by country/currency/purpose); Flutterwave (test) + Simulated FX partner
+- routers/bills.py: GET /bills/config, POST /bills/quote (mid-market, margin, fee, total, provider, 15-min expiry), POST /bills/invoice (object storage, PDF/JPG/PNG ≤10MB), POST /bills, GET /bills, GET /bills/{id}; admin GET /admin/bills, GET /admin/bills/{id}/invoice, POST /admin/bills/{id}/decision (approve → simulated paid timeline; reject)
+- Frontend: app/bills/index.tsx (hub), new.tsx (form + invoice upload via expo-document-picker + quote + declaration), [id].tsx (timeline); wallet CTA bills-hero-cta; admin BillsReviewCard
+- Payee details typed by customer from invoice (no directory, per user choice); no real money in beta
+- Hardening (iter 40 fixes): uploads recorded in bill_invoices and verified on submit; quotes stored in bill_quotes and locked (quote_id required, 15-min expiry, params must match); magic-byte file check, HEIC dropped; admin invoice missing → 404; hub error/loading state; extra bottom padding for floating chat button
+
+## 🍎 App Store blockers (2026-06) — DONE
+- All 6 coin sends (BTC, ETH, USDC on Sepolia/Polygon/Base/Arbitrum, SOL, XLM, XRP) live on testnets; "coming soon" UI removed from send screen.
+- Polygon Amoy RPC switched to publicnode; send endpoints return 503 (not 502) on upstream failure.
+- Multi-sig ETH send checks balance before emailing co-signer.
+- iPad: supportsTablet + requireFullScreen; app content centred in 720px column (TabletFrame) incl. bottom sheets.

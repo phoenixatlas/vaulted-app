@@ -341,7 +341,7 @@ async def eth_info(user=Depends(get_current_user)):
         gas_price_resp = await _eth_rpc("eth_gasPrice", [])
         gas_price_wei = int(gas_price_resp.get("result", "0x0"), 16)
     except Exception as e:
-        raise HTTPException(status_code=502, detail=f"Sepolia RPC error: {e}")
+        raise HTTPException(status_code=503, detail=f"Sepolia RPC error: {e}")
     return {
         "address": addr,
         "balance_wei": str(wei),
@@ -382,6 +382,18 @@ async def eth_send(body: SendEthIn, user=Depends(get_current_user)):
         and body.amount_eth >= MULTISIG_THRESHOLD_ETH
     )
     if needs_approval:
+        # Fail fast on unaffordable sends so co-signers aren't emailed for them.
+        try:
+            bal_wei = await _fetch_eth_balance_wei(addr)
+            gas_price = int((await _eth_rpc("eth_gasPrice", []))["result"], 16)
+        except Exception as e:
+            raise HTTPException(status_code=503, detail=f"Sepolia unavailable: {e}") from e
+        need_wei = int(round(body.amount_eth * 1e18)) + gas_price * 21000
+        if need_wei > bal_wei:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Insufficient ETH (need {need_wei/1e18:.6f}, have {bal_wei/1e18:.6f})",
+            )
         # Lazy import — avoids circular (multisig router imports from wallet)
         from routers.multisig import _send_approval_email  # noqa: PLC0415
 
@@ -448,12 +460,12 @@ async def _broadcast_eth_send(user: dict, addr: str, pk: str, to: str, amount_et
         signed = Account.sign_transaction(tx, pk)
         send_resp = await _eth_rpc("eth_sendRawTransaction", [signed.raw_transaction.hex()])
         if "error" in send_resp:
-            raise HTTPException(status_code=502, detail=f"RPC error: {send_resp['error']}")
+            raise HTTPException(status_code=503, detail=f"RPC error: {send_resp['error']}")
         tx_hash = send_resp["result"]
     except HTTPException:
         raise
     except Exception as e:
-        raise HTTPException(status_code=502, detail=f"Sepolia send failed: {e}")
+        raise HTTPException(status_code=503, detail=f"Sepolia send failed: {e}")
 
     is_pro = is_user_pro(user)
     service_fee_usd = 0.05 if is_pro else 0.10
@@ -547,7 +559,7 @@ async def btc_info(user=Depends(get_current_user)):
     try:
         sats = await fetch_btc_balance_sats(a)
     except Exception as e:
-        raise HTTPException(status_code=502, detail=f"BTC RPC error: {e}")
+        raise HTTPException(status_code=503, detail=f"BTC RPC error: {e}")
     return {
         "address": a,
         "balance_sats": sats,
@@ -628,7 +640,7 @@ async def sol_info(user=Depends(get_current_user)):
     try:
         lamports = await fetch_sol_balance_lamports(a)
     except Exception as e:
-        raise HTTPException(status_code=502, detail=f"SOL RPC error: {e}")
+        raise HTTPException(status_code=503, detail=f"SOL RPC error: {e}")
     return {
         "address": a,
         "balance_lamports": lamports,
@@ -668,7 +680,7 @@ async def sol_send_route(body: SendCoinIn, user=Depends(get_current_user)):
     try:
         result = await sol_send(mnemonic, to, body.amount)
     except Exception as e:
-        raise HTTPException(status_code=502, detail=f"SOL broadcast failed: {str(e)[:200]}") from e
+        raise HTTPException(status_code=503, detail=f"SOL broadcast failed: {str(e)[:200]}") from e
 
     fiat_value = await _sol_to_usd(body.amount)
     record = {
@@ -703,7 +715,7 @@ async def usdc_info(user=Depends(get_current_user)):
     try:
         micro = await fetch_usdc_balance_micro(addr)
     except Exception as e:
-        raise HTTPException(status_code=502, detail=f"USDC balance error: {e}")
+        raise HTTPException(status_code=503, detail=f"USDC balance error: {e}")
     return {
         "address": addr,
         "balance_micro": micro,
@@ -728,7 +740,7 @@ async def usdc_send(body: SendUsdcIn, user=Depends(get_current_user)):
     try:
         bal_micro = await fetch_usdc_balance_micro(addr)
     except Exception as e:
-        raise HTTPException(status_code=502, detail=f"USDC balance error: {e}")
+        raise HTTPException(status_code=503, detail=f"USDC balance error: {e}")
     need_micro = int(round(body.amount_usdc * 1_000_000))
     if bal_micro < need_micro:
         raise HTTPException(
@@ -764,7 +776,7 @@ async def usdc_send(body: SendUsdcIn, user=Depends(get_current_user)):
     except HTTPException:
         raise
     except Exception as e:
-        raise HTTPException(status_code=502, detail=f"USDC send failed: {e}")
+        raise HTTPException(status_code=503, detail=f"USDC send failed: {e}")
 
     fiat = round(body.amount_usdc * 1.0, 2)  # USDC ≈ $1
     record = {
@@ -800,7 +812,7 @@ async def xlm_info(user=Depends(get_current_user)):
     try:
         stroops = await fetch_xlm_balance_stroops(a)
     except Exception as e:
-        raise HTTPException(status_code=502, detail=f"XLM Horizon error: {e}")
+        raise HTTPException(status_code=503, detail=f"XLM Horizon error: {e}")
     return {
         "address": a,
         "balance_stroops": stroops,
@@ -883,7 +895,7 @@ async def xrp_info(user=Depends(get_current_user)):
     try:
         drops = await fetch_xrp_balance_drops(a)
     except Exception as e:
-        raise HTTPException(status_code=502, detail=f"XRPL RPC error: {e}")
+        raise HTTPException(status_code=503, detail=f"XRPL RPC error: {e}")
     return {
         "address": a,
         "balance_drops": drops,

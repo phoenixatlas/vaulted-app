@@ -1,0 +1,42 @@
+{
+  "summary": "International Bill Payments tested end-to-end. Backend: 16/16 pytest passed (config, quote pricing/routing incl. CAD->Simulated FX partner, 400s for bad category/country/currency/amount <$20 or >$50k, invoice upload PDF/PNG ok + txt/oversize rejected, submit with declaration/subtype/foreign-invoice guards, own-only GET (other user 404), admin list/invoice/approve->paid w/ approved/processing/paid events, reject->rejected, second decision 400, non-admin 403). Frontend (375x667): wallet bills-hero-cta -> /bills hub (3 category cards, how-it-works, test-mode banner) -> /bills/new?category=education; category switching updates purpose placeholders; payer/payout chips; CAD routing label; Get FX quote renders bill-quote; invoice upload WORKS on web via file chooser; declaration switch; submit -> /bills/{id} 'Under review' with 2 events. Admin dashboard admin-bills-card approve/reject buttons update status (0 to review after), View invoice opens blob tab; user detail then shows 'Paid (test)' with 5 timeline events. Issues: fabricated invoice_path accepted (and admin invoice -> 500), quote not locked at submit, floating chat FAB overlaps quote values.",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {"endpoint": "POST /api/bills", "issue": "invoice_path is only prefix/substring-checked, never verified against an actual upload. Submitting 'bills/{own_uid}/does-not-exist.pdf' (and 'x/bills/{uid}/../../other/file.pdf') returns 200 and creates a bill with no invoice. Persist uploads (e.g. bill_invoices collection keyed by user) and require the path to match a stored upload record."},
+      {"endpoint": "GET /api/admin/bills/{id}/invoice", "issue": "Returns 500 Internal Server Error when the storage object is missing (HTTPError 404 from objstore not caught). Should return 404 'Invoice not found'."},
+      {"endpoint": "POST /api/bills", "issue": "Quote is not locked: submit re-runs _quote() with fresh FX rates, so the stored rate/total can differ from what the user saw; quote expires_at is never enforced. Consider a quote_id persisted at /bills/quote and honoured at submit within 15 min."},
+      {"endpoint": "POST /api/bills/invoice", "issue": "Whole file read into memory before the 10MB check; content-type trusted from client (no magic-byte check); image/heic accepted though error text/front-end say PDF/JPG/PNG only."}
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [
+      {"screen": "/bills/new, /bills/[id], /bills", "issues": ["Global floating chat FAB (right edge, ~y=390-435) overlaps right-aligned quote values (e.g. '1 CAD = 8.215 GHS', '20,994.19 GHS', 'Simulated FX partner (test mode)') and the Healthcare card chevron. Add right padding / hide FAB on bills screens."]},
+      {"screen": "/bills hub", "issues": ["Load errors are swallowed (load().catch(() => undefined)) — no error/loading state if config or /bills fails; categories just don't render."]},
+      {"screen": "Admin BillsReviewCard", "issues": ["Reject uses a hard-coded note; admin can't enter a reason.", "openInvoice relies on URL.createObjectURL — web only; silently does nothing on native."]}
+    ],
+    "react_native_issues": []
+  },
+  "test_report_links": ["/app/backend/tests/test_iteration40_bill_payments.py", "/app/backend/tests/iter40_edge_probe.py", "/app/backend/tests/iter40_admin_token.py", "/app/test_reports/pytest/iteration40_bills.xml"],
+  "action_items": [
+    "Verify invoice_path against a persisted upload record owned by the user (reject fabricated/traversal paths).",
+    "Catch storage 404 in GET /api/admin/bills/{id}/invoice and return 404 instead of 500.",
+    "Lock the FX quote (persist quote id, honour at submit until expires_at) so stored total matches what user accepted.",
+    "Fix chat FAB overlapping quote values on bills screens.",
+    "Optional: error state on bills hub; admin reject reason input; enforce size while streaming upload; align HEIC acceptance with UI copy."
+  ],
+  "critical_code_review_comments": [
+    "routers/bills.py ownership check uses substring match (f'/bills/{uid}/' in path) — combined with no upload registry allows arbitrary paths.",
+    "Same invoice can be reused across unlimited bill requests (no dedupe) — acceptable for beta but worth flagging for compliance.",
+    "api.ts falls back to hard-coded https://vaulted-app.onrender.com when EXPO_PUBLIC_BACKEND_URL missing (pre-existing)."
+  ],
+  "updated_files": ["/app/backend/tests/test_iteration40_bill_payments.py", "/app/backend/tests/iter40_edge_probe.py", "/app/backend/tests/iter40_admin_token.py"],
+  "success_rate": {"backend": "100% (16/16 core tests); 2 edge-case defects found via probe", "frontend": "100% of requested flows working"},
+  "seed_data_creation": "Created 4 TEST_ bill_payments for smoketest (all deleted by id afterwards) and 1 TEST user test_bills_<hex>@example.com (not deleted). Uploaded TEST invoice objects remain in object storage (no delete API).",
+  "retest_needed": false,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "Preview gate: set localStorage 'vaulted.preview.ack.version'='2026-07-preview-v1'. Web token storage is AsyncStorage/IndexedDB, so injecting localStorage token does NOT work; for admin UI, log in as smoketest then page.route('**/api/**') swapping Authorization to admin JWT from `python /app/backend/tests/iter40_admin_token.py`. Invoice upload on web works via page.expect_file_chooser on bill-upload-invoice.",
+  "rca_of_issue": "Admin invoice 500: storage.get_object raises requests HTTPError(404) for missing object; endpoint doesn't catch it. Reproduce: submit bill with invoice_path 'bills/{uid}/does-not-exist.pdf' (accepted), then GET /api/admin/bills/{id}/invoice."
+}

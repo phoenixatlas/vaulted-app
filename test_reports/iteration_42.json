@@ -1,0 +1,44 @@
+{
+  "summary": "Retest of the iteration 41 HIGH bugs. FIX 1 (Polygon USDC) PASSED: the RPC is now polygon-amoy-bor-rpc.publicnode.com (eth_chainId 0x13882). POST /wallet/evm/usdc/send with chain=polygon returns 400 'Invalid recipient' for a bogus address and 400 'Insufficient USDC on Polygon (PoS)' for a huge amount. 3 repeated calls all returned 400, never 502. /wallet/evm/chains lists polygon with usdc_balance 0.0 and the publicnode rpc_url. In the UI the send-error now shows a readable message instead of 'Request failed (502)'. FIX 2 (multisig balance check) PASSED: tested with a fresh TEST_ user (invite VAULTED-BETA) with multisig_enabled=true and an active cosigner cosigner-test@example.com, inserted directly in Mongo so no welcome email went out. ETH sends of 999999 and of 0.01 (the threshold) both returned 400 'Insufficient ETH'. No eth_approvals record was created, /approvals/pending stayed empty and the backend log shows no Resend email POST. Code review found no status_code=502 left in routers/wallet.py or routers/multichain_router.py; upstream RPC failures return 503. Send screen banner (390x844) now names the selected chain: ETH 'Ethereum Sepolia testnet', BTC 'Bitcoin Testnet3', SOL 'Solana Devnet', XLM 'Stellar Testnet', XRP 'XRPL Testnet', USDC 'Base/Arbitrum/Polygon testnet', and USDC Sepolia 'Ethereum testnet'. Regression test_iteration41_send_all_chains.py: 20/20 passed. No real on-chain sends were made. All TEST data was cleaned up.",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {"endpoint": "GET /api/wallet/evm/chains", "issue": "Still swallows RPC errors and reports usdc_balance/native_balance 0 with no error flag (multichain_router.py:51-56). If an RPC goes down, the user sees 0 instead of 'unavailable'. Consider adding a per-chain 'balance_error' field."},
+      {"endpoint": "POST /api/wallet/evm/usdc/send", "issue": "A generic exception from usdc_send_on_chain is mapped to 400 (multichain_router.py:106-107), so a transient RPC/network failure during broadcast shows as a user error instead of 503. The same 400 mapping applies to BTC/XLM/XRP submission failures (wallet.py:607,861,945). This is acceptable when the node rejects the tx, but network failures should return 503."}
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [
+      {"screen": "Send", "issues": [
+        "USDC on Sepolia banner says 'Ethereum testnet' (it uses selectedEvmChain.short = 'Ethereum'). Consider 'Ethereum Sepolia testnet' to match the ETH chip.",
+        "PreviewBanner numberOfLines={2} truncates the chain-specific sentence on a 390px phone ('...use testn…'). The network name is still visible.",
+        "Still present from iteration 41: on a 390px phone the Feedback button covers the right edge of the network fee value ('~0.00001 XR')."
+      ]}
+    ],
+    "react_native_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_iteration42_polygon_multisig.py",
+    "/app/backend/tests/test_iteration41_send_all_chains.py",
+    "/app/test_reports/pytest/iter42_polygon_multisig.xml",
+    "/app/test_reports/pytest/iter42_regression.xml"
+  ],
+  "action_items": [
+    "(Low) Rename the USDC Sepolia banner text to 'Ethereum Sepolia testnet'.",
+    "(Low) Move or shrink the Feedback button so it does not cover the fee row on the Send screen on phones.",
+    "(Low) Map network/timeout exceptions in the USDC/BTC/XLM/XRP broadcast paths to 503 and keep 400 for node rejections; expose balance errors in /wallet/evm/chains."
+  ],
+  "critical_code_review_comments": [
+    "eth_send pre-check (wallet.py:384-396) is correct: it checks value + gasPrice*21000 against the balance before the approval is inserted and the email sent, and returns 503 if Sepolia is unreachable.",
+    "There is a minor race: the balance can change between approval and the cosigner's decision. _broadcast_eth_send checks the balance again, so this is safe."
+  ],
+  "updated_files": ["/app/backend/tests/test_iteration42_polygon_multisig.py"],
+  "success_rate": {"backend": "100% (29/29)", "frontend": "100% (banner text for 6 chips + 4 USDC chains, Polygon error message)"},
+  "seed_data_creation": "Created a temporary TEST_ms_<hex>@example.com user and a cosigner row (cosigner-test@example.com). Both were deleted via /auth/delete-account and by cosigner id. Verified 0 leftover users, cosigners or approvals.",
+  "retest_needed": false,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "Polygon RPC is now publicnode. Multisig tests: register a TEST_ user, insert the cosigner directly in Mongo (adding via POST /cosigners needs Pro and sends an email), then PATCH /auth/security {multisig_enabled:true}. Never enable multisig on smoketest (its cosigner is a real email).",
+  "rca_of_issue": "Both iteration 41 HIGH bugs are fixed: (1) the dead rpc-amoy.polygon.technology DNS was replaced with publicnode; (2) the multisig path now checks the balance before creating the approval."
+}

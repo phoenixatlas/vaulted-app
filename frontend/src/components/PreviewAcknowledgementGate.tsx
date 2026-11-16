@@ -218,6 +218,9 @@ const s = StyleSheet.create({
     padding: spacing.xl,
     paddingTop: spacing.xxxl + spacing.md,
     paddingBottom: spacing.xxxl,
+    width: "100%",
+    maxWidth: 720,
+    alignSelf: "center",
   },
   iconWrap: {
     width: 56,

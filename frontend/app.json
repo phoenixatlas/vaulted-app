@@ -10,6 +10,7 @@
     "newArchEnabled": true,
     "ios": {
       "supportsTablet": true,
+      "requireFullScreen": true,
       "buildNumber": "1",
       "infoPlist": {
         "NSFaceIDUsageDescription": "Unlock your Vaulted wallet with Face ID",

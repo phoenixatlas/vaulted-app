@@ -182,7 +182,7 @@ const st = StyleSheet.create({
   tabText: { fontSize: 13, fontWeight: "600", color: colors.onSurfaceSecondary },
   tabTextActive: { color: colors.onSurface },
   tabDot: { width: 8, height: 8, borderRadius: 4, backgroundColor: colors.error },
-  sheet: { backgroundColor: colors.surface, borderTopLeftRadius: radius.lg, borderTopRightRadius: radius.lg, padding: spacing.xl },
+  sheet: { width: "100%", maxWidth: 720, alignSelf: "center", backgroundColor: colors.surface, borderTopLeftRadius: radius.lg, borderTopRightRadius: radius.lg, padding: spacing.xl },
   title: { fontSize: 18, fontWeight: "700", color: colors.onSurface, marginTop: spacing.sm },
   sub: { fontSize: 13, color: colors.onSurfaceSecondary, marginTop: 4, marginBottom: spacing.md },
   input: {

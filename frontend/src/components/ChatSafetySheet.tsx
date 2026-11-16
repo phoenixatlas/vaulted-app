@@ -86,7 +86,7 @@ export default function ChatSafetySheet({ visible, onClose, conversationId, cont
 
 const st = StyleSheet.create({
   backdrop: { flex: 1, backgroundColor: "rgba(0,0,0,0.5)" },
-  sheet: { backgroundColor: colors.surface, padding: spacing.xl, paddingBottom: spacing.xxxl, borderTopLeftRadius: radius.lg, borderTopRightRadius: radius.lg, gap: spacing.sm },
+  sheet: { width: "100%", maxWidth: 720, alignSelf: "center", backgroundColor: colors.surface, padding: spacing.xl, paddingBottom: spacing.xxxl, borderTopLeftRadius: radius.lg, borderTopRightRadius: radius.lg, gap: spacing.sm },
   title: { fontSize: 18, fontWeight: "700", color: colors.onSurface, marginBottom: spacing.sm },
   row: { flexDirection: "row", alignItems: "center", gap: spacing.md, minHeight: 48, borderBottomWidth: 1, borderBottomColor: colors.divider },
   rowText: { fontSize: 15, color: colors.onSurface },
