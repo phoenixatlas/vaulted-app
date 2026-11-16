@@ -6,7 +6,8 @@ money in Africa), this router powers the *inbound* side: a user in Nigeria
 paying UK university fees, a Kenyan family paying for medical treatment
 in London, a Ghanaian parent sending rent to a child studying in Dublin.
 
-**Product model (Phase 1 — quote-only, launch-signup gated)**:
+**Product model** (beta test mode: sending enabled via Flutterwave sandbox;
+otherwise quote-only + waitlist):
   Sender (Africa)               Bridge                 Recipient (UK/EU)
   ─────────────                 ──────                 ──────────────────
   Mobile money / bank    →   Vaulted stablecoin   →   GBP/EUR bank payout
@@ -40,14 +41,17 @@ Docs:
 """
 from __future__ import annotations
 
+import re
+import uuid
 from typing import Optional
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 
+import flutterwave
 import kotani
 import payouts
-from deps import db, iso, logger, now_utc
+from deps import db, get_current_user, iso, logger, now_utc
 from remit import refresh_fx_rates, convert_fiat
 
 router = APIRouter()
@@ -110,16 +114,16 @@ DESTINATION_FIATS: dict[str, dict] = {
         "symbol": "£",
         "country": "United Kingdom",
         "flag": "🇬🇧",
-        "receive_via": "UK Faster Payments (Phase 2)",
-        "eta": "~10 min once live",
+        "receive_via": "UK Faster Payments",
+        "eta": "~10 min",
     },
     "EUR": {
         "currency": "EUR",
         "symbol": "€",
         "country": "Eurozone",
         "flag": "🇪🇺",
-        "receive_via": "SEPA Instant (Phase 2)",
-        "eta": "~10 min once live",
+        "receive_via": "SEPA bank transfer",
+        "eta": "~1 working day",
     },
 }
 
@@ -148,19 +152,25 @@ async def reverse_corridors():
     /remit screen chips and the landing page 'Send to UK/EU' section."""
     sources = [{"code": code, **info} for code, info in SOURCE_CORRIDORS.items()]
     destinations = [{"code": code, **info} for code, info in DESTINATION_FIATS.items()]
+    beta = (await payouts.get_settings())["beta_test_mode"]
     return {
         "sources": sources,
         "destinations": destinations,
         "bridge": {"chain": BRIDGE_CHAIN, "token": BRIDGE_TOKEN},
-        "status": "quote_only",
+        "status": "test_send" if beta else "quote_only",
+        "send_enabled": beta,
         "note": (
-            "Reverse corridors are in Phase 1 — live rate quotes are available; "
-            "actual GBP/EUR settlement launches with our UK PSP integration in Phase 2."
+            "Beta test mode: GBP (Faster Payments) and EUR (SEPA) payouts run through the Flutterwave sandbox — no real money moves."
+            if beta else "Live rate quotes available; GBP/EUR sending launches soon — join the waitlist."
         ),
     }
 
 
 @router.post("/remit/reverse/quote")
+async def reverse_quote_endpoint(body: ReverseQuoteIn):
+    return await reverse_quote(body)
+
+
 async def reverse_quote(body: ReverseQuoteIn):
     """Return a live reverse-corridor quote using Kotani onramp + FX cache.
 
@@ -294,3 +304,127 @@ async def reverse_quote(body: ReverseQuoteIn):
         "eta": corridor["eta"],
         "fetched_at": iso(now_utc()),
     }
+
+
+# ---- Phase 2 (test mode): pay a UK/EU bank account via Flutterwave ---------------
+class ReverseAddress(BaseModel):
+    line1: str = Field(min_length=2, max_length=120)
+    city: str = Field(min_length=2, max_length=60)
+    state: Optional[str] = Field(default="", max_length=60)
+    postal_code: str = Field(min_length=2, max_length=12)
+    country: str = Field(min_length=2, max_length=2)
+
+
+class ReverseRecipient(BaseModel):
+    name: str = Field(min_length=2, max_length=120)
+    email: str = Field(min_length=5, max_length=160, pattern=r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
+    phone: Optional[str] = Field(default="", max_length=20)
+    account_number: str = Field(min_length=6, max_length=40)  # UK account no. or IBAN
+    sort_code: Optional[str] = Field(default="", max_length=10)
+    swift_code: Optional[str] = Field(default="", max_length=11)
+    bank_name: str = Field(min_length=2, max_length=120)
+    address: ReverseAddress
+
+
+class ReverseSendIn(ReverseQuoteIn):
+    recipient: ReverseRecipient
+    purpose: str = Field(min_length=2, max_length=80)
+
+
+def _validate_recipient(currency: str, r: ReverseRecipient) -> None:
+    acct = r.account_number.replace(" ", "").upper()
+    swift = (r.swift_code or "").replace(" ", "").upper()
+    if swift and not re.fullmatch(r"[A-Z]{6}[A-Z0-9]{2}([A-Z0-9]{3})?", swift):
+        raise HTTPException(400, "SWIFT/BIC must be 8 or 11 characters.")
+    if currency == "GBP":
+        if not re.fullmatch(r"\d{8}", acct):
+            raise HTTPException(400, "UK account number must be 8 digits.")
+        if not re.fullmatch(r"\d{6}", re.sub(r"\D", "", r.sort_code or "")):
+            raise HTTPException(400, "Sort code must be 6 digits.")
+    else:
+        if not re.fullmatch(r"[A-Z]{2}\d{2}[A-Z0-9]{11,30}", acct):
+            raise HTTPException(400, "Enter a valid IBAN (e.g. DE89 3704 0044 0532 0130 00).")
+        if not swift:
+            raise HTTPException(400, "SWIFT/BIC is required for euro transfers.")
+
+
+def _sender_for(user: dict, src: dict) -> dict:
+    kyc = user.get("kyc") or {}
+    digits = re.sub(r"\D", "", kyc.get("phone") or "")
+    dial = {"NG": "234", "KE": "254", "GH": "233", "ZA": "27"}
+    code = next((c for c in dial.values() if digits.startswith(c)), None)
+    country = next((k for k, v in dial.items() if v == code), None) or src["code"]
+    return {
+        "name": user.get("name") or "Vaulted Customer", "email": user.get("email") or "",
+        "phone_country_code": code or dial.get(country, "234"),
+        "phone_number": (digits[len(code):] if code else digits) or "8000000000",
+        "address": {"line1": kyc.get("address") or "Vaulted customer address", "city": kyc.get("city") or src["country"],
+                    "state": kyc.get("state") or kyc.get("city") or src["country"],
+                    "postal_code": kyc.get("postal_code") or "100001", "country": country},
+    }
+
+
+_EU_DIAL = {"GB": "44", "IE": "353", "DE": "49", "FR": "33", "NL": "31", "ES": "34", "IT": "39", "BE": "32", "PT": "351"}
+
+
+def _recipient_phone(phone: Optional[str], country: str) -> dict:
+    digits = re.sub(r"\D", "", phone or "")
+    code = _EU_DIAL.get(country, "44")
+    if digits.startswith(code):
+        digits = digits[len(code):]
+    return {"phone_country_code": code, "phone_number": digits.lstrip("0") or "7000000000"}
+
+
+@router.post("/remit/reverse/send")
+async def reverse_send(body: ReverseSendIn, user=Depends(get_current_user)):
+    """Pay a UK (Faster Payments) or EU (SEPA) bank account. Beta test mode only:
+    the sender is not charged and Flutterwave runs in sandbox / simulated."""
+    if not (await payouts.get_settings())["beta_test_mode"]:
+        raise HTTPException(403, "Sending to the UK/EU launches soon — join the waitlist for first access.")
+    dst = (body.destination_currency or "GBP").upper()
+    _validate_recipient(dst, body.recipient)
+    quote = await reverse_quote(body)
+    src_code = quote["source"]["country_code"]
+    dest = quote["destination"]
+    rec = body.recipient
+    tx_id = str(uuid.uuid4())
+    record = {
+        "id": tx_id, "user_id": user["id"], "type": "send", "category": "remit", "direction": "inbound",
+        "asset": dst, "amount": dest["amount"], "fiat_value": round(quote["bridge"]["amount"], 2),
+        "counterparty": rec.account_number.replace(" ", "").upper(), "recipient_name": rec.name.strip(),
+        "recipient_bank": {"name": rec.bank_name or None, "sort_code": rec.sort_code or None, "swift": rec.swift_code or None},
+        "memo": body.purpose, "status": "processing", "test_mode": True,
+        "receipt_id": "VLT-" + uuid.uuid4().hex[:8].upper(), "created_at": iso(now_utc()),
+        "remit": {
+            "direction": "inbound", "source_country": quote["source"]["country"], "source_country_code": src_code,
+            "source_currency": quote["source"]["currency"], "source_amount": quote["source"]["amount"],
+            "destination_country": dest["country"], "destination_country_code": rec.address.country.upper(),
+            "destination_currency": dst, "destination_amount": dest["amount"], "receive_via": dest["receive_via"],
+            "bridge": quote["bridge"], "fees": quote["fees"], "rates": quote["rates"], "purpose": body.purpose,
+        },
+    }
+    await db.transactions.insert_one(dict(record))
+
+    res = await flutterwave.create_intl_bank_payout(
+        reference="vlt" + tx_id.replace("-", "")[:28], currency=dst, amount=dest["amount"],
+        recipient={"name": rec.name.strip(), "account_number": rec.account_number, "sort_code": rec.sort_code,
+                   "swift_code": rec.swift_code, "bank_name": rec.bank_name, "email": rec.email.strip(),
+                   **_recipient_phone(rec.phone, rec.address.country.upper()),
+                   "address": {**rec.address.model_dump(), "state": rec.address.state or rec.address.city,
+                               "country": rec.address.country.upper()}},
+        sender=_sender_for(user, {"code": src_code, "country": quote["source"]["country"]}),
+    )
+    if res.get("success"):
+        mode = "mock" if res.get("mock") else "live"
+        payout = {"provider": "flutterwave", "provider_label": "Flutterwave", "mode": mode,
+                  "sandbox": flutterwave.is_sandbox(), "reference_id": res["reference_id"],
+                  "status": (res.get("status") or "").upper(), "fiat_currency": dst, "initiated_at": iso(now_utc())}
+        status = "settled" if mode == "mock" or flutterwave.classify_status(res.get("status")) == "settled" else "processing"
+        await db.transactions.update_one({"id": tx_id}, {"$set": {"payout": payout, "status": status}})
+        if status == "settled":
+            await payouts.safe_notify(tx_id)
+    else:
+        # Beta: never dead-end the tester — record a simulated delivery with the partner's reason.
+        logger.warning("[reverse-send] flutterwave %s payout failed for %s: %s", dst, tx_id, res.get("error"))
+        payout = await payouts._simulate(record, "flutterwave", f"Flutterwave sandbox: {res.get('error')}")
+    return await db.transactions.find_one({"id": tx_id}, {"_id": 0})

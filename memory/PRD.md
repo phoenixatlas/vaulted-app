@@ -416,3 +416,4 @@ MONGO_URL, DB_NAME=vaulted, JWT_SECRET, STRIPE_API_KEY (live, rotated), STRIPE_W
 - Multi-sig ETH send checks balance before emailing co-signer.
 - iPad: supportsTablet + requireFullScreen; app content centred in 720px column (TabletFrame) incl. bottom sheets.
 - 2026-11: Saved Institutions for bill payments — `bill_saved_institutions` (upsert by user+institution+account), GET/DELETE /api/bills/saved, "Pay again" list on /bills, prefill via /bills/new?saved=id. Invoice, reference and amount required each time.
+- 2026-11: Send to UK/EU live in beta test mode — POST /api/remit/reverse/send → Flutterwave v4 direct-transfers (GBP sort code / EUR IBAN+SWIFT, sandbox), reconciled by reconcile_flutterwave; fallback simulated. UI: ReverseRemitPanel CTA → app/remit-uk.tsx. 403 when beta_test_mode off. Partner outreach drafts in /app/docs/partner_emails.md.

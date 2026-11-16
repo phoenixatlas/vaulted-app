@@ -13,7 +13,7 @@ import PreviewBanner from "@/src/components/PreviewBanner";
 
 type Tx = {
   id: string; type: string; category: string; asset: string; amount: number; fiat_value: number;
-  counterparty: string; status: string; created_at: string; receipt_id?: string; tx_hash?: string;
+  counterparty: string; direction?: string; recipient_name?: string; status: string; created_at: string; receipt_id?: string; tx_hash?: string;
 };
 
 const typeIcon = (t: Tx) => {
@@ -72,7 +72,7 @@ export default function Activity() {
                     <Ionicons name={typeIcon(item) as any} size={18} color={isOut ? colors.error : colors.brand} />
                   </View>
                   <View style={{ flex: 1 }}>
-                    <Text style={s.txTitle}>{item.counterparty}</Text>
+                    <Text style={s.txTitle}>{item.direction === "inbound" ? item.recipient_name || item.counterparty : item.counterparty}</Text>
                     <Text style={s.txMuted}>{new Date(item.created_at).toLocaleString()} · {item.category}</Text>
                   </View>
                   <View style={{ alignItems: "flex-end" }}>

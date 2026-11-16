@@ -227,6 +227,20 @@ def build_timeline(tx: dict) -> list[dict]:
             {"key": "created", "label": "Started", "at": created, "done": True},
             {"key": "done", "label": "Completed", "at": created if delivered else None, "done": delivered},
         ]
+    elif tx.get("direction") == "inbound":
+        partner = payout.get("provider_label") or "payout partner"
+        steps = [
+            {"key": "paid", "label": f"Paid {float(remit.get('source_amount') or 0):,.2f} {remit.get('source_currency')}",
+             "detail": "Test mode — nothing collected" if tx.get("test_mode") else None, "at": created, "done": True},
+            {"key": "converted", "label": "Converted to digital dollars",
+             "detail": f"{(remit.get('bridge') or {}).get('amount')} USDC", "at": created, "done": True},
+            {"key": "sent", "label": f"Sent to {partner}",
+             "detail": f"Ref {_short(payout.get('reference_id'))}" if payout.get("reference_id") else None,
+             "at": payout.get("initiated_at"), "done": bool(payout.get("reference_id"))},
+            {"key": "delivered", "label": f"Delivered to {who}",
+             "detail": f"{remit.get('destination_amount')} {remit.get('destination_currency')} · {remit.get('receive_via')}",
+             "at": (payout.get("updated_at") or payout.get("initiated_at")) if delivered else None, "done": delivered},
+        ]
     elif tx.get("funding_method") == "stripe":
         partner = payout.get("provider_label") or "payout partner"
         steps = [
@@ -276,6 +290,9 @@ def _repeat_prefill(tx: dict) -> Optional[dict]:
     remit = tx.get("remit") or {}
     if tx.get("type") != "send" or not remit or tx.get("user_deleted") or not tx.get("counterparty"):
         return None
+    if tx.get("direction") == "inbound":
+        return {"kind": "reverse", "src": remit.get("source_country_code"),
+                "dst": remit.get("destination_currency"), "amount": remit.get("source_amount")}
     code = remit.get("destination_country_code") or next(
         (c for c, v in CORRIDORS.items() if v["country"] == remit.get("destination_country")), None)
     if not code:

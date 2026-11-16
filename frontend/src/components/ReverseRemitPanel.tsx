@@ -83,6 +83,7 @@ export default function ReverseRemitPanel({
   const [quote, setQuote] = useState<ReverseQuote | null>(null);
   const [loading, setLoading] = useState(false);
   const [quoteErr, setQuoteErr] = useState<string | null>(null);
+  const [sendEnabled, setSendEnabled] = useState(false);
 
   // Waitlist state
   const [email, setEmail] = useState<string>(userEmail || "");
@@ -92,8 +93,8 @@ export default function ReverseRemitPanel({
 
   // Fetch catalog once
   useEffect(() => {
-    api<{ sources: SourceCorridor[]; destinations: DestFiat[] }>("/remit/reverse/corridors")
-      .then((d) => { setSources(d.sources); setDestinations(d.destinations); })
+    api<{ sources: SourceCorridor[]; destinations: DestFiat[]; send_enabled?: boolean }>("/remit/reverse/corridors")
+      .then((d) => { setSources(d.sources); setDestinations(d.destinations); setSendEnabled(!!d.send_enabled); })
       .catch(() => {});
   }, []);
 
@@ -306,8 +307,20 @@ export default function ReverseRemitPanel({
         <Ionicons name="chevron-forward" size={18} color={colors.onSurfaceTertiary} />
       </Pressable>
 
+      {/* Test-mode send to a UK/EU bank account (Flutterwave sandbox) */}
+      {sendEnabled && (
+        <Pressable
+          testID="reverse-send-cta"
+          disabled={!quote}
+          onPress={() => router.push({ pathname: "/remit-uk", params: { src, dst, amount } })}
+          style={({ pressed }) => [s.sendCta, (!quote || pressed) && { opacity: 0.6 }]}
+        >
+          <Text style={s.sendCtaText}>Continue — pay a {dst === "GBP" ? "UK" : "euro"} bank account</Text>
+        </Pressable>
+      )}
+
       {/* Waitlist CTA */}
-      <View style={s.waitlistCard}>
+      {!sendEnabled && <View style={s.waitlistCard}>
         {joined ? (
           <View style={{ alignItems: "center", paddingVertical: spacing.md }}>
             <Ionicons name="checkmark-circle" size={32} color={colors.success} />
@@ -344,12 +357,14 @@ export default function ReverseRemitPanel({
             {joinErr && <Text style={s.errorInline}>{joinErr}</Text>}
           </>
         )}
-      </View>
+      </View>}
     </View>
   );
 }
 
 const s = StyleSheet.create({
+  sendCta: { minHeight: 52, borderRadius: radius.md, backgroundColor: colors.brand, alignItems: "center", justifyContent: "center", marginTop: spacing.lg, paddingHorizontal: spacing.lg },
+  sendCtaText: { color: "#0F0B08", fontSize: 16, fontWeight: "700" },
   billsCard: {
     flexDirection: "row", alignItems: "center", gap: spacing.md,
     padding: spacing.lg, marginTop: spacing.lg, minHeight: 72,

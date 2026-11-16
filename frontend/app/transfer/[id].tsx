@@ -46,6 +46,7 @@ export default function TransferDetail() {
     if (!data?.repeat) return;
     const params: Record<string, string> = {};
     Object.entries(data.repeat).forEach(([k, v]) => { if (v !== null && v !== undefined) params[k] = String(v); });
+    if (params.kind === "reverse") { router.push({ pathname: "/remit-uk", params }); return; }
     router.push({ pathname: "/remit", params: { repeat: "1", ...params } });
   };
 

@@ -147,6 +147,57 @@ async def create_payout(*, reference: str, country: str, amount_local: float, re
     return {"success": True, "reference_id": data.get("id"), "status": data.get("status") or "NEW"}
 
 
+INTL_BANK_CURRENCIES = {"GBP", "EUR"}
+
+
+def bank_safe(text: str) -> str:
+    """Flutterwave GBP/EUR names accept plain letters only: fold accents, '&' → 'and', drop symbols/digits."""
+    import re
+    import unicodedata
+    t = unicodedata.normalize("NFKD", text or "").encode("ascii", "ignore").decode()
+    t = re.sub(r"[^A-Za-z .'-]", " ", t.replace("&", " and "))
+    return " ".join(t.split()) or "Vaulted Recipient"
+
+
+async def create_intl_bank_payout(*, reference: str, currency: str, amount: float, recipient: dict, sender: dict) -> dict:
+    """GBP (account number + sort code) or EUR (IBAN + SWIFT/BIC) bank payout.
+    recipient: {name, account_number, sort_code?, swift_code?, bank_name?, address: {line1, city, postal_code, country}}
+    sender: {name, email, phone_country_code, phone_number, address: {...}}
+    Returns {success, reference_id, status, mock?, error?}."""
+    if not live_mode():
+        return {"success": True, "reference_id": "flw_mock_" + uuid.uuid4().hex[:16], "status": "SUCCESSFUL", "mock": True}
+    currency = currency.upper()
+    if currency not in INTL_BANK_CURRENCIES:
+        return {"success": False, "error": f"Flutterwave bank payouts not configured for {currency}"}
+    bank = {"account_number": recipient["account_number"].replace(" ", "").upper(),
+            "account_type": recipient.get("account_type") or "individual"}
+    bank["name"] = bank_safe(recipient.get("bank_name") or "")
+    if recipient.get("swift_code"):
+        bank["swift_code"] = recipient["swift_code"].replace(" ", "").upper()
+    if currency == "GBP":
+        bank["sort_code"] = "".join(ch for ch in recipient.get("sort_code") or "" if ch.isdigit())
+    body = {
+        "action": "instant", "type": "bank", "reference": reference, "narration": "Vaulted transfer",
+        "payment_instruction": {
+            "source_currency": currency, "destination_currency": currency,
+            "amount": {"applies_to": "destination_currency", "value": round(amount, 2)},
+            "recipient": {"bank": bank, "name": _split_name(bank_safe(recipient["name"])), "address": recipient["address"],
+                          "email": recipient["email"],
+                          "phone": {"country_code": recipient["phone_country_code"], "number": recipient["phone_number"]}},
+            "sender": {
+                "name": _split_name(bank_safe(sender["name"])), "email": sender["email"],
+                "phone": {"country_code": sender["phone_country_code"], "number": sender["phone_number"]},
+                "address": sender["address"],
+            },
+        },
+    }
+    res = await _call("POST", "/direct-transfers", payload=body, idempotency_key=reference)
+    if not res["success"]:
+        return {"success": False, "error": res.get("message") or f"HTTP {res['status']}"}
+    data = res["data"] or {}
+    return {"success": True, "reference_id": data.get("id"), "status": data.get("status") or "NEW"}
+
+
 async def payout_status(transfer_id: str) -> dict:
     res = await _call("GET", f"/transfers/{transfer_id}")
     return {"success": res["success"], "status": (res["data"] or {}).get("status")}
