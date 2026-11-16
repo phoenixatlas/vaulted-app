@@ -13,6 +13,7 @@ import {
   View, Text, TextInput, StyleSheet, Pressable, ScrollView, ActivityIndicator,
 } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
+import { useRouter } from "expo-router";
 import { api } from "@/src/lib/api";
 import { colors, spacing, radius } from "@/src/lib/theme";
 
@@ -73,6 +74,7 @@ export default function ReverseRemitPanel({
   initialSource?: string;
   userEmail?: string | null;
 }) {
+  const router = useRouter();
   const [sources, setSources] = useState<SourceCorridor[]>([]);
   const [destinations, setDestinations] = useState<DestFiat[]>([]);
   const [src, setSrc] = useState<string>(initialSource || "NG");
@@ -288,6 +290,22 @@ export default function ReverseRemitPanel({
         </View>
       )}
 
+      {/* Bill payments shortcut — the live way to pay UK/EU institutions today */}
+      <Pressable
+        testID="reverse-bills-shortcut"
+        onPress={() => router.push("/bills")}
+        style={({ pressed }) => [s.billsCard, pressed && { opacity: 0.85 }]}
+      >
+        <View style={s.billsIcon}>
+          <Ionicons name="document-text-outline" size={20} color={colors.brand} />
+        </View>
+        <View style={{ flex: 1 }}>
+          <Text style={s.billsTitle}>International Bill Payments</Text>
+          <Text style={s.billsSub}>Paying a university, hospital or business abroad? Upload the invoice and we pay them directly.</Text>
+        </View>
+        <Ionicons name="chevron-forward" size={18} color={colors.onSurfaceTertiary} />
+      </Pressable>
+
       {/* Waitlist CTA */}
       <View style={s.waitlistCard}>
         {joined ? (
@@ -332,6 +350,18 @@ export default function ReverseRemitPanel({
 }
 
 const s = StyleSheet.create({
+  billsCard: {
+    flexDirection: "row", alignItems: "center", gap: spacing.md,
+    padding: spacing.lg, marginTop: spacing.lg, minHeight: 72,
+    borderRadius: radius.lg, borderWidth: 1, borderColor: colors.brand,
+    backgroundColor: colors.brandTertiary,
+  },
+  billsIcon: {
+    width: 40, height: 40, borderRadius: 20, alignItems: "center", justifyContent: "center",
+    backgroundColor: colors.surface,
+  },
+  billsTitle: { fontSize: 15, fontWeight: "700", color: colors.onSurface },
+  billsSub: { fontSize: 12, lineHeight: 16, color: colors.onSurfaceSecondary, marginTop: 2 },
   label: { fontSize: 13, color: colors.onSurfaceSecondary, marginBottom: spacing.xs, marginTop: spacing.md, fontWeight: "500" },
   helperText: { fontSize: 11, color: colors.onSurfaceTertiary, lineHeight: 15, marginTop: 4 },
   errorInline: { color: colors.error, fontSize: 12, marginTop: spacing.sm },
