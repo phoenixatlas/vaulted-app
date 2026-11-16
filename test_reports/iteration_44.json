@@ -1,0 +1,50 @@
+{
+  "summary": "Tested the Africa → UK/EU reverse send in TEST mode with Flutterwave GBP/EUR sandbox payouts, on both backend and frontend. Backend: 16/16 new pytest cases pass. Corridors returns send_enabled:true and status test_send. The public quote is unchanged. The GBP validation (8-digit account, 6-digit sort code, SWIFT format) and EUR validation (IBAN, SWIFT required) return correct 400 messages. 401 without auth, 422 for a bad email, and the min-amount and unsupported-currency checks all work. Valid GBP (12345678 / 20-00-00) and EUR (DE89… / COBADEFF) sends create inbound send transactions with remit.* fields and payout flutterwave mode=live sandbox=true status=NEW, and both reconciled to settled (SUCCESSFUL) within about 30s. A probe found 2 real defects. (1) Flutterwave REQUIRES recipient.bank.name, but the UI labels it 'Bank name (optional)'. Any send without it is rejected and silently becomes a SIMULATED payout. (2) Recipient names with '&', digits, '_' or accented letters (e.g. 'Zoë Müller', 'Smith & Co Ltd', 'Clinic 24') are rejected by Flutterwave name validation, again silently simulated. Frontend: /remit → Send to UK/EU panel shows reverse-send-cta ('Continue — pay a UK bank account' / '…euro bank account'). The waitlist is hidden and reverse-bills-shortcut is present. The /remit-uk GBP flow (NG 100,000 → £53.89) and EUR flow (KE 20,000 → €135.65, DE chip, SWIFT-required error) both reach uk-success. uk-done goes to Activity, and the transfer detail tracking reaches Delivered after reconcile. Outbound Send to Africa still renders. Bug found: 'Send again' on an inbound transfer opens the OUTBOUND Send-to-Africa form pre-filled with amount 20000 in GBP. No deprecated Expo packages in the files reviewed.",
+  "backend_issues": {
+    "critical": [
+      {"endpoint": "POST /api/remit/reverse/send", "issue": "Flutterwave rejects payouts that have no recipient bank name ('payment_instruction.recipient.bank.name must not be null'). The UI marks bank_name optional and the backend only sets bank.name when provided, so sends without a bank name always fall back to a SIMULATED payout without telling anyone. Reproduced with GBP 12345678/200000 and no bank_name.", "priority": "HIGH"},
+      {"endpoint": "POST /api/remit/reverse/send", "issue": "Recipient name is passed to Flutterwave without cleaning (flutterwave._split_name). Flutterwave only accepts letters, spaces, commas, periods, apostrophes and hyphens, 2-50 chars per part. 'Smith & Co Ltd', 'Zoë Müller', 'Clinic 24' and 'TEST_Uni' were all rejected → simulated. This hits real organisation recipients (universities, hospitals) and accented EU names.", "priority": "HIGH"}
+    ],
+    "minor": [
+      {"endpoint": "POST /api/remit/reverse/send", "issue": "When Flutterwave rejects a payout, the response still returns 200 with status settled (mode=simulated). The app shows 'Delivered (test mode)' and nothing indicates the partner rejected it. The reason is only saved in payout.reason. Acceptable for beta, but the reason should be surfaced to testers/admin."},
+      {"endpoint": "GET /api/remit/reverse/corridors", "issue": "The 'note' field still says actual GBP/EUR settlement is Phase 2, but test send is now enabled."},
+      {"endpoint": "routers/reverse_remit.py docstring", "issue": "The module docstring still describes 'Phase 1 — quote-only'."}
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [
+      {"component": "Transfer detail 'Send again' (app/transfer/[id].tsx:49)", "issue": "For an inbound reverse transfer, Send again goes to /remit?destination_code=DE&source_fiat=KES&amount=20000 and opens the OUTBOUND 'Send to Africa' form pre-filled with 20000 in GBP. It should reopen the reverse panel/remit-uk with src/dst/amount and the recipient's bank details.", "testID": "n/a", "priority": "HIGH"},
+      {"component": "remit-uk bank_name input", "issue": "Labelled 'Bank name (optional)', but Flutterwave requires it (see backend issue). Make it required in the UI, or default it on the backend.", "testID": "uk-bank_name", "priority": "HIGH"}
+    ],
+    "integration_issues": [],
+    "design_issues": [
+      {"screen": "Activity list", "issues": ["Reverse sends show the raw account number or IBAN as the row title ('12345678', 'DE89370400440532013000' wraps onto 2 lines) instead of recipient_name."]},
+      {"screen": "Transfer detail (inbound)", "issues": ["The tracking steps say 'Sent from your wallet' and 'Confirmed on the blockchain', which is outbound wording. The inbound sender pays via bank or mobile money in Africa."]},
+      {"screen": "remit-uk success", "issues": ["The floating chat FAB covers the end of the 'Test mode — no money was collected…' text at 375px width."]},
+      {"screen": "/remit direction toggle", "issues": ["At 375px the flag pairs ('🇬🇧 → 🌍') wrap onto 2 lines and the labels look cramped."]}
+    ],
+    "react_native_issues": []
+  },
+  "test_report_links": ["/app/backend/tests/test_iteration44_reverse_send_flutterwave.py", "/app/backend/tests/probe_iteration44_names.py", "/app/backend/tests/cleanup_iteration44.py", "/app/test_reports/pytest/pytest_iteration44.xml"],
+  "action_items": [
+    "Make the bank name required for GBP/EUR (UI + Pydantic), or send a fallback bank.name to Flutterwave. Otherwise every send without it silently becomes simulated.",
+    "Clean the recipient name before sending to Flutterwave: convert accents to plain letters (ë→e, ü→u), replace '&' with 'and', and strip digits/other symbols. Make sure first/last are each 2-50 chars and fall back to a safe value. Optionally validate in the UI.",
+    "Fix 'Send again' for direction=inbound transactions: route to /remit with the reverse tab plus src/dst/amount (or straight to /remit-uk with recipient prefill), not the outbound form.",
+    "Activity row title: use recipient_name for remit transactions where available.",
+    "Inbound tracking timeline copy: e.g. 'Paid from Kenya (KES)' → 'Bridged via USDC' → 'Delivered via SEPA'.",
+    "Update the corridors 'note' and the module docstring to reflect that test send is enabled.",
+    "Update the stale regression tests test_iteration25_reverse_remit.py (expects quote_only, uses reserved email domains) and test_iteration29_payouts_beta.py (expects provider kotani/yellowcard and an old invite code). They fail because of outdated expectations, not regressions."
+  ],
+  "critical_code_review_comments": [
+    "reverse_send saves the transaction before calling Flutterwave. If the HTTP call times out, the payout is simulated, which is fine for beta. In production, simulating a payout after a partner rejection would be dangerous, so gate the _simulate fallback on beta_test_mode explicitly.",
+    "The sender phone defaults to '8000000000' and the address to 'Vaulted customer address' / '100001' when KYC is missing. This works in the sandbox, but needs real KYC data before going live.",
+    "The 403 path (beta_test_mode false) was code-reviewed only. The global setting was not flipped, as instructed."
+  ],
+  "updated_files": ["/app/backend/tests/test_iteration44_reverse_send_flutterwave.py (new)", "/app/backend/tests/probe_iteration44_names.py (new)", "/app/backend/tests/cleanup_iteration44.py (new)"],
+  "success_rate": {"backend": "100% (16/16 new tests). The probe found 2 HIGH defects that make payouts silently simulated", "frontend": "~90% (GBP + EUR flows end-to-end pass; the Send again bug on inbound transfers)"},
+  "seed_data_creation": "Created 11 test transactions on the smoketest@vaulted.app account (TEST-named recipients). All 11 were deleted afterwards by id with cleanup_iteration44.py. No other data was changed.",
+  "retest_needed": true,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "Backend URL is EXPO_PUBLIC_BACKEND_URL in frontend/.env (not EXPO_BACKEND_URL); export EXPO_BACKEND_URL before running pytest. Recipient names in tests must contain no underscores or digits or Flutterwave rejects them. Use 'TEST Something' and always include bank_name. test_iteration44 creates 2 transactions per run; clean them up by id. Reconcile settles live sandbox payouts within about 30s.",
+  "rca_of_issue": "Silent simulated payouts: flutterwave.create_intl_bank_payout only sets bank['name'] when recipient.bank_name is given, and _split_name passes the raw name. Flutterwave v4 validation then rejects with 400, and reverse_send's else-branch calls payouts._simulate, which marks the transfer settled. Repro: POST /api/remit/reverse/send with bank_name '' or name 'Zoë Müller' → payout.mode == 'simulated' and payout.reason contains the validation error."
+}
