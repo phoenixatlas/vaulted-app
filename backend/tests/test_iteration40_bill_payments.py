@@ -139,6 +139,12 @@ class TestInvoice:
 class TestBillFlow:
     def test_full_flow(self, user_h, other_h, admin_h):
         inv = _upload(user_h).json()["invoice_path"]
+        qid = requests.post(f"{API}/bills/quote", headers=user_h, json={"category": "education", "payer_country": "NG",
+                            "payout_currency": "GBP", "amount": 1500}, timeout=30).json()["id"]
+        _b = globals()["_bill_body"]
+        def _bill_body(p, **o):  # noqa: E306 — quote_id now required (iteration 41+)
+            o.setdefault("quote_id", qid)
+            return _b(p, **o)
         # declaration false
         r = requests.post(f"{API}/bills", headers=user_h, json=_bill_body(inv, declaration=False), timeout=30)
         assert r.status_code == 400

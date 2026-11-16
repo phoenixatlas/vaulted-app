@@ -23,6 +23,12 @@ export type Bill = {
   timeline: { at: string; label: string; status: string }[]; decision_note?: string;
 };
 
+export type Payee = { name: string; bank_name: string; account_number: string; routing: string; swift: string; address: string; reference: string };
+export type SavedInstitution = {
+  id: string; category: string; subtype: string; institution: string; beneficiary_name: string; beneficiary_ref: string;
+  payer_country: string; payout_currency: string; payee: Payee;
+};
+
 export const CATEGORY_ICON: Record<string, keyof typeof Ionicons.glyphMap> = {
   education: "school-outline", healthcare: "medkit-outline", business: "briefcase-outline",
 };

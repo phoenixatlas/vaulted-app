@@ -1,28 +1,38 @@
 /** International Bill Payments hub — pick a purpose, see past requests. */
 import { useCallback, useState } from "react";
-import { View, Text, Pressable, ScrollView, RefreshControl, StyleSheet, ActivityIndicator } from "react-native";
+import { View, Text, Pressable, ScrollView, RefreshControl, StyleSheet, ActivityIndicator, Alert, Platform } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { Ionicons } from "@expo/vector-icons";
 import { router, useFocusEffect } from "expo-router";
 import { api } from "@/src/lib/api";
 import { colors, spacing, radius } from "@/src/lib/theme";
-import { Bill, BillHeader, BillConfig, CATEGORY_ICON, STATUS_LABEL, TestModeBanner, bs, money } from "@/src/features/bills/shared";
+import { Bill, BillHeader, BillConfig, CATEGORY_ICON, STATUS_LABEL, SavedInstitution, TestModeBanner, bs, money } from "@/src/features/bills/shared";
 
 const STEPS = ["Choose the payment purpose.", "Upload the supporting invoice or documentation.", "Receive a transparent FX quotation."];
 
 export default function BillsHome() {
   const [cfg, setCfg] = useState<BillConfig | null>(null);
   const [bills, setBills] = useState<Bill[]>([]);
+  const [saved, setSaved] = useState<SavedInstitution[]>([]);
   const [refreshing, setRefreshing] = useState(false);
   const [err, setErr] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     try {
-      const [c, b] = await Promise.all([api<BillConfig>("/bills/config"), api<{ bills: Bill[] }>("/bills")]);
-      setCfg(c); setBills(b.bills); setErr(null);
+      const [c, b, sv] = await Promise.all([api<BillConfig>("/bills/config"), api<{ bills: Bill[] }>("/bills"), api<{ saved: SavedInstitution[] }>("/bills/saved")]);
+      setCfg(c); setBills(b.bills); setSaved(sv.saved); setErr(null);
     } catch (e: any) { setErr(e?.message || "Couldn't load bill payments. Pull to retry."); }
   }, []);
   useFocusEffect(useCallback(() => { load(); }, [load]));
+
+  const removeSaved = (s: SavedInstitution) => {
+    const go = async () => {
+      try { await api(`/bills/saved/${s.id}`, { method: "DELETE" }); setSaved((x) => x.filter((r) => r.id !== s.id)); }
+      catch (e: any) { setErr(e.message); }
+    };
+    if (Platform.OS === "web") { go(); return; }
+    Alert.alert("Remove saved institution?", s.institution, [{ text: "Cancel", style: "cancel" }, { text: "Remove", style: "destructive", onPress: go }]);
+  };
 
   return (
     <SafeAreaView style={{ flex: 1, backgroundColor: colors.surface }} edges={["top"]}>
@@ -34,6 +44,28 @@ export default function BillsHome() {
         <TestModeBanner />
         {!cfg && !err && <ActivityIndicator color={colors.brand} style={{ marginVertical: spacing.lg }} />}
         {err && <Text style={bs.err} testID="bills-load-error">{err}</Text>}
+        {saved.length > 0 && (
+          <>
+            <Text style={[bs.section, { marginTop: 0 }]}>Pay again</Text>
+            {saved.map((s) => (
+              <View key={s.id} style={st.savedRow}>
+                <Pressable testID={`bills-saved-${s.id}`} onPress={() => router.push({ pathname: "/bills/new", params: { saved: s.id } })}
+                  style={({ pressed }) => [st.savedMain, pressed && { opacity: 0.85 }]}>
+                  <Ionicons name={CATEGORY_ICON[s.category]} size={20} color={colors.brandDeep} />
+                  <View style={{ flex: 1 }}>
+                    <Text style={st.rowTitle} numberOfLines={1}>{s.institution}</Text>
+                    <Text style={st.rowSub} numberOfLines={1}>{s.beneficiary_name} · {s.payout_currency} · {s.payee.bank_name}</Text>
+                  </View>
+                  <Text style={st.payAgain}>Pay</Text>
+                </Pressable>
+                <Pressable testID={`bills-saved-remove-${s.id}`} onPress={() => removeSaved(s)} hitSlop={6} style={st.removeBtn}>
+                  <Ionicons name="trash-outline" size={18} color={colors.onSurfaceTertiary} />
+                </Pressable>
+              </View>
+            ))}
+            <Text style={bs.section}>New payment</Text>
+          </>
+        )}
         {(cfg?.categories || []).map((c) => (
           <Pressable key={c.id} testID={`bills-cat-${c.id}`} onPress={() => router.push({ pathname: "/bills/new", params: { category: c.id } })}
             style={({ pressed }) => [st.cat, pressed && { opacity: 0.85 }]}>
@@ -87,5 +119,9 @@ const st = StyleSheet.create({
   row: { flexDirection: "row", alignItems: "center", gap: 12, minHeight: 60, borderBottomWidth: 1, borderBottomColor: colors.divider },
   rowTitle: { fontSize: 15, fontWeight: "600", color: colors.onSurface },
   rowSub: { fontSize: 12, color: colors.onSurfaceSecondary, marginTop: 2 },
+  savedRow: { flexDirection: "row", alignItems: "center", backgroundColor: colors.brandTertiary, borderRadius: radius.lg, marginBottom: spacing.sm, borderWidth: 1, borderColor: colors.border },
+  savedMain: { flex: 1, flexDirection: "row", alignItems: "center", gap: 12, padding: spacing.md, minHeight: 64 },
+  payAgain: { fontSize: 14, fontWeight: "800", color: colors.brandDeep },
+  removeBtn: { width: 44, height: 44, alignItems: "center", justifyContent: "center" },
   badge: { fontSize: 12, fontWeight: "700", color: colors.brandDeep },
 });

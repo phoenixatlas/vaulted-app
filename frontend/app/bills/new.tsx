@@ -8,12 +8,12 @@ import { router, useLocalSearchParams } from "expo-router";
 import { api, API_BASE, getToken } from "@/src/lib/api";
 import { uploadForm } from "@/src/utils/upload";
 import { colors, spacing } from "@/src/lib/theme";
-import { BillConfig, BillHeader, BillQuote, Chip, QuoteRow, TestModeBanner, bs, money } from "@/src/features/bills/shared";
+import { BillConfig, BillHeader, BillQuote, Chip, QuoteRow, SavedInstitution, TestModeBanner, bs, money } from "@/src/features/bills/shared";
 
 type Invoice = { invoice_path: string; invoice_name: string };
 
 export default function NewBill() {
-  const params = useLocalSearchParams<{ category?: string }>();
+  const params = useLocalSearchParams<{ category?: string; saved?: string }>();
   const [cfg, setCfg] = useState<BillConfig | null>(null);
   const [category, setCategory] = useState(params.category || "education");
   const [subtype, setSubtype] = useState("");
@@ -25,10 +25,25 @@ export default function NewBill() {
   const [invoice, setInvoice] = useState<Invoice | null>(null);
   const [quote, setQuote] = useState<BillQuote | null>(null);
   const [declared, setDeclared] = useState(false);
+  const [saveInst, setSaveInst] = useState(true);
+  const [savedFrom, setSavedFrom] = useState<SavedInstitution | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
   const [err, setErr] = useState<string | null>(null);
 
   useEffect(() => { api<BillConfig>("/bills/config").then(setCfg).catch((e) => setErr(e.message)); }, []);
+  // Prefill everything from a saved institution — only the invoice, amount and reference change per payment.
+  useEffect(() => {
+    if (!params.saved) return;
+    api<{ saved: SavedInstitution[] }>("/bills/saved").then(({ saved }) => {
+      const s = saved.find((x) => x.id === params.saved);
+      if (!s) { setErr("That saved institution was removed. Fill in the details below."); return; }
+      setSavedFrom(s);
+      setCategory(s.category); setSubtype(s.subtype);
+      setPurpose({ institution: s.institution, beneficiary_name: s.beneficiary_name, beneficiary_ref: s.beneficiary_ref });
+      setPayer(s.payer_country); setPayout(s.payout_currency);
+      setPayee({ ...s.payee, reference: "" });
+    }).catch((e) => setErr(e.message));
+  }, [params.saved]);
   const cat = cfg?.categories.find((c) => c.id === category);
   const cur = cfg?.payout_currencies.find((c) => c.code === payout);
   useEffect(() => { setQuote(null); }, [category, payer, payout, amount]);
@@ -72,7 +87,7 @@ export default function NewBill() {
       const bill = await api<{ id: string }>("/bills", { method: "POST", body: {
         category, subtype, payer_country: payer, payout_currency: payout, amount: Number(amount),
         beneficiary_name: purpose.beneficiary_name, beneficiary_ref: purpose.beneficiary_ref, institution: purpose.institution,
-        payee, invoice_path: invoice!.invoice_path, invoice_name: invoice!.invoice_name, quote_id: quote!.id, declaration: declared } });
+        payee, invoice_path: invoice!.invoice_path, invoice_name: invoice!.invoice_name, quote_id: quote!.id, declaration: declared, save_institution: saveInst } });
       router.replace(`/bills/${bill.id}`);
     } catch (e: any) { setErr(e.message); } finally { setBusy(null); }
   };
@@ -90,6 +105,14 @@ export default function NewBill() {
       <KeyboardAvoidingView behavior={Platform.OS === "ios" ? "padding" : undefined} style={{ flex: 1 }}>
         <ScrollView contentContainerStyle={{ padding: spacing.lg, paddingRight: spacing.lg + 8, paddingBottom: 140 }} keyboardShouldPersistTaps="handled">
           <TestModeBanner />
+          {savedFrom && (
+            <View style={[bs.card, { flexDirection: "row", gap: 10, alignItems: "center" }]} testID="bill-saved-banner">
+              <Ionicons name="bookmark" size={18} color={colors.brandDeep} />
+              <Text style={{ flex: 1, color: colors.onSurface, fontSize: 13 }}>
+                Using saved details for <Text style={{ fontWeight: "700" }}>{savedFrom.institution}</Text>. Just add the new invoice, its reference and the amount.
+              </Text>
+            </View>
+          )}
           <Text style={bs.section}>1 · Payment purpose</Text>
           <View style={{ flexDirection: "row", gap: 8, flexWrap: "wrap" }}>
             {cfg.categories.map((c) => (
@@ -158,6 +181,12 @@ export default function NewBill() {
               I confirm this payment is for the stated {cat?.label.toLowerCase()} purpose and the invoice is genuine.
             </Text>
           </View>
+          {!savedFrom && (
+            <View style={{ flexDirection: "row", alignItems: "center", gap: 12, marginTop: spacing.md }}>
+              <Switch testID="bill-save-institution" value={saveInst} onValueChange={setSaveInst} />
+              <Text style={{ flex: 1, fontSize: 13, color: colors.onSurface }}>Save this institution so I can pay its future invoices faster.</Text>
+            </View>
+          )}
           {err && <Text style={bs.err} testID="bill-error">{err}</Text>}
           <Pressable testID="bill-submit" onPress={submit} disabled={busy === "submit"} style={[bs.cta, missing ? { opacity: 0.6 } : null]}>
             {busy === "submit" ? <ActivityIndicator color="#0F0B08" /> : <Text style={bs.ctaText}>Submit for review</Text>}

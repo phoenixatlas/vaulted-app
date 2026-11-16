@@ -53,6 +53,7 @@ class BillIn(QuoteIn):
     invoice_name: Optional[str] = ""
     quote_id: str
     declaration: bool
+    save_institution: bool = False
 
 
 class DecisionIn(BaseModel):
@@ -162,7 +163,41 @@ async def create_bill(body: BillIn, user=Depends(get_current_user)):
                      _event("Compliance review of invoice and purpose", "under_review")],
     }
     await db.bill_payments.insert_one(dict(bill))
+    if body.save_institution:
+        await _save_institution(user["id"], body)
     return bill
+
+
+# ---- Saved institutions ------------------------------------------------------
+SAVED_FIELDS = {"_id": 0, "user_id": 0, "institution_key": 0}
+
+
+async def _save_institution(user_id: str, body: BillIn) -> None:
+    """Upsert by institution + account so re-saving refreshes, not duplicates."""
+    payee = body.payee.model_dump()
+    payee["reference"] = ""  # each invoice carries its own reference
+    key = {"user_id": user_id, "institution_key": body.institution.strip().lower(),
+           "account_number": payee["account_number"].strip()}
+    await db.bill_saved_institutions.update_one(key, {
+        "$set": {"category": body.category, "subtype": body.subtype, "institution": body.institution.strip(),
+                 "beneficiary_name": body.beneficiary_name.strip(), "beneficiary_ref": body.beneficiary_ref.strip(),
+                 "payer_country": body.payer_country, "payout_currency": body.payout_currency,
+                 "payee": payee, "updated_at": iso(now_utc())},
+        "$setOnInsert": {"id": str(uuid.uuid4()), "created_at": iso(now_utc())}}, upsert=True)
+
+
+@router.get("/bills/saved")
+async def saved_institutions(user=Depends(get_current_user)):
+    rows = await db.bill_saved_institutions.find({"user_id": user["id"]}, SAVED_FIELDS).sort("updated_at", -1).to_list(50)
+    return {"saved": rows}
+
+
+@router.delete("/bills/saved/{saved_id}")
+async def delete_saved_institution(saved_id: str, user=Depends(get_current_user)):
+    res = await db.bill_saved_institutions.delete_one({"id": saved_id, "user_id": user["id"]})
+    if not res.deleted_count:
+        raise HTTPException(404, "Saved institution not found")
+    return {"ok": True}
 
 
 @router.get("/bills")
