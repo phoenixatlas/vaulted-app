@@ -16,7 +16,8 @@ import re
 from datetime import date
 from pathlib import Path
 
-from site_content import COUNTRIES, FAQ, GUIDES, PAGES, SITE, NAV
+from site_content import COUNTRIES, FAQ, GUIDES, PAGES, SITE
+from company_content import COMPANY_NAV, COMPANY_PAGES, TAGLINE, VAULTED_NAV
 
 ROOT = Path(__file__).resolve().parent.parent
 LEGACY = (ROOT / "src" / "legacy.html").read_text()
@@ -132,6 +133,24 @@ footer { overflow-x: hidden; }
 .pf-hp { position: absolute; left: -9999px; width: 1px; height: 1px; opacity: 0; }
 #pf-msg { font-size: 14px; min-height: 20px; margin: 0; }
 .footer-grid { grid-template-columns: 1.6fr repeat(4, 1fr); }
+.brand img.pa-logo { height: 58px; width: auto; border-radius: 0; }
+@media (max-width: 600px) { .brand img.pa-logo { height: 46px; width: auto; } }
+.co-mark { display: flex; flex-direction: column; line-height: 1.05; }
+.co-mark b { font-family: 'Cormorant Garamond', serif; font-weight: 700; font-size: 26px; color: var(--gold-light); letter-spacing: 0.5px; }
+.co-mark small { font-size: 10px; letter-spacing: 3px; text-transform: uppercase; color: var(--text-secondary); margin-top: 3px; }
+@media (max-width: 600px) { .co-mark b { font-size: 21px; } .co-mark small { font-size: 9px; letter-spacing: 2px; } }
+.product-bar { margin-top: 64px; }
+.product-bar ~ main > .hero:first-child { padding-top: 56px; }
+.product-bar { border-bottom: 1px solid var(--border); background: var(--bg-elevated); position: relative; z-index: 2; }
+.product-bar .container { display: flex; align-items: center; gap: 18px; overflow-x: auto; padding-top: 12px; padding-bottom: 12px; scrollbar-width: none; }
+.product-bar .container::-webkit-scrollbar { display: none; }
+.product-bar .pb-name { display: flex; align-items: center; gap: 8px; font-family: 'Cormorant Garamond', serif; font-weight: 700; font-size: 18px; color: var(--gold-light); text-decoration: none; white-space: nowrap; }
+.product-bar .pb-name img { width: 26px; height: 26px; border-radius: 6px; }
+.product-bar a.pb-link { font-size: 13px; color: var(--text-secondary); text-decoration: none; white-space: nowrap; padding: 8px 0; }
+.product-bar a.pb-link[aria-current="page"], .product-bar a.pb-link:hover { color: var(--gold-light); }
+.mobile-menu .mm-head { font-size: 11px; letter-spacing: 2px; text-transform: uppercase; color: var(--text-muted); margin: 22px 0 4px; }
+.hero.page-hero.home-hero { padding: 150px 0 90px; }
+.hero.page-hero.home-hero h1 { font-size: clamp(40px, 6.5vw, 76px); }
 @media (max-width: 900px) { .footer-grid { grid-template-columns: 1fr 1fr; } }
 """
 
@@ -144,6 +163,8 @@ function layoutChrome() {
   h.style.top = bh + 'px';
   document.body.style.paddingTop = bh + 'px';
   if (m) m.style.top = (bh + h.offsetHeight) + 'px';
+  var pb = document.querySelector('.product-bar');
+  if (pb) pb.style.marginTop = h.offsetHeight + 'px';
 }
 window.addEventListener('resize', layoutChrome);
 document.addEventListener('DOMContentLoaded', layoutChrome);
@@ -223,12 +244,37 @@ async function handlePartnerEnquiry(e) {
   } finally { btn.disabled = false; btn.textContent = 'Send enquiry \\u2192'; }
   return false;
 }
+async function handleSiteForm(e) {
+  e.preventDefault();
+  var f = e.target, btn = f.querySelector('button'), msg = f.querySelector('.sf-msg');
+  var v = function (n) { var el = f.elements[n]; return el ? (el.value || '').trim() : ''; };
+  btn.disabled = true; btn.textContent = 'Sending\u2026'; msg.textContent = '';
+  try {
+    var res = await fetch(WAITLIST_API_BASE + '/api/partners/enquiry', {
+      method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({name: v('name'), email: v('email'), company: v('company'), partner_type: f.getAttribute('data-kind'),
+        corridor: v('corridor'), message: v('message'), website: v('website')})
+    });
+    var data = await res.json().catch(function () { return {}; });
+    if (!res.ok) throw new Error(typeof data.detail === 'string' ? data.detail : 'Please check the form and try again.');
+    f.reset();
+    msg.style.color = 'var(--gold-light)';
+    msg.textContent = f.getAttribute('data-kind') === 'careflow'
+      ? 'Thank you \u2014 you\u2019re on the CareFlow early-interest list. We\u2019ve sent a confirmation email.'
+      : 'Thanks \u2014 we\u2019ve received your message and will reply within 2 working days.';
+  } catch (err) {
+    msg.style.color = '#ff8a80';
+    msg.textContent = (err && err.message) || 'Something went wrong. Email hello@phoenix-atlas.com instead.';
+  } finally { btn.disabled = false; btn.innerHTML = btn.getAttribute('data-label'); }
+  return false;
+}
 // Old one-page anchors (phoenix-atlas.com/#pricing etc.) -> new pages.
 (function () {
   var moved = {'#corridors': '/corridors', '#reverse': '/africa-to-uk', '#features': '/send-money-to-africa#features',
     '#who-its-for': '/send-money-to-africa#who-its-for', '#compare': '/pricing#compare', '#pricing': '/pricing',
     '#security': '/security', '#invest': '/investors#invest'};
-  if ((location.pathname === '/' || location.pathname === '/index.html') && moved[location.hash]) location.replace(moved[location.hash]);
+  if ((location.pathname === '/' || location.pathname === '/index.html') && (moved[location.hash] || location.hash === '#waitlist'))
+    location.replace(moved[location.hash] || '/vaulted#waitlist');
 })();
 """
 
@@ -239,9 +285,10 @@ import hashlib  # noqa: E402
 ASSET_VER = hashlib.sha1((CSS + EXTRA_CSS + JS_MENU).encode()).hexdigest()[:8]
 ORG_LD = {
     "@context": "https://schema.org", "@type": "Organization", "name": "Phoenix-Atlas Technologies Ltd",
-    "url": SITE["url"], "logo": SITE["url"] + "/logo.png", "email": "hello@phoenix-atlas.com",
+    "url": SITE["url"], "logo": SITE["url"] + "/pa-icon.png", "email": "hello@phoenix-atlas.com",
     "identifier": "Companies House 17432346", "address": {"@type": "PostalAddress", "addressCountry": "GB"},
-    "brand": {"@type": "Brand", "name": "Vaulted"},
+    "slogan": "Building Technology. Connecting Possibilities. Creating Impact.",
+    "brand": [{"@type": "Brand", "name": "Vaulted"}, {"@type": "Brand", "name": "CareFlow"}],
     "sameAs": ["https://youtu.be/zrTFni4lfxU"],
 }
 
@@ -255,7 +302,9 @@ def breadcrumb_ld(trail):
         {"@type": "ListItem", "position": i + 1, "name": n, "item": SITE["url"] + p} for i, (n, p) in enumerate(trail)]}
 
 
-def head(title, desc, path, extra_ld=()):
+def head(title, desc, path, extra_ld=(), vaulted=True):
+    icon = "/logo.png" if vaulted else "/pa-icon.png"
+    og = "og-image.png" if vaulted else "og-company.png"
     url = SITE["url"] + (path if path != "/" else "/")
     lds = "\n  ".join(jsonld(x) for x in (ORG_LD, *extra_ld))
     return f"""<!DOCTYPE html>
@@ -268,21 +317,21 @@ def head(title, desc, path, extra_ld=()):
   <meta name="description" content="{desc}">
   <meta name="robots" content="index, follow">
   <link rel="canonical" href="{url}">
-  <link rel="icon" type="image/png" href="/logo.png">
-  <link rel="apple-touch-icon" href="/logo.png">
-  <meta property="og:site_name" content="Vaulted">
+  <link rel="icon" type="image/png" href="{icon}">
+  <link rel="apple-touch-icon" href="{icon}">
+  <meta property="og:site_name" content="Phoenix-Atlas Technologies">
   <meta property="og:title" content="{title}">
   <meta property="og:description" content="{desc}">
   <meta property="og:url" content="{url}">
   <meta property="og:type" content="{'article' if path.startswith('/learn/') else 'website'}">
-  <meta property="og:image" content="{SITE['url']}/og-image.png">
+  <meta property="og:image" content="{SITE['url']}/{og}">
   <meta property="og:image:width" content="1200">
   <meta property="og:image:height" content="630">
   <meta property="og:locale" content="en_GB">
   <meta name="twitter:card" content="summary_large_image">
   <meta name="twitter:title" content="{title}">
   <meta name="twitter:description" content="{desc}">
-  <meta name="twitter:image" content="{SITE['url']}/og-image.png">
+  <meta name="twitter:image" content="{SITE['url']}/{og}">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:wght@500;600;700&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
@@ -293,50 +342,60 @@ def head(title, desc, path, extra_ld=()):
 """
 
 
-def header(path):
-    def link(label, href):
+def header(path, vaulted=False):
+    def link(label, href, cls=""):
         cur = ' aria-current="page"' if href == path else ""
-        return f'<a href="{href}"{cur}>{label}</a>'
-    desk = "\n        ".join(link(l, h) for l, h in NAV)
-    mob = "\n    ".join(link(l, h) for l, h in [("Home", "/")] + NAV + [("FAQ", "/faq"), ("Compliance", "/compliance")])
+        return f'<a{cls} href="{href}"{cur}>{label}</a>'
+    desk = "\n        ".join(link(l, h) for l, h in COMPANY_NAV)
+    mob = "\n    ".join([link("Home", "/")] + [link(l, h) for l, h in COMPANY_NAV]
+                        + ['<div class="mm-head">Vaulted</div>'] + [link(l, h) for l, h in VAULTED_NAV]
+                        + ['<div class="mm-head">CareFlow</div>', link("About CareFlow", "/careflow")])
+    bar = ""
+    if vaulted:
+        bar = ('\n  <nav class="product-bar" aria-label="Vaulted"><div class="container">'
+               '<a class="pb-name" href="/vaulted"><img src="/logo.png" alt="" width="26" height="26">Vaulted</a>'
+               + "".join(link(l, h, ' class="pb-link"') for l, h in VAULTED_NAV[1:]) + "</div></nav>")
+    cta = ('<a class="btn btn-launch" href="https://app.phoenix-atlas.com">Preview Vaulted &rarr;</a>' if vaulted
+           else '<a class="btn btn-launch" href="/contact">Get in touch &rarr;</a>')
     return f"""
   <div class="preauth-banner" role="alert" aria-live="polite">
-    <strong>Vaulted is a UK fintech in build.</strong>
+    <strong>Vaulted, our fintech product, is in build.</strong>
     Live money-transfer services will launch upon receipt of applicable authorizations from the Financial Conduct Authority.
     Not currently open for customer transactions.
     <a href="/risk-disclosure">Read the risk disclosure &rarr;</a>
   </div>
   <header>
     <div class="container nav">
-      <a class="brand" href="/" aria-label="Vaulted home">
-        <img src="/logo.png" alt="Vaulted logo" width="60" height="60">
-        <span class="brand-by" style="color:#E6C879">A product of Phoenix-Atlas Technologies Ltd</span>
+      <a class="brand" href="/" aria-label="Phoenix-Atlas Technologies home">
+        <img class="pa-logo" src="/pa-logo.png" alt="Phoenix-Atlas Technologies Ltd" width="716" height="273">
       </a>
       <nav class="nav-links" aria-label="Main">
         {desk}
-        <a class="btn btn-launch" href="https://app.phoenix-atlas.com">Preview app &rarr;</a>
+        {cta}
         <button id="menu-toggle" class="menu-toggle" type="button" aria-label="Menu" aria-expanded="false" aria-controls="mobile-menu" onclick="toggleMenu()">&#9776;</button>
       </nav>
     </div>
   </header>
   <nav id="mobile-menu" class="mobile-menu" aria-label="Mobile">
     {mob}
-    <a class="btn btn-primary" href="#waitlist" onclick="toggleMenu(false)">Join the waitlist &rarr;</a>
-  </nav>
+    <a class="btn btn-primary" href="/contact" onclick="toggleMenu(false)">Get in touch &rarr;</a>
+  </nav>{bar}
 """
 
 
 def page_hero(trail, eyebrow, h1, sub, ctas=True):
-    crumbs = " / ".join(f'<a href="{p}">{n}</a>' for n, p in trail[:-1]) + f" / <span>{trail[-1][0]}</span>"
-    cta = """
-      <div class="hero-cta-row">
-        <a class="btn btn-primary btn-large" href="#waitlist">Join the waitlist &rarr;</a>
-        <a class="btn btn-ghost btn-large" href="https://app.phoenix-atlas.com">Preview the app</a>
-      </div>""" if ctas else ""
+    crumbs = (" / ".join(f'<a href="{p}">{n}</a>' for n, p in trail[:-1]) + f" / <span>{trail[-1][0]}</span>") if len(trail) > 1 else ""
+    if ctas is True:
+        ctas = [("Join the waitlist &rarr;", "#waitlist", True), ("Preview the app", "https://app.phoenix-atlas.com", False)]
+    cta = ('\n      <div class="hero-cta-row">' + "".join(
+        f'<a class="btn {"btn-primary" if pri else "btn-ghost"} btn-large" href="{h}">{l}</a>' for l, h, pri in ctas)
+        + "</div>") if ctas else ""
+    home = " home-hero" if len(trail) == 1 else ""
+    crumb_nav = f'<nav class="crumbs" aria-label="Breadcrumb">{crumbs}</nav>' if crumbs else ""
     return f"""
-  <section class="hero page-hero">
+  <section class="hero page-hero{home}">
     <div class="container">
-      <nav class="crumbs" aria-label="Breadcrumb">{crumbs}</nav>
+      {crumb_nav}
       <div class="eyebrow">{eyebrow}</div>
       <h1>{h1}</h1>
       <p class="hero-sub">{sub}</p>{cta}
@@ -364,30 +423,36 @@ FOOTER = """
     <div class="container">
       <div class="footer-grid">
         <div class="footer-brand">
-          <div class="wordmark">Vaulted</div>
-          <div class="wordmark-tag">Self-Custody &middot; Encrypted &middot; Sovereign</div>
-          <p>Vaulted is a product built by <strong>Phoenix-Atlas Technologies Ltd</strong>, a UK-registered fintech (Company No. 17432346). Currently in waitlist mode ahead of authorization from the Financial Conduct Authority.</p>
+          <img src="/pa-logo.png" alt="Phoenix-Atlas Technologies Ltd" width="716" height="273" style="height:84px;width:auto;margin-bottom:12px;">
+          <div class="wordmark-tag">TAGLINE_TEXT</div>
+          <p><strong>Phoenix-Atlas Technologies Ltd</strong> is a UK technology and software innovation company (Company No. 17432346), building Vaulted and CareFlow.</p>
         </div>
-        <div class="footer-col"><h4>Product</h4><ul>
+        <div class="footer-col"><h4>Company</h4><ul>
+          <li><a href="/about">About us</a></li>
+          <li><a href="/what-we-do">What we do</a></li>
+          <li><a href="/products">Products</a></li>
+          <li><a href="/approach">Our approach</a></li>
+          <li><a href="/investors">Investors</a></li>
+          <li><a href="/contact">Contact</a></li>
+        </ul></div>
+        <div class="footer-col"><h4>Vaulted</h4><ul>
+          <li><a href="/vaulted">Overview</a></li>
           <li><a href="/send-money-to-africa">Send money to Africa</a></li>
           <li><a href="/africa-to-uk">Africa to UK &amp; EU</a></li>
           <li><a href="/wallet">Self-custody wallet</a></li>
           <li><a href="/security">Security</a></li>
           <li><a href="/corridors">Corridors</a></li>
           <li><a href="/pricing">Pricing</a></li>
+          <li><a href="/business">Business &amp; partners</a></li>
+          <li><a href="/compliance">Compliance</a></li>
+          <li><a href="/learn">Guides</a></li>
+          <li><a href="/faq">FAQ</a></li>
           <li><a href="https://app.phoenix-atlas.com">Preview app</a></li>
         </ul></div>
-        <div class="footer-col"><h4>Company</h4><ul>
-          <li><a href="/business">Business &amp; partners</a></li>
-          <li><a href="/investors">Investors</a></li>
-          <li><a href="/compliance">Compliance &amp; launch stages</a></li>
-          <li><a href="mailto:hello@phoenix-atlas.com">Contact</a></li>
+        <div class="footer-col"><h4>CareFlow</h4><ul>
+          <li><a href="/careflow">About CareFlow</a></li>
+          <li><a href="/careflow#careflow-interest">Register interest</a></li>
           <li><a href="mailto:support@phoenix-atlas.com">Support</a></li>
-        </ul></div>
-        <div class="footer-col"><h4>Learn</h4><ul>
-          <li><a href="/learn">All guides</a></li>
-          GUIDE_LINKS
-          <li><a href="/faq">FAQ</a></li>
         </ul></div>
         <div class="footer-col"><h4>Legal</h4><ul>
           <li><a href="/risk-disclosure">Risk disclosure</a></li>
@@ -409,19 +474,49 @@ FOOTER = """
 """
 
 
-def render(path, title, desc, body, trail=None, extra_ld=()):
+def render(path, title, desc, body, trail=None, extra_ld=(), vaulted=True):
     lds = list(extra_ld)
     if trail:
         lds.append(breadcrumb_ld(trail))
-    guide_links = "".join(f'<li><a href="/learn/{g["slug"]}">{g["short"]}</a></li>' for g in GUIDES)
-    html = (head(title, desc, path, lds) + header(path) + "  <main>" + body
-            + legacy_section("waitlist") + "\n  </main>\n" + FOOTER.replace("GUIDE_LINKS", guide_links)
+    html = (head(title, desc, path, lds, vaulted) + header(path, vaulted) + "  <main>" + body
+            + (legacy_section("waitlist") if vaulted else "") + "\n  </main>\n" + FOOTER.replace("TAGLINE_TEXT", TAGLINE)
             + "\n  " + MODAL_HTML + "\n  " + MODAL_CSS
             + f'\n  <script src="/assets/site.js?v={ASSET_VER}"></script>\n</body>\n</html>\n')
     out = ROOT / (("index" if path == "/" else path.strip("/")) + ".html")
     out.parent.mkdir(parents=True, exist_ok=True)
     out.write_text(html)
     return path
+
+
+FORM_COPY = {
+    "contact": ("contact-form", "Send us a message", "", [
+        ("name", "Your name", "text", True), ("email", "Email address", "email", True),
+        ("company", "Organisation (optional)", "text", False)],
+        ("corridor", "What is it about?", ["General enquiry", "Partnership", "Investment", "Vaulted", "CareFlow", "Press &amp; media", "Careers"]),
+        ("message", "Your message", True), "Send message &rarr;", "general"),
+    "careflow": ("careflow-interest", "Register early interest in CareFlow",
+                 "Tell us a little about yourself and we&rsquo;ll keep you updated as CareFlow develops. No spam &mdash; just meaningful updates.", [
+        ("name", "Your name", "text", True), ("email", "Email address", "email", True),
+        ("company", "Country you live in", "text", True)],
+        ("corridor", "I am&hellip;", ["Supporting family abroad", "A healthcare provider", "A potential partner or investor", "Other"]),
+        ("message", "Anything you&rsquo;d like us to know? (optional)", False), "Register interest &rarr;", "careflow"),
+}
+
+
+def site_form(kind: str) -> str:
+    """Contact / CareFlow interest form &mdash; both land in the admin Partner leads inbox."""
+    fid, title, intro, inputs, (sel_name, sel_label, opts), (ta_name, ta_label, ta_req), btn, ptype = FORM_COPY[kind]
+    fields = [f'<input name="{n}" type="{t}" placeholder="{l}" aria-label="{l}"{" required" if req else ""} maxlength="160">'
+              for n, l, t, req in inputs]
+    select = (f'<select name="{sel_name}" required aria-label="{sel_label}"><option value="" disabled selected>{sel_label}</option>'
+              + "".join(f"<option>{o}</option>" for o in opts) + "</select>")
+    return prose(f'<h2 id="{fid}">{title}</h2>' + (f"<p>{intro}</p>" if intro else "")
+                 + f'<form class="partner-form" data-kind="{ptype}" onsubmit="return handleSiteForm(event)">'
+                 f'<div class="pf-row">{fields[0]}{fields[1]}</div><div class="pf-row">{fields[2]}{select}</div>'
+                 f'<textarea name="{ta_name}" rows="5" placeholder="{ta_label}" aria-label="{ta_label}" maxlength="2000"{" required" if ta_req else ""}></textarea>'
+                 '<input class="pf-hp" name="website" tabindex="-1" autocomplete="off" aria-hidden="true">'
+                 f'<button class="btn btn-primary" type="submit" data-label="{btn}">{btn}</button>'
+                 '<p class="sf-msg" role="status" aria-live="polite" style="font-size:14px;min-height:20px;margin:0"></p></form>', bg=True)
 
 
 # ---------------------------------------------------------------- build
@@ -451,7 +546,7 @@ def rate_widget(c) -> str:
 def build_country(c):
     path = f"/send-money-to-{c['slug']}"
     name, cap = c["name"], _cap(c["name"])
-    trail = [("Home", "/"), ("Corridors", "/corridors"), (f"Send money to {cap}", path)]
+    trail = [("Home", "/"), ("Vaulted", "/vaulted"), ("Corridors", "/corridors"), (f"Send money to {cap}", path)]
     sandbox = c["status"].startswith("Sandbox")
     partner = c["status"].startswith("Supported")
     title = f"Send Money to {_plain(cap)} from the UK | Vaulted"
@@ -495,13 +590,19 @@ def build():
     (ROOT / "assets" / "site.js").write_text("\n".join([JS_WAITLIST, JS_INVESTOR, JS_MODAL, JS_MENU]))
 
     paths = []
-    for p in PAGES:
-        trail = [("Home", "/")] + ([(p["crumb"], p["path"])] if p["path"] != "/" else [])
+    for p in COMPANY_PAGES + PAGES:
+        company = p in COMPANY_PAGES
+        parent = p.get("parent") or (None if company or p["path"] == "/vaulted" else ("Vaulted", "/vaulted"))
+        trail = [("Home", "/")] + ([parent] if parent else []) + ([(p["crumb"], p["path"])] if p["path"] != "/" else [])
         body = ""
         for block in p["blocks"]:
             kind = block[0]
             if kind == "hero":
-                body += page_hero(trail, *block[1:]) if p["path"] != "/" else legacy_section('class="hero"')
+                body += page_hero(trail, *block[1:])
+            elif kind == "legacy_hero":
+                body += legacy_section('class="hero"')
+            elif kind == "form":
+                body += site_form(block[1])
             elif kind == "legacy":
                 body += legacy_section(block[1])
             elif kind == "prose":
@@ -518,14 +619,14 @@ def build():
             lds.append({"@context": "https://schema.org", "@type": "FAQPage", "mainEntity": [
                 {"@type": "Question", "name": q, "acceptedAnswer": {"@type": "Answer", "text": re.sub("<[^>]+>", "", a)}}
                 for q, a in FAQ]})
-        paths.append(render(p["path"], p["title"], p["desc"], body, trail if p["path"] != "/" else None, lds))
+        paths.append(render(p["path"], p["title"], p["desc"], body, trail if p["path"] != "/" else None, lds, vaulted=not company))
 
     # Per-country corridor pages
     for c in COUNTRIES:
         paths.append(build_country(c))
 
     # Learn hub + guides
-    learn_trail = [("Home", "/"), ("Learn", "/learn")]
+    learn_trail = [("Home", "/"), ("Vaulted", "/vaulted"), ("Learn", "/learn")]
     hub = page_hero(learn_trail, "Learn", "Guides to sending money home, <span class=\"gold-text\">safely</span>.",
                     "Plain-English explainers on cross-border remittance, stablecoin payment rails and keeping a self-custody wallet safe.", ctas=False)
     hub += prose(cards([{"title": g["title"], "body": g["desc"], "href": f"/learn/{g['slug']}", "cta": "Read the guide"} for g in GUIDES]))
@@ -542,7 +643,7 @@ def build():
         article = {"@context": "https://schema.org", "@type": "Article", "headline": re.sub("<[^>]+>", "", g["title"]),
                    "description": g["desc"], "dateModified": TODAY, "datePublished": g["published"],
                    "author": {"@type": "Organization", "name": "Phoenix-Atlas Technologies Ltd"},
-                   "publisher": {"@type": "Organization", "name": "Phoenix-Atlas Technologies Ltd", "logo": {"@type": "ImageObject", "url": SITE["url"] + "/logo.png"}},
+                   "publisher": {"@type": "Organization", "name": "Phoenix-Atlas Technologies Ltd", "logo": {"@type": "ImageObject", "url": SITE["url"] + "/pa-icon.png"}},
                    "mainEntityOfPage": SITE["url"] + path}
         paths.append(render(path, g["seo_title"], g["desc"], body, trail, [article]))
 
@@ -553,9 +654,10 @@ def build():
         + "".join(f"  <url><loc>{SITE['url']}{'' if u == '/' else u}{'/' if u == '/' else ''}</loc><lastmod>{TODAY}</lastmod></url>\n" for u in urls)
         + "</urlset>\n")
     (ROOT / "robots.txt").write_text(f"User-agent: *\nAllow: /\n\nSitemap: {SITE['url']}/sitemap.xml\n")
-    llms = [f"# Vaulted by Phoenix-Atlas Technologies Ltd", "",
+    llms = ["# Phoenix-Atlas Technologies Ltd", "",
             "> " + SITE["summary"], ""]
-    llms += ["## Pages"] + [f"- [{p['crumb']}]({SITE['url']}{p['path'] if p['path'] != '/' else ''}): {p['desc']}" for p in PAGES]
+    llms += ["## Company"] + [f"- [{p['crumb']}]({SITE['url']}{p['path'] if p['path'] != '/' else ''}): {p['desc']}" for p in COMPANY_PAGES]
+    llms += ["", "## Vaulted"] + [f"- [{p['crumb']}]({SITE['url']}{p['path']}): {p['desc']}" for p in PAGES]
     llms += ["", "## Guides"] + [f"- [{g['short']}]({SITE['url']}/learn/{g['slug']}): {g['desc']}" for g in GUIDES]
     llms += ["", "## Corridors"] + [f"- [Send money to {_plain(c['name'])}]({SITE['url']}/send-money-to-{c['slug']}): "
                                     f"{_plain(c['currency'])}; {c['status']}" for c in COUNTRIES]

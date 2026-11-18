@@ -6,13 +6,16 @@ claim live customer service before FCA authorization.
 
 SITE = {
     "url": "https://www.phoenix-atlas.com",
-    "summary": ("Vaulted is a fiat-first cross-border remittance app with a self-custody crypto wallet, built by "
-                "Phoenix-Atlas Technologies Ltd (UK, Company No. 17432346). It is designed for UK/EU to Africa "
-                "and Africa to UK/EU payments over regulated stablecoin rails. Vaulted is in waitlist / preview "
-                "mode and is not yet authorized by the FCA; it is not open for customer transactions."),
+    "summary": ("Phoenix-Atlas Technologies Ltd (UK, Company No. 17432346) is a technology and software innovation company "
+                "designing, developing and delivering intelligent digital solutions across software development, digital product "
+                "innovation, financial technology and connected digital experiences. Its products are Vaulted, a fiat-first "
+                "cross-border remittance app with a self-custody wallet (in waitlist / preview mode, not yet FCA-authorized and not open "
+                "for customer transactions), and CareFlow, an outcome-based payment and family-support platform for healthcare (in development)."),
     "facts": [
         "Company: Phoenix-Atlas Technologies Ltd, registered in England and Wales, Company No. 17432346.",
-        "Product: Vaulted — cross-border remittance + self-custody wallet + end-to-end encrypted chat and video calls.",
+        "Tagline: Building Technology. Connecting Possibilities. Creating Impact.",
+        "Products: Vaulted (cross-border payments) and CareFlow (outcome-based family healthcare support — 'Don't just send money. Send the help.').",
+        "Vaulted: cross-border remittance + self-custody wallet + end-to-end encrypted chat and video calls.",
         "Status: pre-launch, waitlist and preview app only; live money transfer launches upon applicable FCA authorizations.",
         "Directions: UK/EU to Africa (outbound) and Africa to UK/EU (reverse corridor, for school fees, medical bills and business payments).",
         "Rails: regulated stablecoins (USDC) and low-cost networks (Stellar XLM, XRP Ledger, Polygon, Base, Arbitrum); payout to mobile money (M-Pesa, MoMo) or bank.",
@@ -33,16 +36,15 @@ ILLUSTRATIVE = ('<p style="font-size:13px;color:var(--text-muted)">Vaulted is in
 
 PAGES = [
     {
-        "path": "/", "crumb": "Home",
+        "path": "/vaulted", "crumb": "Vaulted",
         "title": "Vaulted — Send Money from the UK to Africa and Back | Self-Custody Remittance App",
         "desc": "Vaulted by Phoenix-Atlas is a UK fintech in build: fiat-first remittance between the UK/EU and Africa on stablecoin rails, with a self-custody wallet and encrypted chat. Join the waitlist.",
-        "ld": [{"@context": "https://schema.org", "@type": "WebSite", "name": "Vaulted", "url": "https://www.phoenix-atlas.com/"},
-               {"@context": "https://schema.org", "@type": "SoftwareApplication", "name": "Vaulted", "applicationCategory": "FinanceApplication",
+        "ld": [{"@context": "https://schema.org", "@type": "SoftwareApplication", "name": "Vaulted", "applicationCategory": "FinanceApplication",
                 "operatingSystem": "iOS, Android, Web", "description": SITE["summary"],
                 "offers": {"@type": "Offer", "price": "0", "priceCurrency": "GBP"},
                 "publisher": {"@type": "Organization", "name": "Phoenix-Atlas Technologies Ltd"}}],
         "blocks": [
-            ("hero",),
+            ("legacy_hero",),
             ("cards", "<h2>Everything Vaulted does, one page each.</h2><p>Pick the part that matters to you.</p>", [
                 {"title": "Send money to Africa", "body": "Pounds, euros or dollars in; M-Pesa, mobile money or bank payout out. No crypto knowledge needed.", "href": "/send-money-to-africa"},
                 {"title": "Africa to the UK &amp; EU", "body": "The reverse corridor for school fees, medical bills and business payments into GBP and EUR.", "href": "/africa-to-uk"},

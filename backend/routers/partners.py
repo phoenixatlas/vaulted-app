@@ -13,22 +13,24 @@ from typing import Optional
 from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, EmailStr, Field
 
-from brand import brand_logo_img
+from brand import brand_logo_img, company_logo_img
 from deps import ADMIN_EMAILS, db, iso, logger, now_utc, require_admin
 from emails import send_email_via_resend
 
 router = APIRouter()
 
-PARTNER_TYPES = {"payment_bank", "psp_emi", "offramp", "mobile_money", "liquidity", "other"}
+PARTNER_TYPES = {"payment_bank", "psp_emi", "offramp", "mobile_money", "liquidity", "other", "general", "careflow"}
+# Website contact + CareFlow interest forms share this inbox; company/corridor become optional for them.
+SITE_FORM_TYPES = {"general", "careflow"}
 _last_by_ip: dict = {}
 
 
 class PartnerEnquiryIn(BaseModel):
     name: str = Field(min_length=1, max_length=120)
     email: EmailStr
-    company: str = Field(min_length=1, max_length=160)
+    company: str = Field(default="", max_length=160)
     partner_type: str = "other"
-    corridor: str = Field(min_length=1, max_length=120)
+    corridor: str = Field(default="", max_length=120)
     message: Optional[str] = Field(default="", max_length=2000)
     website: Optional[str] = ""  # honeypot — real users never fill it
 
@@ -43,6 +45,11 @@ async def _recipients() -> list:
 async def partner_enquiry(body: PartnerEnquiryIn, request: Request):
     if body.website:
         return {"ok": True}  # silently drop bots
+    site_form = body.partner_type in SITE_FORM_TYPES
+    if not site_form and (not body.company.strip() or not body.corridor.strip()):
+        raise HTTPException(status_code=422, detail="Company and corridor are required.")
+    if body.partner_type == "general" and not (body.message or "").strip():
+        raise HTTPException(status_code=422, detail="Please include a message.")
     # Rightmost X-Forwarded-For hop is added by our own ingress (client can't spoof it).
     ip = (request.headers.get("x-forwarded-for") or (request.client.host if request.client else "")).split(",")[-1].strip()
     now = time.time()
@@ -54,7 +61,7 @@ async def partner_enquiry(body: PartnerEnquiryIn, request: Request):
 
     lead = {
         "id": str(uuid.uuid4()), "name": body.name.strip(), "email": body.email.lower(),
-        "company": body.company.strip(), "corridor": body.corridor.strip(),
+        "company": body.company.strip() or ("—" if site_form else ""), "corridor": body.corridor.strip() or "General enquiry",
         "partner_type": body.partner_type if body.partner_type in PARTNER_TYPES else "other",
         "message": (body.message or "").strip(), "status": "new", "created_at": iso(now_utc()),
     }
@@ -67,6 +74,24 @@ async def partner_enquiry(body: PartnerEnquiryIn, request: Request):
 async def _send_lead_emails(lead: dict) -> None:
     """Operator alert + branded auto-reply, sent in the background."""
     e = {k: html.escape(str(v)) for k, v in lead.items()}
+    kind = lead["partner_type"]
+    if kind in SITE_FORM_TYPES:
+        label = "CareFlow interest" if kind == "careflow" else "Website enquiry"
+        page = (f"<h2>{label} — {e['name']}</h2>"
+                f"<p><b>Email:</b> <a href='mailto:{e['email']}'>{e['email']}</a><br>"
+                f"<b>{'Country' if kind == 'careflow' else 'Organisation'}:</b> {e['company']}<br>"
+                f"<b>{'I am' if kind == 'careflow' else 'Topic'}:</b> {e['corridor']}</p><p><b>Message:</b><br>{e['message'] or '—'}</p>")
+        for to in await _recipients():
+            try:
+                await send_email_via_resend(to, f"{label}: {lead['name']} · {lead['corridor']}", page)
+            except Exception as ex:  # noqa: BLE001
+                logger.warning("[partners] alert email failed: %s", ex)
+        try:
+            subj = "You're on the CareFlow early-interest list" if kind == "careflow" else "Thanks for getting in touch — Phoenix-Atlas"
+            await send_email_via_resend(lead["email"], subj, _site_reply_html(e, kind))
+        except Exception as ex:  # noqa: BLE001
+            logger.warning("[partners] auto-reply failed: %s", ex)
+        return
     page = (
         f"<h2>New partner enquiry — {e['company']}</h2>"
         f"<p><b>Name:</b> {e['name']}<br><b>Email:</b> <a href='mailto:{e['email']}'>{e['email']}</a><br>"
@@ -101,6 +126,29 @@ def _auto_reply_html(e: dict) -> str:
     <p style="font-size:12px;line-height:1.6;color:#8A7F70;border-top:1px solid #2A221C;padding-top:16px;margin-top:24px;">
       Vaulted is built by Phoenix-Atlas Technologies Ltd, registered in England and Wales (Company No. 17432346). Vaulted is not currently authorized by the FCA and is not open for customer transactions.
       Reply to this email or write to hello@phoenix-atlas.com.</p>
+  </div>
+</div>"""
+
+
+def _site_reply_html(e: dict, kind: str) -> str:
+    first = e["name"].split()[0] if e["name"] else "there"
+    if kind == "careflow":
+        body = ("Thank you for registering early interest in <b style='color:#F5EDDF;'>CareFlow</b> &mdash; our outcome-based payment and "
+                "family-support platform, starting with healthcare. We&rsquo;ll share meaningful updates as development progresses.")
+        cta = ("https://www.phoenix-atlas.com/careflow", "About CareFlow &rarr;")
+    else:
+        body = (f"We&rsquo;ve received your message about <b style='color:#F5EDDF;'>{e['corridor']}</b>. "
+                "The founder reads every message and will reply personally within 2 working days.")
+        cta = ("https://www.phoenix-atlas.com/products", "Our products &rarr;")
+    return f"""<div style="background:#0A0807;padding:32px 16px;font-family:Inter,Arial,sans-serif;">
+  <div style="max-width:560px;margin:0 auto;background:#161210;border:1px solid #2A221C;border-radius:18px;padding:32px;color:#F5EDDF;">
+    {company_logo_img(240)}
+    <h1 style="font-family:Georgia,serif;font-weight:600;font-size:26px;color:#E8D4A8;text-align:center;margin:0 0 18px;">Thanks, {first}.</h1>
+    <p style="font-size:15px;line-height:1.6;color:#CFC3B0;">{body}</p>
+    <p style="text-align:center;margin:24px 0;"><a href="{cta[0]}" style="background:#C9A35B;color:#0F0B08;text-decoration:none;font-weight:700;padding:14px 26px;border-radius:999px;display:inline-block;">{cta[1]}</a></p>
+    <p style="font-size:12px;line-height:1.6;color:#8A7F70;border-top:1px solid #2A221C;padding-top:16px;margin-top:24px;">
+      Phoenix-Atlas Technologies Ltd &middot; Building Technology. Connecting Possibilities. Creating Impact.<br>
+      Registered in England and Wales (Company No. 17432346). Reply to this email or write to hello@phoenix-atlas.com.</p>
   </div>
 </div>"""
 

@@ -359,6 +359,8 @@ function layoutChrome() {
   h.style.top = bh + 'px';
   document.body.style.paddingTop = bh + 'px';
   if (m) m.style.top = (bh + h.offsetHeight) + 'px';
+  var pb = document.querySelector('.product-bar');
+  if (pb) pb.style.marginTop = h.offsetHeight + 'px';
 }
 window.addEventListener('resize', layoutChrome);
 document.addEventListener('DOMContentLoaded', layoutChrome);
@@ -438,10 +440,35 @@ async function handlePartnerEnquiry(e) {
   } finally { btn.disabled = false; btn.textContent = 'Send enquiry \u2192'; }
   return false;
 }
+async function handleSiteForm(e) {
+  e.preventDefault();
+  var f = e.target, btn = f.querySelector('button'), msg = f.querySelector('.sf-msg');
+  var v = function (n) { var el = f.elements[n]; return el ? (el.value || '').trim() : ''; };
+  btn.disabled = true; btn.textContent = 'Sending…'; msg.textContent = '';
+  try {
+    var res = await fetch(WAITLIST_API_BASE + '/api/partners/enquiry', {
+      method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({name: v('name'), email: v('email'), company: v('company'), partner_type: f.getAttribute('data-kind'),
+        corridor: v('corridor'), message: v('message'), website: v('website')})
+    });
+    var data = await res.json().catch(function () { return {}; });
+    if (!res.ok) throw new Error(typeof data.detail === 'string' ? data.detail : 'Please check the form and try again.');
+    f.reset();
+    msg.style.color = 'var(--gold-light)';
+    msg.textContent = f.getAttribute('data-kind') === 'careflow'
+      ? 'Thank you — you’re on the CareFlow early-interest list. We’ve sent a confirmation email.'
+      : 'Thanks — we’ve received your message and will reply within 2 working days.';
+  } catch (err) {
+    msg.style.color = '#ff8a80';
+    msg.textContent = (err && err.message) || 'Something went wrong. Email hello@phoenix-atlas.com instead.';
+  } finally { btn.disabled = false; btn.innerHTML = btn.getAttribute('data-label'); }
+  return false;
+}
 // Old one-page anchors (phoenix-atlas.com/#pricing etc.) -> new pages.
 (function () {
   var moved = {'#corridors': '/corridors', '#reverse': '/africa-to-uk', '#features': '/send-money-to-africa#features',
     '#who-its-for': '/send-money-to-africa#who-its-for', '#compare': '/pricing#compare', '#pricing': '/pricing',
     '#security': '/security', '#invest': '/investors#invest'};
-  if ((location.pathname === '/' || location.pathname === '/index.html') && moved[location.hash]) location.replace(moved[location.hash]);
+  if ((location.pathname === '/' || location.pathname === '/index.html') && (moved[location.hash] || location.hash === '#waitlist'))
+    location.replace(moved[location.hash] || '/vaulted#waitlist');
 })();

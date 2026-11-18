@@ -1,9 +1,18 @@
-# Vaulted by Phoenix-Atlas Technologies Ltd
+# Phoenix-Atlas Technologies Ltd
 
-> Vaulted is a fiat-first cross-border remittance app with a self-custody crypto wallet, built by Phoenix-Atlas Technologies Ltd (UK, Company No. 17432346). It is designed for UK/EU to Africa and Africa to UK/EU payments over regulated stablecoin rails. Vaulted is in waitlist / preview mode and is not yet authorized by the FCA; it is not open for customer transactions.
+> Phoenix-Atlas Technologies Ltd (UK, Company No. 17432346) is a technology and software innovation company designing, developing and delivering intelligent digital solutions across software development, digital product innovation, financial technology and connected digital experiences. Its products are Vaulted, a fiat-first cross-border remittance app with a self-custody wallet (in waitlist / preview mode, not yet FCA-authorized and not open for customer transactions), and CareFlow, an outcome-based payment and family-support platform for healthcare (in development).
 
-## Pages
-- [Home](https://www.phoenix-atlas.com): Vaulted by Phoenix-Atlas is a UK fintech in build: fiat-first remittance between the UK/EU and Africa on stablecoin rails, with a self-custody wallet and encrypted chat. Join the waitlist.
+## Company
+- [Home](https://www.phoenix-atlas.com): Phoenix-Atlas Technologies Ltd is a UK technology and software innovation company designing intelligent digital solutions, including Vaulted (cross-border payments) and CareFlow (outcome-based family support).
+- [About us](https://www.phoenix-atlas.com/about): Who Phoenix-Atlas Technologies is, our vision to become a globally recognised technology company, and our mission to solve meaningful problems with software.
+- [What we do](https://www.phoenix-atlas.com/what-we-do): Phoenix-Atlas works across software development and digital solutions, digital product innovation, financial technology and connected digital experiences.
+- [Products](https://www.phoenix-atlas.com/products): The Phoenix-Atlas product portfolio: Vaulted, reimagining cross-border payments, and CareFlow, outcome-based payments for family healthcare support.
+- [CareFlow](https://www.phoenix-atlas.com/careflow): CareFlow is an emerging outcome-based payment and family-support platform helping people abroad pay for the healthcare needs of family back home. Register early interest.
+- [Our approach](https://www.phoenix-atlas.com/approach): The five principles behind Phoenix-Atlas: innovation with purpose, user-centred design, security and trust, scalability and sustainability, and continuous improvement.
+- [Contact](https://www.phoenix-atlas.com/contact): Get in touch with Phoenix-Atlas Technologies Ltd about partnerships, investment, Vaulted, CareFlow or general enquiries.
+
+## Vaulted
+- [Vaulted](https://www.phoenix-atlas.com/vaulted): Vaulted by Phoenix-Atlas is a UK fintech in build: fiat-first remittance between the UK/EU and Africa on stablecoin rails, with a self-custody wallet and encrypted chat. Join the waitlist.
 - [Send money to Africa](https://www.phoenix-atlas.com/send-money-to-africa): How Vaulted plans to send money from the UK and EU to Kenya (M-Pesa), Nigeria, Ghana, Uganda, Tanzania and more in seconds, funded by card, Apple Pay or bank transfer.
 - [Africa to UK &amp; EU](https://www.phoenix-atlas.com/africa-to-uk): Vaulted's reverse corridor is designed for paying UK tuition, medical bills and suppliers from Africa into GBP or EUR over regulated stablecoin rails instead of SWIFT.
 - [Self-custody wallet](https://www.phoenix-atlas.com/wallet): Vaulted's self-custody wallet generates your keys on your device, supports BTC, ETH, USDC on Polygon, Base and Arbitrum, SOL, XLM and XRP, and adds multi-signature approvals.
@@ -35,7 +44,9 @@
 
 ## Key facts
 - Company: Phoenix-Atlas Technologies Ltd, registered in England and Wales, Company No. 17432346.
-- Product: Vaulted — cross-border remittance + self-custody wallet + end-to-end encrypted chat and video calls.
+- Tagline: Building Technology. Connecting Possibilities. Creating Impact.
+- Products: Vaulted (cross-border payments) and CareFlow (outcome-based family healthcare support — 'Don't just send money. Send the help.').
+- Vaulted: cross-border remittance + self-custody wallet + end-to-end encrypted chat and video calls.
 - Status: pre-launch, waitlist and preview app only; live money transfer launches upon applicable FCA authorizations.
 - Directions: UK/EU to Africa (outbound) and Africa to UK/EU (reverse corridor, for school fees, medical bills and business payments).
 - Rails: regulated stablecoins (USDC) and low-cost networks (Stellar XLM, XRP Ledger, Polygon, Base, Arbitrum); payout to mobile money (M-Pesa, MoMo) or bank.

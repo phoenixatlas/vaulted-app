@@ -1066,4 +1066,22 @@ footer { overflow-x: hidden; }
 .pf-hp { position: absolute; left: -9999px; width: 1px; height: 1px; opacity: 0; }
 #pf-msg { font-size: 14px; min-height: 20px; margin: 0; }
 .footer-grid { grid-template-columns: 1.6fr repeat(4, 1fr); }
+.brand img.pa-logo { height: 58px; width: auto; border-radius: 0; }
+@media (max-width: 600px) { .brand img.pa-logo { height: 46px; width: auto; } }
+.co-mark { display: flex; flex-direction: column; line-height: 1.05; }
+.co-mark b { font-family: 'Cormorant Garamond', serif; font-weight: 700; font-size: 26px; color: var(--gold-light); letter-spacing: 0.5px; }
+.co-mark small { font-size: 10px; letter-spacing: 3px; text-transform: uppercase; color: var(--text-secondary); margin-top: 3px; }
+@media (max-width: 600px) { .co-mark b { font-size: 21px; } .co-mark small { font-size: 9px; letter-spacing: 2px; } }
+.product-bar { margin-top: 64px; }
+.product-bar ~ main > .hero:first-child { padding-top: 56px; }
+.product-bar { border-bottom: 1px solid var(--border); background: var(--bg-elevated); position: relative; z-index: 2; }
+.product-bar .container { display: flex; align-items: center; gap: 18px; overflow-x: auto; padding-top: 12px; padding-bottom: 12px; scrollbar-width: none; }
+.product-bar .container::-webkit-scrollbar { display: none; }
+.product-bar .pb-name { display: flex; align-items: center; gap: 8px; font-family: 'Cormorant Garamond', serif; font-weight: 700; font-size: 18px; color: var(--gold-light); text-decoration: none; white-space: nowrap; }
+.product-bar .pb-name img { width: 26px; height: 26px; border-radius: 6px; }
+.product-bar a.pb-link { font-size: 13px; color: var(--text-secondary); text-decoration: none; white-space: nowrap; padding: 8px 0; }
+.product-bar a.pb-link[aria-current="page"], .product-bar a.pb-link:hover { color: var(--gold-light); }
+.mobile-menu .mm-head { font-size: 11px; letter-spacing: 2px; text-transform: uppercase; color: var(--text-muted); margin: 22px 0 4px; }
+.hero.page-hero.home-hero { padding: 150px 0 90px; }
+.hero.page-hero.home-hero h1 { font-size: clamp(40px, 6.5vw, 76px); }
 @media (max-width: 900px) { .footer-grid { grid-template-columns: 1fr 1fr; } }

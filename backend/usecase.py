@@ -27,7 +27,7 @@ from reportlab.lib.units import mm
 from reportlab.lib import colors
 from reportlab.pdfbase.pdfmetrics import stringWidth
 
-from brand import LOGO_PATH, draw_logo
+from brand import COMPANY_LOGO_PATH, draw_company_logo
 
 from docx import Document
 from docx.enum.text import WD_ALIGN_PARAGRAPH
@@ -232,17 +232,8 @@ def _draw_header(c, width: float, height: float) -> float:
     gold hairline so the caller knows where safe body content starts."""
     y_top = height - 22 * mm
 
-    # Logo mark
-    draw_logo(c, 20 * mm, y_top - 5 * mm, 16 * mm)
-
-    # Wordmark + product-of
-    c.setFillColor(INK)
-    c.setFont("Helvetica-Bold", 20)
-    c.drawString(38 * mm, y_top + 1 * mm, "Vaulted")
-    c.setFillColor(INK_SUBTLE)
-    c.setFont("Helvetica-Oblique", 8.5)
-    c.drawString(38 * mm, y_top - 4 * mm,
-                 "A product of Phoenix-Atlas Technologies Ltd")
+    # Phoenix-Atlas company logo
+    draw_company_logo(c, 18 * mm, y_top - 9 * mm, 19 * mm)
 
     # Right contact block
     c.setFillColor(INK)
@@ -620,11 +611,7 @@ def build_psb_usecase_docx(**overrides) -> bytes:
 
     p1 = left_cell.paragraphs[0]
     p1.alignment = WD_ALIGN_PARAGRAPH.LEFT
-    p1.add_run().add_picture(str(LOGO_PATH), width=Mm(18))
-    _run(p1, "  VAULTED", bold=True, size=22, color=_INK_HEX)
-    p2 = left_cell.add_paragraph()
-    _run(p2, "A product of Phoenix-Atlas Technologies Ltd",
-         italic=True, size=9, color=_SUBTLE_HEX)
+    p1.add_run().add_picture(str(COMPANY_LOGO_PATH), width=Mm(52))
 
     r1 = right_cell.paragraphs[0]
     r1.alignment = WD_ALIGN_PARAGRAPH.RIGHT
