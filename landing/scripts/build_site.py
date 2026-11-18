@@ -152,6 +152,9 @@ footer { overflow-x: hidden; }
 .hero.page-hero.home-hero { padding: 150px 0 90px; }
 .hero.page-hero.home-hero h1 { font-size: clamp(40px, 6.5vw, 76px); }
 @media (max-width: 900px) { .footer-grid { grid-template-columns: 1fr 1fr; } }
+.footer-brand .pa-foot-logo { height: 84px; width: auto; max-width: 100%; object-fit: contain; object-position: left; margin-bottom: 12px; display: block; }
+.footer-brand .wordmark-tag { white-space: normal; line-height: 1.7; }
+@media (max-width: 900px) { .footer-grid > .footer-brand { grid-column: 1 / -1; } .footer-brand .pa-foot-logo { height: auto; width: 260px; } }
 """
 
 JS_MENU = """
@@ -423,7 +426,7 @@ FOOTER = """
     <div class="container">
       <div class="footer-grid">
         <div class="footer-brand">
-          <img src="/pa-logo.png" alt="Phoenix-Atlas Technologies Ltd" width="716" height="273" style="height:84px;width:auto;margin-bottom:12px;">
+          <img class="pa-foot-logo" src="/pa-logo.png" alt="Phoenix-Atlas Technologies Ltd" width="716" height="273">
           <div class="wordmark-tag">TAGLINE_TEXT</div>
           <p><strong>Phoenix-Atlas Technologies Ltd</strong> is a UK technology and software innovation company (Company No. 17432346), building Vaulted and CareFlow.</p>
         </div>
