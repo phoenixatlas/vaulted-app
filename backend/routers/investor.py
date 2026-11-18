@@ -383,6 +383,7 @@ async def onepager_request(body: InvestorLeadIn, request: Request):
 
 @router.get("/brand/company-logo.png")
 async def brand_company_logo():
+    from fastapi.responses import FileResponse
     from brand import COMPANY_LOGO_PATH
     return FileResponse(str(COMPANY_LOGO_PATH), media_type="image/png", headers={"Cache-Control": "public, max-age=86400"})
 
