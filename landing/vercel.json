@@ -1,6 +1,12 @@
 {
   "$schema": "https://openapi.vercel.sh/vercel.json",
   "cleanUrls": true,
+  "redirects": [
+    { "source": "/admin", "destination": "https://app.phoenix-atlas.com/admin", "permanent": false },
+    { "source": "/admin/:path*", "destination": "https://app.phoenix-atlas.com/admin/:path*", "permanent": false },
+    { "source": "/app", "destination": "https://app.phoenix-atlas.com", "permanent": false },
+    { "source": "/login", "destination": "https://app.phoenix-atlas.com/login", "permanent": false }
+  ],
   "headers": [
     {
       "source": "/(.*)",
